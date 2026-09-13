@@ -1,4 +1,4 @@
-# MiniWin 1.0-RELEASE1
+# MiniWin 1.0-pre-1
 
 > A tiny 32-bit GUI operating system experiment that boots directly on x86 BIOS.
 
