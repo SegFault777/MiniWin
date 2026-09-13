@@ -10,6 +10,9 @@
 #include "speaker.h"
 #include "serial.h"
 #include "pci.h"
+#include "nic.h"
+#include "rtl8139.h"
+#include "net_diag.h"
 
 #define DESKTOP_COLOR_BG      COL_LCYAN
 #define DESKTOP_COLOR_ICON_BG COL_LCYAN
@@ -1424,6 +1427,17 @@ void kmain(void) {
     serial_init();
     pci_scan();
 
+    /* If an RTL8139 is present, bring it up and immediately prove both
+     * directions of it actually work: send a real ARP request for
+     * QEMU SLIRP's default gateway (10.0.2.2, when the guest is
+     * 10.0.2.15) and let net_diag_poll() in the main loop log whatever
+     * comes back. This is driver bring-up instrumentation, not a
+     * feature -- there's no IP stack yet, just a NIC that can prove it
+     * sends and receives real frames. */
+    if (rtl8139_init()) {
+        net_send_arp_request(NET_IP4(10,0,2,15), NET_IP4(10,0,2,2));
+    }
+
     /* Check for previously-saved files on disk (real, persistent storage
      * via the ATA driver -- this survives across QEMU runs as long as the
      * disk image itself isn't rebuilt from scratch). */
@@ -1856,6 +1870,8 @@ void kmain(void) {
             }
         }
         }
+
+        net_diag_poll(); /* driver bring-up: logs any received frame over serial */
 
         render_frame(mx, my, status);
         delay(2000); /* lowered further from 8000 -- mouse felt sluggish/

@@ -139,4 +139,15 @@ static pci_device_t *pci_find_device(u16 vendor_id, u16 device_id) {
     return 0;
 }
 
+/* Flips on bit 2 (Bus Master Enable) in the PCI command register, plus
+ * I/O-space and memory-space access (bits 0-1) for good measure. Every
+ * NIC that does DMA -- which is to say every NIC worth writing a driver
+ * for -- needs this set before it's allowed to touch system memory on
+ * its own. BIOSes usually leave PCI devices with this off by default. */
+static void pci_enable_bus_mastering(u8 bus, u8 slot, u8 func) {
+    u32 orig = pci_config_read32(bus, slot, func, 0x04);
+    u32 updated = orig | 0x0007; /* I/O space + memory space + bus master */
+    pci_config_write32(bus, slot, func, 0x04, updated);
+}
+
 #endif

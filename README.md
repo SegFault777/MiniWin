@@ -99,11 +99,22 @@ asks:
 - **Persistence**: real, already working -- saved files live on the ATA
   disk image itself (`kernel/fs.h`), and survive across QEMU runs as long
   as `os-image.img` isn't rebuilt from scratch.
-- **Networking**: PCI bus enumeration and a serial debug log are in
-  (`kernel/pci.h`, `kernel/serial.h`), verified against a real emulated
-  RTL8139 NIC. An actual NIC driver, ARP/IP/TCP stack, and a browser
-  (MiniWeb) are still being built on top of that -- there's no working
-  network I/O yet.
+- **Networking**: a real, verified RTL8139 driver (`kernel/rtl8139.h`) --
+  PCI bus mastering, ring-buffer RX, 4-slot round-robin TX, all polled
+  (no interrupts). Verified end-to-end against QEMU's SLIRP gateway: the
+  driver sends a real hand-built ARP request and genuinely receives the
+  gateway's ARP reply back, logged over the serial port
+  (`kernel/serial.h`) for anyone who wants to reproduce it:
+  ```
+  [RTL8139] initialized, MAC=52:54:00:12:34:56
+  [ARP] sending request
+  [RX] 0040 bytes, ethertype=0806 ARP REPLY from 52:55:0A:00:02:02
+  ```
+  An e1000 driver is next (MMIO-based, meaningfully more involved than
+  RTL8139's pure port-I/O interface -- in progress). Above the NIC driver
+  layer there's still no ARP/IP/TCP stack or browser (MiniWeb) yet --
+  `kernel/net_diag.h` is explicitly a throwaway bring-up harness for
+  proving the driver works, not a network stack.
 - **File Manager**: not built yet.
 - Full HTML4/5/XHTML rendering and "SSE3 support" are not realistic
   targets for a 320x200, 16-/256-color, no-libc kernel like this one --

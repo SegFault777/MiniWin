@@ -1,0 +1,11 @@
+[PCI] scanning...
+[PCI] bus=00 slot=00 func=00 vendor=8086 device=1237 class=bridge (06:00)
+[PCI] bus=00 slot=01 func=00 vendor=8086 device=7000 class=bridge (06:01)
+[PCI] bus=00 slot=01 func=01 vendor=8086 device=7010 class=storage (01:01)
+[PCI] bus=00 slot=01 func=03 vendor=8086 device=7113 class=bridge (06:80)
+[PCI] bus=00 slot=02 func=00 vendor=1234 device=1111 class=display (03:00)
+[PCI] bus=00 slot=03 func=00 vendor=10EC device=8139 class=network (02:00)
+[PCI] scan complete, 06 device(s)
+[RTL8139] initialized, MAC=52:54:00:12:34:56
+[ARP] sending request
+[RX] 0040 bytes, ethertype=0806 ARP REPLY from 52:55:0A:00:02:02
