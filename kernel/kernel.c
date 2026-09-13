@@ -112,6 +112,7 @@ typedef enum {
     STR_NEW_DOCUMENT_NOT_SAVED, STR_CLOSED_NOT_SAVED,
     STR_HANGUL_MODE_ON, STR_ENGLISH_MODE_ON,
     STR_IME_MIN_ONE,
+    STR_ALL_NOTEPAD_WINDOWS_OPEN,
     STR_COUNT
 } ui_str_id;
 
@@ -152,6 +153,7 @@ static const char *ui_strings_en[STR_COUNT] = {
     [STR_HANGUL_MODE_ON] = "HANGUL MODE ON (RIGHT ALT TO SWITCH)",
     [STR_ENGLISH_MODE_ON] = "ENGLISH MODE ON (RIGHT ALT TO SWITCH)",
     [STR_IME_MIN_ONE] = "AT LEAST ONE IME MUST STAY ENABLED",
+    [STR_ALL_NOTEPAD_WINDOWS_OPEN] = "ALL 4 NOTEPAD WINDOWS ALREADY OPEN",
 };
 
 static const char *ui_strings_ko[STR_COUNT] = {
@@ -191,6 +193,7 @@ static const char *ui_strings_ko[STR_COUNT] = {
     [STR_HANGUL_MODE_ON] = "\xed\x95\x9c\xea\xb8\x80 \xeb\xaa\xa8\xeb\x93\x9c \xec\xbc\x9c\xec\xa7\x90 (RIGHT ALT\xeb\xa1\x9c \xec\xa0\x84\xed\x99\x98)",
     [STR_ENGLISH_MODE_ON] = "\xec\x98\x81\xec\x96\xb4 \xeb\xaa\xa8\xeb\x93\x9c \xec\xbc\x9c\xec\xa7\x90 (RIGHT ALT\xeb\xa1\x9c \xec\xa0\x84\xed\x99\x98)",
     [STR_IME_MIN_ONE] = "\xec\xb5\x9c\xec\x86\x8c 1\xea\xb0\x9c\xec\x9d\x98 \xec\x9e\x85\xeb\xa0\xa5\xea\xb8\xb0\xeb\x8a\x94 \xec\xbc\x9c\xec\xa0\xb8 \xec\x9e\x88\xec\x96\xb4\xec\x95\xbc \xed\x95\xa8",
+    [STR_ALL_NOTEPAD_WINDOWS_OPEN] = "\xeb\x85\xb8\xed\x8a\xb8\xed\x8c\xa8\xeb\x93\x9c \xec\xb0\xbd 4\xea\xb0\x9c\xea\xb0\x80 \xec\x9d\xb4\xeb\xaf\xb8 \xeb\xaa\xa8\xeb\x91\x90 \xec\x97\xb4\xeb\xa0\xa4 \xec\x9e\x88\xec\x9d\x8c",
 };
 
 
@@ -267,19 +270,13 @@ static void draw_desktop_icon2(void) {
 #define STARTBTN_W    24
 #define STARTBTN_H    10
 
-/* The minimized-Notepad pill used to hug the taskbar's left edge; now
- * it scoots over to make room for its new neighbor. */
+/* The minimized-window pill used to hug the taskbar's left edge; now
+ * it scoots over to make room for the Start button. Height is still a
+ * fixed constant (TASKBTN_H); pill WIDTH is now computed dynamically by
+ * taskbar_layout() below since it has to shrink as more windows pile up. */
 #define TASKBTN_X     (STARTBTN_X + STARTBTN_W + 4)
 #define TASKBTN_Y     (TASKBAR_Y + 2)
-#define TASKBTN_W     70
 #define TASKBTN_H     10
-
-/* SETTING.EXE gets its own taskbar slot right next to Notepad's, since
- * both windows can now be independently minimized at the same time. */
-#define TASKBTN2_X    (TASKBTN_X + TASKBTN_W + 4)
-#define TASKBTN2_Y    TASKBTN_Y
-#define TASKBTN2_W    TASKBTN_W
-#define TASKBTN2_H    TASKBTN_H
 
 /* ============================================================
  * Window state + layout
@@ -289,10 +286,10 @@ static void draw_desktop_icon2(void) {
  * drawing and hit-testing below reads from `notepad.x/y/w/h` rather than
  * fixed macros.
  * ============================================================ */
-#define WIN_DEFAULT_X   40
-#define WIN_DEFAULT_Y   25
-#define WIN_DEFAULT_W   280
-#define WIN_DEFAULT_H   140
+#define WIN_DEFAULT_X   20
+#define WIN_DEFAULT_Y   10
+#define WIN_DEFAULT_W   250
+#define WIN_DEFAULT_H   130
 #define TITLEBAR_H      10
 #define MIN_WIN_H       (TITLEBAR_H + 12 + 20) /* title + menu + a little edit area */
 
@@ -322,18 +319,10 @@ typedef struct {
     int restore_x, restore_y, restore_w, restore_h;
 } window_t;
 
-static window_t notepad = {
-    .open = 0, .minimized = 0, .maximized = 0,
-    .x = WIN_DEFAULT_X, .y = WIN_DEFAULT_Y, .w = WIN_DEFAULT_W, .h = WIN_DEFAULT_H,
-    .restore_x = WIN_DEFAULT_X, .restore_y = WIN_DEFAULT_Y,
-    .restore_w = WIN_DEFAULT_W, .restore_h = WIN_DEFAULT_H,
-};
-
-/* SETTING.EXE's window state lives here too (rather than down by the
- * rest of its drawing code) so the taskbar -- which needs to know about
- * both windows' minimized state -- can see it without forward-
- * declaration games. The geometry constants, hit-tests, and drawing
- * code stay grouped with the rest of SETTING.EXE further down. */
+/* SETTING.EXE's window state lives here so the taskbar (which needs to
+ * know every window's minimized state) can see it without forward-
+ * declaration games. The geometry constants, hit-tests, and drawing code
+ * stay grouped with the rest of SETTING.EXE further down. */
 #define SETTING_DEFAULT_X   80
 #define SETTING_DEFAULT_Y   30
 #define SETTING_DEFAULT_W   200
@@ -347,17 +336,117 @@ static window_t setting = {
     .restore_w = SETTING_DEFAULT_W, .restore_h = SETTING_DEFAULT_H,
 };
 
-static char text_buf[FS_MAX_FILE_BYTES];
-static u32  text_len = 0;
+/* ============================================================
+ * Multiple Notepad windows
+ *
+ * Up to NOTEPAD_MAX independent Notepad windows can be open at once
+ * (matches FS_MAX_FILES -- also just a sane cap for how many overlapping
+ * windows make sense on a 320x200 screen). Each one carries its own
+ * geometry, its own document buffer, its own bound-file slot, its own
+ * File-menu-open flag, and its own Save-changes confirm dialog state --
+ * none of that is shared between windows anymore.
+ *
+ * Every Notepad-specific helper function below (draw_window(),
+ * btn_min_x(), file_label_hit(), save_current_document(), ...) reads and
+ * writes through a single scratch pointer, `active_np`, rather than
+ * taking a notepad_t* parameter directly. Whichever bit of code is about
+ * to draw, click-test, or type into a particular window sets active_np
+ * first. This is a deliberately simple "current context" pattern instead
+ * of threading a pointer through a couple dozen function signatures --
+ * there's only ever one Notepad window being drawn, clicked, or typed
+ * into at any given instant anyway, even though up to four can exist.
+ * ============================================================ */
+#define NOTEPAD_MAX 4
+
+typedef struct {
+    window_t win;
+    int id;                          /* index into notepads[] -- set once at boot */
+    char text_buf[FS_MAX_FILE_BYTES];
+    u32  text_len;
+    int  bound_slot;                 /* which FS slot this document is saved to, -1 = unbound */
+    int  file_menu_open;
+    int  confirm_mode;               /* CONFIRM_NONE / CONFIRM_NEW / CONFIRM_CLOSE, this window's own */
+} notepad_t;
+
+static notepad_t notepads[NOTEPAD_MAX];
+static notepad_t *active_np = &notepads[0];
+
+/* ------------------------------------------------------------
+ * Window IDs + z-order (stacking) + minimize-order (taskbar layout)
+ *
+ * A "window id" is just 0..NOTEPAD_MAX-1 for notepads[id], or
+ * WIN_ID_SETTING for the Setting window -- one small integer namespace
+ * covering every top-level window in the OS, so the taskbar, z-order,
+ * and focus-on-click logic can all treat "which window" generically
+ * instead of hardcoding "Notepad vs Setting" at every call site.
+ * ------------------------------------------------------------ */
+#define WIN_ID_SETTING NOTEPAD_MAX
+#define WIN_ID_COUNT   (NOTEPAD_MAX + 1)
+
+static int win_is_open(int id) {
+    return (id == WIN_ID_SETTING) ? setting.open : notepads[id].win.open;
+}
+static int win_is_minimized(int id) {
+    return (id == WIN_ID_SETTING) ? setting.minimized : notepads[id].win.minimized;
+}
+static window_t *win_ptr(int id) {
+    return (id == WIN_ID_SETTING) ? &setting : &notepads[id].win;
+}
+static void win_get_rect(int id, int *x, int *y, int *w, int *h) {
+    window_t *w_ = win_ptr(id);
+    *x = w_->x; *y = w_->y; *w = w_->w; *h = w_->h;
+}
+
+/* z_order[0..z_count-1] lists every currently-OPEN window id, back
+ * (bottom) to front (top). Closing a window removes it; clicking one
+ * (or opening/restoring it) moves it to the end, i.e. the front -- the
+ * entire "clicking a window brings it to the front" feature is just
+ * these three tiny functions plus render_frame() drawing in this order
+ * and the click-handler hit-testing in reverse. */
+static int z_order[WIN_ID_COUNT];
+static int z_count = 0;
+
+static void win_z_remove(int id) {
+    for (int i = 0; i < z_count; i++) {
+        if (z_order[i] == id) {
+            for (int j = i; j < z_count - 1; j++) z_order[j] = z_order[j + 1];
+            z_count--;
+            return;
+        }
+    }
+}
+static void win_z_raise(int id) {
+    win_z_remove(id);
+    z_order[z_count++] = id;
+}
+
+/* Separate from z-order on purpose: z-order is about on-screen stacking
+ * of VISIBLE windows, while this is purely "what order were things
+ * minimized in," used only to lay out taskbar pills left-to-right in
+ * that order. A window keeps its z-order slot while minimized (so
+ * restoring puts it back where clicking-to-focus would), but it has no
+ * on-screen rect to stack while minimized, hence the separate concept. */
+static u32 minimize_seq[WIN_ID_COUNT];
+static u32 next_minimize_seq = 1;
+static void win_minimize(int id) {
+    window_t *w_ = win_ptr(id);
+    w_->minimized = 1;
+    minimize_seq[id] = next_minimize_seq++;
+}
+static void win_restore(int id) {
+    win_ptr(id)->minimized = 0;
+    win_z_raise(id); /* restoring a window also focuses it, like real WMs do */
+}
 
 /* Actual body of ime_cycle_next(), forward-declared above -- now that
- * text_buf/text_len exist, it can flush a syllable mid-switch. */
+ * notepad_t exists, it can flush a syllable mid-switch into whichever
+ * window currently has keyboard focus. */
 static void ime_cycle_next(void) {
     for (int step = 1; step <= IME_COUNT; step++) {
         int candidate = (current_ime + step) % IME_COUNT;
         if (ime_enabled[candidate]) {
-            if (candidate != current_ime && ko_ime_is_composing()) {
-                ko_ime_commit(text_buf, &text_len, sizeof(text_buf));
+            if (candidate != current_ime && ko_ime_is_composing() && active_np) {
+                ko_ime_commit(active_np->text_buf, &active_np->text_len, sizeof(active_np->text_buf));
             }
             current_ime = candidate;
             return;
@@ -368,8 +457,10 @@ static void ime_cycle_next(void) {
 /* ============================================================
  * File menu (dropdown from the "File" label in the menu bar)
  * and the Yes/No confirm dialog used by "New" and the close (X) button.
+ * (active_np->file_menu_open and active_np->confirm_mode are per-window now -- see notepad_t --
+ * so there's nothing to declare here anymore, just the CONFIRM_* values
+ * and the Start Menu flag, which really are global.)
  * ============================================================ */
-static int file_menu_open = 0;
 
 /* Whether the Windows-95-style Start Menu is currently popped up. Unlike
  * the File dropdown above (which only exists while Notepad's window is
@@ -380,7 +471,6 @@ static int start_menu_open = 0;
 #define CONFIRM_NONE  0
 #define CONFIRM_NEW   1  /* "Save changes before New?" */
 #define CONFIRM_CLOSE 2  /* "Save changes before closing?" */
-static int confirm_mode = CONFIRM_NONE;
 
 /* Desktop file icons: which of the FS_MAX_FILES slots currently hold a
  * saved file (either saved earlier this session, or found already present
@@ -388,12 +478,8 @@ static int confirm_mode = CONFIRM_NONE;
 static int desktop_file_exists[FS_MAX_FILES];
 static u32 desktop_file_len[FS_MAX_FILES];
 
-/* Which slot the currently-open document is "bound" to: -1 means the
- * document is new/unbound (never saved, or created via "New"), so the
- * next Save picks the first empty slot and binds to it. Once bound,
- * subsequent saves update that same slot in place, like a normal editor's
- * "Save" (not creating a new file every time you press Ctrl+S). */
-static int bound_slot = -1;
+/* (active_np->bound_slot is per-window now too -- see notepad_t.active_np->bound_slot -- since
+ * each open document binds to its own file slot independently.) */
 
 /* Shared status-line message, file scope so helper functions below (save
  * logic, confirm dialog actions) can set it directly. */
@@ -404,12 +490,12 @@ static char status_buf[48]; /* scratch space for status messages that embed a fi
 #define FILE_MENU_ITEM_H  10
 #define FILE_MENU_W       94  /* wide enough for "다른 이름으로 저장" (Save As, Korean) */
 
-static inline int menu_y_pos(void) { return notepad.y + TITLEBAR_H + 1; }
-static inline int file_menu_x(void) { return notepad.x + 4; }
+static inline int menu_y_pos(void) { return active_np->win.y + TITLEBAR_H + 1; }
+static inline int file_menu_x(void) { return active_np->win.x + 4; }
 static inline int file_menu_top_y(void) { return menu_y_pos() + 9; }
 
 static int file_label_hit(int px, int py) {
-    return in_rect(px, py, notepad.x + 4, menu_y_pos(), MENU_FILE_LABEL_W, 9);
+    return in_rect(px, py, active_np->win.x + 4, menu_y_pos(), MENU_FILE_LABEL_W, 9);
 }
 
 static int file_menu_item_hit(int px, int py, int idx) {
@@ -428,8 +514,8 @@ static int file_menu_item_hit(int px, int py, int idx) {
 #define CONFIRM_BTN_W 34
 #define CONFIRM_BTN_H 12
 
-static inline int confirm_x(void) { return notepad.x + (notepad.w - CONFIRM_W) / 2; }
-static inline int confirm_y(void) { return notepad.y + (notepad.h - CONFIRM_H) / 2; }
+static inline int confirm_x(void) { return active_np->win.x + (active_np->win.w - CONFIRM_W) / 2; }
+static inline int confirm_y(void) { return active_np->win.y + (active_np->win.h - CONFIRM_H) / 2; }
 static inline int confirm_btn_y(void) { return confirm_y() + CONFIRM_H - CONFIRM_BTN_H - 8; }
 static inline int confirm_yes_x(void) { return confirm_x() + 16; }
 static inline int confirm_no_x(void)  { return confirm_x() + CONFIRM_W - 16 - CONFIRM_BTN_W; }
@@ -467,73 +553,149 @@ static const char *format_saved_status(int slot) {
     return status_buf;
 }
 
-/* Saves text_buf/text_len to the slot the current document is bound to,
+/* Saves active_np->text_buf/active_np->text_len to the slot the current document is bound to,
  * or to the first empty slot if unbound (and binds to it, so subsequent
  * saves of the same still-open document update that slot instead of
  * creating a new file each time). Returns the slot saved to, or -1 if
  * all FS_MAX_FILES slots are already occupied ("disk full"). */
 static int save_current_document(void) {
-    int slot = bound_slot;
+    int slot = active_np->bound_slot;
     if (slot < 0) {
         slot = fs_find_empty_slot();
         if (slot < 0) return -1;
     }
-    if (!fs_save_slot(slot, text_buf, text_len)) return -1;
+    if (!fs_save_slot(slot, active_np->text_buf, active_np->text_len)) return -1;
     desktop_file_exists[slot] = 1;
-    desktop_file_len[slot] = text_len;
-    bound_slot = slot;
+    desktop_file_len[slot] = active_np->text_len;
+    active_np->bound_slot = slot;
     return slot;
+}
+
+/* Which notepads[] slot (if any) is currently closed and free to reuse
+ * for a newly-opened window -- either a blank "New" document or a
+ * double-clicked file. Returns -1 if all NOTEPAD_MAX are already open. */
+static int find_free_notepad_slot(void) {
+    for (int i = 0; i < NOTEPAD_MAX; i++) {
+        if (!notepads[i].win.open) return i;
+    }
+    return -1;
+}
+
+/* Is a given FS file slot already open in one of the notepad windows?
+ * Used so double-clicking a desktop file icon that's already open just
+ * focuses the existing window instead of loading a second, independently
+ * editable copy of the same file (which would just race on Save). */
+static int find_notepad_bound_to(int fs_slot) {
+    for (int i = 0; i < NOTEPAD_MAX; i++) {
+        if (notepads[i].win.open && notepads[i].bound_slot == fs_slot) return i;
+    }
+    return -1;
 }
 
 /* Shared Yes/No handling for the confirm dialog, used by both mouse
  * clicks and the Y/N keyboard shortcuts. What "Yes"/"No" actually do
- * depends on why the dialog was opened (confirm_mode). */
+ * depends on why the dialog was opened (active_np->confirm_mode). */
 static void confirm_yes_action(void) {
     int saved_slot = save_current_document();
-    if (confirm_mode == CONFIRM_NEW) {
-        text_len = 0; text_buf[0] = 0; bound_slot = -1; ko_ime_reset();
+    if (active_np->confirm_mode == CONFIRM_NEW) {
+        active_np->text_len = 0; active_np->text_buf[0] = 0; active_np->bound_slot = -1; ko_ime_reset();
         status = saved_slot >= 0 ? format_saved_status(saved_slot) : t(STR_STORAGE_FULL_NOT_SAVED);
-    } else if (confirm_mode == CONFIRM_CLOSE) {
-        notepad.open = 0;
-        notepad.minimized = 0;
+    } else if (active_np->confirm_mode == CONFIRM_CLOSE) {
+        active_np->win.open = 0;
+        active_np->win.minimized = 0;
+        win_z_remove(active_np->id);
         /* Closing ends this editing session -- clear the buffer so the
          * next time the app icon is double-clicked, it starts blank
          * rather than showing this document's leftover text again. */
-        text_len = 0; text_buf[0] = 0; bound_slot = -1; ko_ime_reset();
+        active_np->text_len = 0; active_np->text_buf[0] = 0; active_np->bound_slot = -1; ko_ime_reset();
         status = saved_slot >= 0 ? t(STR_SAVED_AND_CLOSED) : t(STR_STORAGE_FULL_CLOSED_NOT_SAVED);
     }
-    confirm_mode = CONFIRM_NONE;
+    active_np->confirm_mode = CONFIRM_NONE;
 }
 
 static void confirm_no_action(void) {
-    if (confirm_mode == CONFIRM_NEW) {
-        text_len = 0; text_buf[0] = 0; bound_slot = -1; ko_ime_reset();
+    if (active_np->confirm_mode == CONFIRM_NEW) {
+        active_np->text_len = 0; active_np->text_buf[0] = 0; active_np->bound_slot = -1; ko_ime_reset();
         status = t(STR_NEW_DOCUMENT_NOT_SAVED);
-    } else if (confirm_mode == CONFIRM_CLOSE) {
-        notepad.open = 0;
-        notepad.minimized = 0;
+    } else if (active_np->confirm_mode == CONFIRM_CLOSE) {
+        active_np->win.open = 0;
+        active_np->win.minimized = 0;
+        win_z_remove(active_np->id);
         /* Same as above: discard the in-memory buffer on close so a
          * fresh app-icon open doesn't resurrect this session's text. */
-        text_len = 0; text_buf[0] = 0; bound_slot = -1; ko_ime_reset();
+        active_np->text_len = 0; active_np->text_buf[0] = 0; active_np->bound_slot = -1; ko_ime_reset();
         status = t(STR_CLOSED_NOT_SAVED);
     }
-    confirm_mode = CONFIRM_NONE;
+    active_np->confirm_mode = CONFIRM_NONE;
 }
 
 /* Window-relative button positions, computed from current geometry. */
-static inline int btn_close_x(void) { return notepad.x + notepad.w - 2 - BTN_W; }
+static inline int btn_close_x(void) { return active_np->win.x + active_np->win.w - 2 - BTN_W; }
 static inline int btn_max_x(void)   { return btn_close_x() - BTN_W - BTN_GAP; }
 static inline int btn_min_x(void)   { return btn_max_x() - BTN_W - BTN_GAP; }
-static inline int btn_y(void)       { return notepad.y + 1; }
+static inline int btn_y(void)       { return active_np->win.y + 1; }
 
-static inline int edit_x(void) { return notepad.x + 4; }
-static inline int edit_y(void) { return notepad.y + TITLEBAR_H + 12; }
-static inline int edit_w(void) { return notepad.w - 8; }
-static inline int edit_h(void) { return notepad.h - TITLEBAR_H - 16; }
+static inline int edit_x(void) { return active_np->win.x + 4; }
+static inline int edit_y(void) { return active_np->win.y + TITLEBAR_H + 12; }
+static inline int edit_w(void) { return active_np->win.w - 8; }
+static inline int edit_h(void) { return active_np->win.h - TITLEBAR_H - 16; }
 
 /* ============================================================
  * Taskbar drawing + hit-testing
  * ============================================================ */
+/* Every minimized window gets a pill, ordered by WHEN it was minimized
+ * (not by which app it is) -- so if you minimize Setting, then a
+ * Notepad, the Setting pill sits to the left, exactly matching the
+ * order the taskbar filled up in. Pills shrink to fit as more windows
+ * pile up, the same way real taskbars do, instead of overflowing the
+ * screen. */
+#define TASKBTN_GAP    4
+#define TASKBTN_MAXW   70
+#define TASKBTN_MINW   34
+
+/* Single source of truth for pill layout, shared by draw_taskbar() and
+ * every taskbar hit-test below -- computing it twice with two different
+ * formulas would be exactly how these things quietly drift out of sync. */
+static void taskbar_layout(int *ids_out, int *count_out, int *pill_w_out) {
+    int n = 0;
+    for (int id = 0; id < WIN_ID_COUNT; id++) {
+        if (win_is_open(id) && win_is_minimized(id)) ids_out[n++] = id;
+    }
+    /* insertion sort by minimize_seq ascending -- earliest-minimized
+     * first. n is at most WIN_ID_COUNT (5), so this is plenty fast. */
+    for (int i = 1; i < n; i++) {
+        int key = ids_out[i];
+        u32 kseq = minimize_seq[key];
+        int j = i - 1;
+        while (j >= 0 && minimize_seq[ids_out[j]] > kseq) {
+            ids_out[j + 1] = ids_out[j];
+            j--;
+        }
+        ids_out[j + 1] = key;
+    }
+    int avail_w = VGA_WIDTH - TASKBTN_X - 4;
+    int pw = (n > 0) ? avail_w / n : TASKBTN_MAXW;
+    if (pw > TASKBTN_MAXW) pw = TASKBTN_MAXW;
+    if (pw < TASKBTN_MINW) pw = TASKBTN_MINW;
+    *count_out = n;
+    *pill_w_out = pw;
+}
+
+/* "N1...", "N2...", ..., or "S..." -- short enough to always fit even
+ * the narrowest pill width. */
+static void taskbar_pill_label(int id, char *out, u32 outsz) {
+    u32 len = 0;
+    if (id == WIN_ID_SETTING) {
+        const char *s = "S...";
+        while (*s) kstrcpy_append(out, &len, outsz, *s++);
+    } else {
+        kstrcpy_append(out, &len, outsz, 'N');
+        kstrcpy_append(out, &len, outsz, (char)('1' + id));
+        const char *s = "...";
+        while (*s) kstrcpy_append(out, &len, outsz, *s++);
+    }
+}
+
 static void draw_taskbar(void) {
     bb_fillrect(0, TASKBAR_Y, VGA_WIDTH, TASKBAR_H, COL_LGRAY);
     for (int i = 0; i < VGA_WIDTH; i++) bb_putpixel(i, TASKBAR_Y, COL_WHITE);
@@ -555,43 +717,30 @@ static void draw_taskbar(void) {
     int press = start_menu_open ? 1 : 0;
     font_draw_string(STARTBTN_X + 3 + press, STARTBTN_Y + 1 + press, "AM", COL_BLACK);
 
-    if (notepad.open && notepad.minimized) {
-        /* taskbar button showing the minimized app, with its own mini
-         * restore/close glyphs drawn right inside the taskbar button. */
-        bb_fillrect(TASKBTN_X, TASKBTN_Y, TASKBTN_W, TASKBTN_H, COL_WHITE);
-        bb_rect(TASKBTN_X, TASKBTN_Y, TASKBTN_W, TASKBTN_H, COL_DGRAY);
-        font_draw_string(TASKBTN_X + 2, TASKBTN_Y + 1, "N...", COL_BLACK);
+    int ids[WIN_ID_COUNT], count, pill_w;
+    taskbar_layout(ids, &count, &pill_w);
+    for (int i = 0; i < count; i++) {
+        int id = ids[i];
+        int px = TASKBTN_X + i * (pill_w + TASKBTN_GAP);
+        int py = TASKBTN_Y;
+
+        bb_fillrect(px, py, pill_w, TASKBTN_H, COL_WHITE);
+        bb_rect(px, py, pill_w, TASKBTN_H, COL_DGRAY);
+        char label[8];
+        taskbar_pill_label(id, label, sizeof(label));
+        font_draw_string(px + 2, py + 1, label, COL_BLACK);
 
         /* restore glyph: two overlapping squares */
-        int rx = TASKBTN_X + TASKBTN_W - 20, ry = TASKBTN_Y + 1;
+        int rx = px + pill_w - 20, ry = py + 1;
         bb_rect(rx + 2, ry, 6, 6, COL_BLACK);
         bb_rect(rx, ry + 2, 6, 6, COL_BLACK);
         bb_fillrect(rx + 1, ry + 3, 4, 4, COL_WHITE);
 
         /* close glyph: X */
-        int cx = TASKBTN_X + TASKBTN_W - 9, cy = TASKBTN_Y + 1;
-        for (int i = 0; i < 7; i++) {
-            bb_putpixel(cx + i, cy + i, COL_BLACK);
-            bb_putpixel(cx + i, cy + 6 - i, COL_BLACK);
-        }
-    }
-
-    if (setting.open && setting.minimized) {
-        /* same pill, same glyphs, its own slot -- SETTING.EXE's taskbar
-         * presence when minimized. */
-        bb_fillrect(TASKBTN2_X, TASKBTN2_Y, TASKBTN2_W, TASKBTN2_H, COL_WHITE);
-        bb_rect(TASKBTN2_X, TASKBTN2_Y, TASKBTN2_W, TASKBTN2_H, COL_DGRAY);
-        font_draw_string(TASKBTN2_X + 2, TASKBTN2_Y + 1, "S...", COL_BLACK);
-
-        int rx = TASKBTN2_X + TASKBTN2_W - 20, ry = TASKBTN2_Y + 1;
-        bb_rect(rx + 2, ry, 6, 6, COL_BLACK);
-        bb_rect(rx, ry + 2, 6, 6, COL_BLACK);
-        bb_fillrect(rx + 1, ry + 3, 4, 4, COL_WHITE);
-
-        int cx = TASKBTN2_X + TASKBTN2_W - 9, cy = TASKBTN2_Y + 1;
-        for (int i = 0; i < 7; i++) {
-            bb_putpixel(cx + i, cy + i, COL_BLACK);
-            bb_putpixel(cx + i, cy + 6 - i, COL_BLACK);
+        int cx = px + pill_w - 9, cy = py + 1;
+        for (int k = 0; k < 7; k++) {
+            bb_putpixel(cx + k, cy + k, COL_BLACK);
+            bb_putpixel(cx + k, cy + 6 - k, COL_BLACK);
         }
     }
 }
@@ -600,25 +749,19 @@ static int start_button_hit(int px, int py) {
     return in_rect(px, py, STARTBTN_X, STARTBTN_Y, STARTBTN_W, STARTBTN_H);
 }
 
-static int taskbar_restore_hit(int px, int py) {
-    if (!(notepad.open && notepad.minimized)) return 0;
-    int rx = TASKBTN_X + TASKBTN_W - 20, ry = TASKBTN_Y + 1;
-    return in_rect(px, py, rx, ry, 8, 8);
-}
-static int taskbar_close_hit(int px, int py) {
-    if (!(notepad.open && notepad.minimized)) return 0;
-    int cx = TASKBTN_X + TASKBTN_W - 9, cy = TASKBTN_Y + 1;
-    return in_rect(px, py, cx, cy, 8, 8);
-}
-static int taskbar_restore_hit2(int px, int py) {
-    if (!(setting.open && setting.minimized)) return 0;
-    int rx = TASKBTN2_X + TASKBTN2_W - 20, ry = TASKBTN2_Y + 1;
-    return in_rect(px, py, rx, ry, 8, 8);
-}
-static int taskbar_close_hit2(int px, int py) {
-    if (!(setting.open && setting.minimized)) return 0;
-    int cx = TASKBTN2_X + TASKBTN2_W - 9, cy = TASKBTN2_Y + 1;
-    return in_rect(px, py, cx, cy, 8, 8);
+/* Returns the window id whose RESTORE glyph (kind=0) or CLOSE glyph
+ * (kind=1) contains (px,py), using the exact same layout draw_taskbar()
+ * just drew -- or -1 if the click didn't land on any pill's glyph. */
+static int taskbar_glyph_hit(int px, int py, int kind) {
+    int ids[WIN_ID_COUNT], count, pill_w;
+    taskbar_layout(ids, &count, &pill_w);
+    for (int i = 0; i < count; i++) {
+        int bx = TASKBTN_X + i * (pill_w + TASKBTN_GAP);
+        int gx = (kind == 0) ? (bx + pill_w - 20) : (bx + pill_w - 9);
+        int gy = TASKBTN_Y + 1;
+        if (in_rect(px, py, gx, gy, 8, 8)) return ids[i];
+    }
+    return -1;
 }
 
 /* ============================================================
@@ -786,11 +929,11 @@ static void draw_titlebar_buttons(void) {
 }
 
 static void draw_window(void) {
-    int wx = notepad.x, wy = notepad.y, ww = notepad.w, wh = notepad.h;
+    int wx = active_np->win.x, wy = active_np->win.y, ww = active_np->win.w, wh = active_np->win.h;
 
     /* drop shadow (skip when maximized -- looks wrong flush with the
      * screen edge and the taskbar) */
-    if (!notepad.maximized) {
+    if (!active_np->win.maximized) {
         bb_fillrect(wx + 3, wy + 3, ww, wh, COL_DGRAY);
     }
 
@@ -807,7 +950,7 @@ static void draw_window(void) {
     /* menu bar */
     int menu_y = wy + TITLEBAR_H + 1;
     bb_fillrect(wx + 1, menu_y, ww - 2, 9, COL_LGRAY);
-    if (file_menu_open) {
+    if (active_np->file_menu_open) {
         /* highlight the File label while its dropdown is open, like a
          * pressed menu button */
         bb_fillrect(wx + 3, menu_y, MENU_FILE_LABEL_W - 2, 9, COL_BLUE);
@@ -831,18 +974,18 @@ static void draw_window(void) {
      * same 8px advance since the Hangul glyphs were extracted at 8x8 to
      * match. */
     int cx = ex + 2, cy = ey + 2;
-    for (u32 i = 0; i < text_len; ) {
-        int clen = ko_utf8_char_len((unsigned char)text_buf[i]);
-        if (clen == 3 && i + 3 <= text_len) {
+    for (u32 i = 0; i < active_np->text_len; ) {
+        int clen = ko_utf8_char_len((unsigned char)active_np->text_buf[i]);
+        if (clen == 3 && i + 3 <= active_np->text_len) {
             if (cx > ex + ew - 10) { cx = ex + 2; cy += 9; }
             if (cy > ey + eh - 8) break;
-            int cp = ko_utf8_decode3(&text_buf[i]);
+            int cp = ko_utf8_decode3(&active_np->text_buf[i]);
             ko_font_draw_codepoint(cx, cy, cp, COL_BLACK);
             cx += 8;
             i += 3;
             continue;
         }
-        char c = text_buf[i];
+        char c = active_np->text_buf[i];
         if (c == '\n' || cx > ex + ew - 10) {
             cx = ex + 2;
             cy += 9;
@@ -856,7 +999,7 @@ static void draw_window(void) {
 
     /* Live preview of the syllable currently being composed (if Hangul
      * mode is on and something's mid-composition), shown right at the
-     * cursor position before it's actually committed to text_buf. */
+     * cursor position before it's actually committed to active_np->text_buf. */
     if (current_ime == IME_KOREAN && ko_ime_is_composing()) {
         if (cx > ex + ew - 10) { cx = ex + 2; cy += 9; }
         int preview_cp = ko_ime_preview_codepoint();
@@ -873,7 +1016,7 @@ static void draw_window(void) {
 /* Is (px,py) over the draggable part of the title bar -- i.e. the title
  * bar itself, but not over any of the three control buttons? */
 static int titlebar_drag_hit(int px, int py) {
-    if (!in_rect(px, py, notepad.x + 1, notepad.y + 1, notepad.w - 2, TITLEBAR_H)) return 0;
+    if (!in_rect(px, py, active_np->win.x + 1, active_np->win.y + 1, active_np->win.w - 2, TITLEBAR_H)) return 0;
     if (in_rect(px, py, btn_min_x(), btn_y(), BTN_W, BTN_H)) return 0;
     if (in_rect(px, py, btn_max_x(), btn_y(), BTN_W, BTN_H)) return 0;
     if (in_rect(px, py, btn_close_x(), btn_y(), BTN_W, BTN_H)) return 0;
@@ -1120,7 +1263,7 @@ static void draw_confirm_dialog(int mx, int my) {
     int body_y = y + TITLEBAR_H + 3;
     draw_warning_icon(x + 8, body_y);
     ko_draw_mixed_string(x + 26, body_y + 1,  t(STR_SAVE_CHANGES), COL_BLACK);
-    if (confirm_mode == CONFIRM_CLOSE) {
+    if (active_np->confirm_mode == CONFIRM_CLOSE) {
         ko_draw_mixed_string(x + 26, body_y + 11, t(STR_BEFORE_CLOSING), COL_BLACK);
     } else {
         ko_draw_mixed_string(x + 26, body_y + 11, t(STR_BEFORE_NEW), COL_BLACK);
@@ -1152,7 +1295,7 @@ static void draw_confirm_dialog(int mx, int my) {
  * arranged in a row below the app icon since the 320x200 screen has much
  * more spare width than height. Labels are short ("DOC", "DOC2", ...)
  * rather than the full filename, since there isn't room for 4 full
- * "NEW_TXT_DOC_N.TXT" labels side by side -- the real saved filename is
+ * "NEWDOC_N.TXT" labels side by side -- the real saved filename is
  * still the proper one on disk and in status messages, this is just a
  * compact on-screen label.
  * ============================================================ */
@@ -1211,19 +1354,26 @@ static void render_frame(int mouse_x, int mouse_y, const char *status_msg) {
 
     if (status_msg) draw_status_line(status_msg);
 
-    if (notepad.open && !notepad.minimized) {
-        draw_window();
-        if (file_menu_open) draw_file_menu(mouse_x, mouse_y);
-        if (confirm_mode != CONFIRM_NONE) draw_confirm_dialog(mouse_x, mouse_y);
+    /* Bottom-to-top through z_order -- whatever was clicked/opened most
+     * recently was raised to the end of this list, so it naturally gets
+     * drawn last (i.e. on top) with zero extra bookkeeping here. */
+    for (int i = 0; i < z_count; i++) {
+        int id = z_order[i];
+        if (!win_is_open(id) || win_is_minimized(id)) continue;
+        if (id == WIN_ID_SETTING) {
+            draw_setting_window();
+        } else {
+            active_np = &notepads[id];
+            draw_window();
+            if (active_np->file_menu_open) draw_file_menu(mouse_x, mouse_y);
+            if (active_np->confirm_mode != CONFIRM_NONE) draw_confirm_dialog(mouse_x, mouse_y);
+        }
     }
 
-    /* drawn after Notepad, so it sits on top when both happen to be open
-     * and overlapping */
-    if (setting.open && !setting.minimized) draw_setting_window();
-
     draw_taskbar();
-    /* drawn after the taskbar (and after Notepad's window above) so it
-     * sits on top of both -- popups always win the z-order argument */
+    /* drawn after the taskbar (and after every document window above) so
+     * it sits on top of all of them -- popups always win the z-order
+     * argument */
     if (start_menu_open) draw_start_menu(mouse_x, mouse_y);
     draw_cursor(mouse_x, mouse_y);
 
@@ -1285,6 +1435,24 @@ void kmain(void) {
         }
     }
 
+    /* Each of the NOTEPAD_MAX window slots gets its own cascaded default
+     * position (each one nudged 16px right/down from the last) so that
+     * opening several at once doesn't stack them in a single unreadable
+     * pile -- and since position is stored per-slot and persists across
+     * that slot's own opens/closes, this cascade only ever needs setting
+     * up once, here, at boot. */
+    for (int i = 0; i < NOTEPAD_MAX; i++) {
+        int ox = WIN_DEFAULT_X + i * 16;
+        int oy = WIN_DEFAULT_Y + i * 14;
+        notepads[i].id = i;
+        notepads[i].win.x = notepads[i].win.restore_x = ox;
+        notepads[i].win.y = notepads[i].win.restore_y = oy;
+        notepads[i].win.w = notepads[i].win.restore_w = WIN_DEFAULT_W;
+        notepads[i].win.h = notepads[i].win.restore_h = WIN_DEFAULT_H;
+        notepads[i].bound_slot = -1;
+    }
+    active_np = &notepads[0];
+
     int mx = VGA_WIDTH / 2, my = VGA_HEIGHT / 2;
     int awaiting_second_click = 0;   /* 1 = one icon click seen, waiting for a 2nd within the window */
     u32 last_icon_click_tick = 0;
@@ -1296,17 +1464,14 @@ void kmain(void) {
     const u32 double_click_window = 60000; /* tuned for delay(2000) per frame;
                                              * adjust proportionally if delay() changes */
 
-    /* Window-drag state: while dragging, we track the offset from the
-     * window's top-left corner to the point the user grabbed, so the
-     * window follows the cursor without "snapping" its corner to it. */
-    int dragging = 0;
+    /* Window-drag state: while dragging, we track which window id is
+     * being dragged (-1 = none) and the offset from that window's
+     * top-left corner to the point the user grabbed, so the window
+     * follows the cursor without "snapping" its corner to it. One shared
+     * mechanism now covers every Notepad window AND Setting, instead of
+     * a separate pair of variables per window. */
+    int dragging_id = -1;
     int drag_offset_x = 0, drag_offset_y = 0;
-
-    /* Same idea, separate state, for SETTING.EXE's window -- it can be
-     * dragged independently of (and simultaneously open alongside)
-     * Notepad. */
-    int dragging_setting = 0;
-    int drag_offset_x2 = 0, drag_offset_y2 = 0;
 
     render_frame(mx, my, status);
 
@@ -1325,67 +1490,34 @@ void kmain(void) {
             int left_now = mouse_left;
             int clicked = mouse_click_event; /* per-packet edge detection from the driver */
 
-            /* ---- drag in progress: move the window with the cursor ---- */
-            if (dragging) {
+            /* ---- drag in progress: move whichever window is being
+             * dragged with the cursor ---- */
+            if (dragging_id >= 0) {
                 if (left_now) {
-                    if (!notepad.maximized) {
+                    window_t *dw = win_ptr(dragging_id);
+                    if (!dw->maximized) {
                         int new_x = mx - drag_offset_x;
                         int new_y = my - drag_offset_y;
                         /* keep at least a sliver of the title bar on-screen
                          * so the window can never be dragged somewhere the
                          * user can't grab it again */
-                        notepad.x = clampi(new_x, -(notepad.w - 20), VGA_WIDTH - 20);
-                        notepad.y = clampi(new_y, 0, VGA_HEIGHT - TASKBAR_H - TITLEBAR_H);
+                        dw->x = clampi(new_x, -(dw->w - 20), VGA_WIDTH - 20);
+                        dw->y = clampi(new_y, 0, VGA_HEIGHT - TASKBAR_H - TITLEBAR_H);
                     }
                 } else {
-                    dragging = 0; /* button released -> stop dragging */
-                }
-            }
-            if (dragging_setting) {
-                if (left_now) {
-                    int new_x = mx - drag_offset_x2;
-                    int new_y = my - drag_offset_y2;
-                    setting.x = clampi(new_x, -(setting.w - 20), VGA_WIDTH - 20);
-                    setting.y = clampi(new_y, 0, VGA_HEIGHT - TASKBAR_H - TITLEBAR_H);
-                } else {
-                    dragging_setting = 0;
+                    dragging_id = -1; /* button released -> stop dragging */
                 }
             }
 
             if (clicked) {
-                if (notepad.open && !notepad.minimized && confirm_mode != CONFIRM_NONE) {
-                    /* Modal: while a Save-changes confirm dialog is open,
-                     * it takes total precedence -- the user must explicitly
-                     * choose Yes or No. Clicks elsewhere are ignored. */
-                    if (confirm_yes_hit(mx, my)) {
-                        confirm_yes_action();
-                    } else if (confirm_no_hit(mx, my)) {
-                        confirm_no_action();
-                    } else if (confirm_close_hit(mx, my)) {
-                        /* Cancel: neither save nor discard, just close the
-                         * dialog and go back to whatever was on-screen. */
-                        confirm_mode = CONFIRM_NONE;
-                    }
-                } else if (notepad.open && !notepad.minimized && file_menu_open) {
-                    /* Modal-ish: while the File dropdown is open, a click
-                     * either picks an item or dismisses the menu -- it
-                     * doesn't fall through to icon/titlebar/etc handling
-                     * this same frame. */
-                    if (file_menu_item_hit(mx, my, 0)) {
-                        status = t(STR_SAVE_AS_COMING_SOON);
-                        file_menu_open = 0;
-                    } else if (file_menu_item_hit(mx, my, 1)) {
-                        int saved_slot = save_current_document();
-                        status = saved_slot >= 0 ? format_saved_status(saved_slot) : t(STR_STORAGE_FULL_NOT_SAVED);
-                        file_menu_open = 0;
-                    } else if (file_menu_item_hit(mx, my, 2)) {
-                        confirm_mode = CONFIRM_NEW;
-                        beep_warning();
-                        file_menu_open = 0;
-                    } else {
-                        file_menu_open = 0; /* click outside just dismisses it */
-                    }
-                } else if (power_menu_open) {
+                /* Recomputed once per click since there are at most
+                 * WIN_ID_COUNT (5) windows -- cheap enough not to bother
+                 * caching, and it keeps this in sync with draw_taskbar()
+                 * by construction (same taskbar_layout() underneath). */
+                int taskbar_restore_id = taskbar_glyph_hit(mx, my, 0);
+                int taskbar_close_id   = taskbar_glyph_hit(mx, my, 1);
+
+                if (power_menu_open) {
                     /* Cascaded off the Start Menu's power item. Whatever
                      * this click was for -- an action or a miss -- both
                      * menus close afterward, same as clicking a Start
@@ -1399,18 +1531,30 @@ void kmain(void) {
                     start_menu_open = 0;
                 } else if (start_menu_open) {
                     /* Same "pick an item or dismiss" contract as the File
-                     * dropdown just above -- except the power item, which
+                     * dropdown below -- except the power item, which
                      * cascades into its own flyout instead of resolving
                      * immediately, so it deliberately does NOT close the
                      * Start Menu the way the other two items do. */
                     if (start_menu_item_hit(mx, my, 0)) {
-                        notepad.open = 1;
-                        notepad.minimized = 0;
-                        ko_ime_reset();
-                        status = t(STR_NOTEPAD_OPENED);
+                        int slot = find_free_notepad_slot();
+                        if (slot < 0) {
+                            status = t(STR_ALL_NOTEPAD_WINDOWS_OPEN);
+                        } else {
+                            active_np = &notepads[slot];
+                            active_np->win.open = 1;
+                            active_np->win.minimized = 0;
+                            active_np->text_len = 0; active_np->text_buf[0] = 0;
+                            active_np->bound_slot = -1;
+                            active_np->file_menu_open = 0;
+                            active_np->confirm_mode = CONFIRM_NONE;
+                            ko_ime_reset();
+                            win_z_raise(slot);
+                            status = t(STR_NOTEPAD_OPENED);
+                        }
                         start_menu_open = 0;
                     } else if (start_menu_item_hit(mx, my, 1)) {
                         setting.open = 1;
+                        win_z_raise(WIN_ID_SETTING);
                         status = t(STR_SETTING_OPENED);
                         start_menu_open = 0;
                     } else if (start_menu_item_hit(mx, my, STARTMENU_POWER_IDX)) {
@@ -1420,159 +1564,244 @@ void kmain(void) {
                     }
                 } else if (start_button_hit(mx, my)) {
                     start_menu_open = 1;
-                } else if (setting.open && !setting.minimized && in_rect(mx, my, setting.x, setting.y, setting.w, setting.h)) {
-                    /* SETTING.EXE is a normal (non-modal) window: unlike
-                     * the dropdowns/dialogs above, a click that misses
-                     * every control inside it just does nothing -- it
-                     * does NOT swallow clicks outside its own rect, so
-                     * Notepad/icons/taskbar all stay reachable while this
-                     * is open. That's what the outer in_rect() above is
-                     * for. */
-                    if (setting_min_hit(mx, my)) {
-                        setting.minimized = 1;
-                        status = t(STR_SETTING_MINIMIZED);
-                    } else if (setting_max_hit(mx, my)) {
-                        if (setting.maximized) {
-                            unmaximize_window(&setting);
-                            status = t(STR_SETTING_RESTORED);
-                        } else {
-                            maximize_window(&setting);
-                            status = t(STR_SETTING_MAXIMIZED);
-                        }
-                    } else if (setting_close_hit(mx, my)) {
+                } else if (taskbar_restore_id >= 0) {
+                    win_restore(taskbar_restore_id);
+                    status = (taskbar_restore_id == WIN_ID_SETTING)
+                                 ? t(STR_SETTING_RESTORED) : t(STR_NOTEPAD_RESTORED);
+                } else if (taskbar_close_id >= 0) {
+                    if (taskbar_close_id == WIN_ID_SETTING) {
+                        /* No unsaved-changes concept in Settings, so its
+                         * taskbar close just closes -- no warning needed. */
                         setting.open = 0;
-                    } else if (setting_nav_hit(mx, my, SETTING_NAV_LANGUAGE)) {
-                        setting_page = SETTING_NAV_LANGUAGE;
-                    } else if (setting_nav_hit(mx, my, SETTING_NAV_IME)) {
-                        setting_page = SETTING_NAV_IME;
-                    } else if (setting_page == SETTING_NAV_LANGUAGE && setting_row_hit(mx, my, 0)) {
-                        sys_language = LANG_ENGLISH;
-                        status = t(STR_DEFAULT_HINT);
-                    } else if (setting_page == SETTING_NAV_LANGUAGE && setting_row_hit(mx, my, 1)) {
-                        sys_language = LANG_KOREAN;
-                        status = t(STR_DEFAULT_HINT);
-                    } else if (setting_page == SETTING_NAV_IME && setting_row_hit(mx, my, 0)) {
-                        /* multi-select checkbox -- refuse to uncheck the
-                         * last remaining enabled IME, same as real OSes
-                         * never let you remove your only keyboard layout */
-                        if (ime_enabled[IME_ENGLISH] && !ime_enabled[IME_KOREAN]) {
-                            status = t(STR_IME_MIN_ONE);
-                        } else {
-                            ime_enabled[IME_ENGLISH] = !ime_enabled[IME_ENGLISH];
-                            ime_ensure_current_enabled();
-                        }
-                    } else if (setting_page == SETTING_NAV_IME && setting_row_hit(mx, my, 1)) {
-                        if (ime_enabled[IME_KOREAN] && !ime_enabled[IME_ENGLISH]) {
-                            status = t(STR_IME_MIN_ONE);
-                        } else {
-                            ime_enabled[IME_KOREAN] = !ime_enabled[IME_KOREAN];
-                            ime_ensure_current_enabled();
-                        }
-                    } else if (setting_titlebar_drag_hit(mx, my) && !setting.maximized) {
-                        dragging_setting = 1;
-                        drag_offset_x2 = mx - setting.x;
-                        drag_offset_y2 = my - setting.y;
-                    }
-                } else if (in_rect(mx, my, ICON_X, ICON_Y, ICON_W, ICON_H)) {
-                    if (awaiting_second_click && (tick - last_icon_click_tick) < double_click_window) {
-                        /* this is the 2nd click of a double-click: open it */
-                        notepad.open = 1;
-                        notepad.minimized = 0;
-                        ko_ime_reset();
-                        status = t(STR_NOTEPAD_OPENED);
-                        awaiting_second_click = 0;
+                        setting.minimized = 0;
+                        win_z_remove(WIN_ID_SETTING);
                     } else {
-                        /* this is a 1st click: arm the double-click window */
-                        awaiting_second_click = 1;
-                        last_icon_click_tick = tick;
-                    }
-                } else if (in_rect(mx, my, ICON2_X, ICON2_Y, ICON2_W, ICON2_H)) {
-                    if (awaiting_second_click_setting && (tick - last_setting_click_tick) < double_click_window) {
-                        setting.open = 1;
-                        status = t(STR_SETTING_OPENED);
-                        awaiting_second_click_setting = 0;
-                    } else {
-                        awaiting_second_click_setting = 1;
-                        last_setting_click_tick = tick;
-                    }
-                } else if (notepad.open && !notepad.minimized) {
-                    if (in_rect(mx, my, btn_min_x(), btn_y(), BTN_W, BTN_H)) {
-                        notepad.minimized = 1;
-                        status = t(STR_NOTEPAD_MINIMIZED);
-                    } else if (in_rect(mx, my, btn_max_x(), btn_y(), BTN_W, BTN_H)) {
-                        if (notepad.maximized) {
-                            unmaximize_window(&notepad);
-                            status = t(STR_NOTEPAD_RESTORED);
-                        } else {
-                            maximize_window(&notepad);
-                            status = t(STR_NOTEPAD_MAXIMIZED);
-                        }
-                    } else if (in_rect(mx, my, btn_close_x(), btn_y(), BTN_W, BTN_H)) {
-                        /* Ask before closing, same Yes/No pattern as New. */
-                        confirm_mode = CONFIRM_CLOSE;
+                        /* Minimized taskbar close also asks first, for
+                         * consistency with the window's own X button. */
+                        active_np = &notepads[taskbar_close_id];
+                        active_np->confirm_mode = CONFIRM_CLOSE;
                         beep_warning();
-                    } else if (file_label_hit(mx, my)) {
-                        file_menu_open = 1;
-                    } else if (titlebar_drag_hit(mx, my) && !notepad.maximized) {
-                        /* start dragging: remember the grab offset so the
-                         * window doesn't jump when the drag begins */
-                        dragging = 1;
-                        drag_offset_x = mx - notepad.x;
-                        drag_offset_y = my - notepad.y;
+                        active_np->win.minimized = 0; /* bring it back on-screen so the dialog is visible */
+                        win_z_raise(taskbar_close_id);
                     }
-                } else if (taskbar_restore_hit(mx, my)) {
-                    notepad.minimized = 0;
-                    status = t(STR_NOTEPAD_RESTORED);
-                } else if (taskbar_close_hit(mx, my)) {
-                    /* Minimized taskbar close also asks first, for
-                     * consistency with the window's own X button. */
-                    confirm_mode = CONFIRM_CLOSE;
-                    beep_warning();
-                    notepad.minimized = 0; /* bring it back on-screen so the dialog is visible */
-                } else if (taskbar_restore_hit2(mx, my)) {
-                    setting.minimized = 0;
-                    status = t(STR_SETTING_RESTORED);
-                } else if (taskbar_close_hit2(mx, my)) {
-                    /* No unsaved-changes concept in Settings, so its
-                     * taskbar close just closes -- no warning needed. */
-                    setting.open = 0;
-                    setting.minimized = 0;
                 } else {
-                    /* Check desktop file icons last (any slot). */
-                    for (int slot = 0; slot < FS_MAX_FILES; slot++) {
-                        if (!desktop_file_exists[slot]) continue;
-                        if (!in_rect(mx, my, fileicon_x(slot), fileicon_y(slot), ICON_W, ICON_H)) continue;
+                    /* Topmost open+visible window whose rect contains the
+                     * click, z-order back-to-front reversed so the FRONT-
+                     * most window wins when two happen to overlap. */
+                    int hit_id = -1;
+                    for (int zi = z_count - 1; zi >= 0; zi--) {
+                        int id = z_order[zi];
+                        if (!win_is_open(id) || win_is_minimized(id)) continue;
+                        int wx, wy, ww, wh;
+                        win_get_rect(id, &wx, &wy, &ww, &wh);
+                        if (in_rect(mx, my, wx, wy, ww, wh)) { hit_id = id; break; }
+                    }
 
-                        if (awaiting_second_click_file_slot == slot &&
-                            (tick - last_file_icon_click_tick) < double_click_window) {
-                            /* 2nd click: open Notepad (if needed) and load
-                             * this slot's saved contents into the text
-                             * buffer, replacing whatever was there
-                             * unsaved, and bind the document to this slot
-                             * so a subsequent Save updates it in place. */
-                            u32 loaded = fs_load_slot(slot, text_buf, sizeof(text_buf) - 1);
-                            text_buf[loaded] = 0;
-                            text_len = loaded;
-                            bound_slot = slot;
-                            notepad.open = 1;
-                            notepad.minimized = 0;
-                            ko_ime_reset();
-                            status = format_saved_status(slot); /* reuse "SAVED: name" wording to show which file opened */
-                            awaiting_second_click_file_slot = -1;
-                        } else {
-                            awaiting_second_click_file_slot = slot;
-                            last_file_icon_click_tick = tick;
+                    if (hit_id == WIN_ID_SETTING) {
+                        /* Clicking anywhere on a window -- not just a
+                         * control that does something -- brings it to
+                         * the front, same as any real window manager. */
+                        win_z_raise(WIN_ID_SETTING);
+                        if (setting_min_hit(mx, my)) {
+                            win_minimize(WIN_ID_SETTING);
+                            status = t(STR_SETTING_MINIMIZED);
+                        } else if (setting_max_hit(mx, my)) {
+                            if (setting.maximized) {
+                                unmaximize_window(&setting);
+                                status = t(STR_SETTING_RESTORED);
+                            } else {
+                                maximize_window(&setting);
+                                status = t(STR_SETTING_MAXIMIZED);
+                            }
+                        } else if (setting_close_hit(mx, my)) {
+                            setting.open = 0;
+                            win_z_remove(WIN_ID_SETTING);
+                        } else if (setting_nav_hit(mx, my, SETTING_NAV_LANGUAGE)) {
+                            setting_page = SETTING_NAV_LANGUAGE;
+                        } else if (setting_nav_hit(mx, my, SETTING_NAV_IME)) {
+                            setting_page = SETTING_NAV_IME;
+                        } else if (setting_page == SETTING_NAV_LANGUAGE && setting_row_hit(mx, my, 0)) {
+                            sys_language = LANG_ENGLISH;
+                            status = t(STR_DEFAULT_HINT);
+                        } else if (setting_page == SETTING_NAV_LANGUAGE && setting_row_hit(mx, my, 1)) {
+                            sys_language = LANG_KOREAN;
+                            status = t(STR_DEFAULT_HINT);
+                        } else if (setting_page == SETTING_NAV_IME && setting_row_hit(mx, my, 0)) {
+                            /* multi-select checkbox -- refuse to uncheck the
+                             * last remaining enabled IME, same as real OSes
+                             * never let you remove your only keyboard layout */
+                            if (ime_enabled[IME_ENGLISH] && !ime_enabled[IME_KOREAN]) {
+                                status = t(STR_IME_MIN_ONE);
+                            } else {
+                                ime_enabled[IME_ENGLISH] = !ime_enabled[IME_ENGLISH];
+                                ime_ensure_current_enabled();
+                            }
+                        } else if (setting_page == SETTING_NAV_IME && setting_row_hit(mx, my, 1)) {
+                            if (ime_enabled[IME_KOREAN] && !ime_enabled[IME_ENGLISH]) {
+                                status = t(STR_IME_MIN_ONE);
+                            } else {
+                                ime_enabled[IME_KOREAN] = !ime_enabled[IME_KOREAN];
+                                ime_ensure_current_enabled();
+                            }
+                        } else if (setting_titlebar_drag_hit(mx, my) && !setting.maximized) {
+                            dragging_id = WIN_ID_SETTING;
+                            drag_offset_x = mx - setting.x;
+                            drag_offset_y = my - setting.y;
                         }
-                        break;
+                    } else if (hit_id >= 0) {
+                        active_np = &notepads[hit_id];
+                        win_z_raise(hit_id);
+
+                        if (active_np->confirm_mode != CONFIRM_NONE) {
+                            /* Modal to THIS window only -- other windows
+                             * remain fully interactive; only clicks that
+                             * land inside this one's rect even reach here. */
+                            if (confirm_yes_hit(mx, my)) {
+                                confirm_yes_action();
+                            } else if (confirm_no_hit(mx, my)) {
+                                confirm_no_action();
+                            } else if (confirm_close_hit(mx, my)) {
+                                active_np->confirm_mode = CONFIRM_NONE;
+                            }
+                        } else if (active_np->file_menu_open) {
+                            if (file_menu_item_hit(mx, my, 0)) {
+                                status = t(STR_SAVE_AS_COMING_SOON);
+                                active_np->file_menu_open = 0;
+                            } else if (file_menu_item_hit(mx, my, 1)) {
+                                int saved_slot = save_current_document();
+                                status = saved_slot >= 0 ? format_saved_status(saved_slot) : t(STR_STORAGE_FULL_NOT_SAVED);
+                                active_np->file_menu_open = 0;
+                            } else if (file_menu_item_hit(mx, my, 2)) {
+                                active_np->confirm_mode = CONFIRM_NEW;
+                                beep_warning();
+                                active_np->file_menu_open = 0;
+                            } else {
+                                active_np->file_menu_open = 0; /* click outside just dismisses it */
+                            }
+                        } else if (in_rect(mx, my, btn_min_x(), btn_y(), BTN_W, BTN_H)) {
+                            win_minimize(hit_id);
+                            status = t(STR_NOTEPAD_MINIMIZED);
+                        } else if (in_rect(mx, my, btn_max_x(), btn_y(), BTN_W, BTN_H)) {
+                            if (active_np->win.maximized) {
+                                unmaximize_window(&active_np->win);
+                                status = t(STR_NOTEPAD_RESTORED);
+                            } else {
+                                maximize_window(&active_np->win);
+                                status = t(STR_NOTEPAD_MAXIMIZED);
+                            }
+                        } else if (in_rect(mx, my, btn_close_x(), btn_y(), BTN_W, BTN_H)) {
+                            /* Ask before closing, same Yes/No pattern as New. */
+                            active_np->confirm_mode = CONFIRM_CLOSE;
+                            beep_warning();
+                        } else if (file_label_hit(mx, my)) {
+                            active_np->file_menu_open = 1;
+                        } else if (titlebar_drag_hit(mx, my) && !active_np->win.maximized) {
+                            /* start dragging: remember the grab offset so
+                             * the window doesn't jump when the drag begins */
+                            dragging_id = hit_id;
+                            drag_offset_x = mx - active_np->win.x;
+                            drag_offset_y = my - active_np->win.y;
+                        }
+                    } else if (in_rect(mx, my, ICON_X, ICON_Y, ICON_W, ICON_H)) {
+                        if (awaiting_second_click && (tick - last_icon_click_tick) < double_click_window) {
+                            /* 2nd click of a double-click: open a brand
+                             * new blank window in the first free slot. */
+                            int slot = find_free_notepad_slot();
+                            if (slot < 0) {
+                                status = t(STR_ALL_NOTEPAD_WINDOWS_OPEN);
+                            } else {
+                                active_np = &notepads[slot];
+                                active_np->win.open = 1;
+                                active_np->win.minimized = 0;
+                                active_np->text_len = 0; active_np->text_buf[0] = 0;
+                                active_np->bound_slot = -1;
+                                active_np->file_menu_open = 0;
+                                active_np->confirm_mode = CONFIRM_NONE;
+                                ko_ime_reset();
+                                win_z_raise(slot);
+                                status = t(STR_NOTEPAD_OPENED);
+                            }
+                            awaiting_second_click = 0;
+                        } else {
+                            awaiting_second_click = 1;
+                            last_icon_click_tick = tick;
+                        }
+                    } else if (in_rect(mx, my, ICON2_X, ICON2_Y, ICON2_W, ICON2_H)) {
+                        if (awaiting_second_click_setting && (tick - last_setting_click_tick) < double_click_window) {
+                            setting.open = 1;
+                            win_z_raise(WIN_ID_SETTING);
+                            status = t(STR_SETTING_OPENED);
+                            awaiting_second_click_setting = 0;
+                        } else {
+                            awaiting_second_click_setting = 1;
+                            last_setting_click_tick = tick;
+                        }
+                    } else {
+                        /* Check desktop file icons last (any slot). */
+                        for (int slot = 0; slot < FS_MAX_FILES; slot++) {
+                            if (!desktop_file_exists[slot]) continue;
+                            if (!in_rect(mx, my, fileicon_x(slot), fileicon_y(slot), ICON_W, ICON_H)) continue;
+
+                            if (awaiting_second_click_file_slot == slot &&
+                                (tick - last_file_icon_click_tick) < double_click_window) {
+                                /* 2nd click: if this file is already open in
+                                 * some window, just focus that one instead
+                                 * of loading a second editable copy (which
+                                 * would race on Save); otherwise open it in
+                                 * the first free window slot. */
+                                int existing = find_notepad_bound_to(slot);
+                                if (existing >= 0) {
+                                    notepads[existing].win.minimized = 0;
+                                    win_z_raise(existing);
+                                    status = format_saved_status(slot);
+                                } else {
+                                    int free_slot = find_free_notepad_slot();
+                                    if (free_slot < 0) {
+                                        status = t(STR_ALL_NOTEPAD_WINDOWS_OPEN);
+                                    } else {
+                                        active_np = &notepads[free_slot];
+                                        u32 loaded = fs_load_slot(slot, active_np->text_buf, sizeof(active_np->text_buf) - 1);
+                                        active_np->text_buf[loaded] = 0;
+                                        active_np->text_len = loaded;
+                                        active_np->bound_slot = slot;
+                                        active_np->win.open = 1;
+                                        active_np->win.minimized = 0;
+                                        active_np->file_menu_open = 0;
+                                        active_np->confirm_mode = CONFIRM_NONE;
+                                        ko_ime_reset();
+                                        win_z_raise(free_slot);
+                                        status = format_saved_status(slot); /* reuse "SAVED: name" wording to show which file opened */
+                                    }
+                                }
+                                awaiting_second_click_file_slot = -1;
+                            } else {
+                                awaiting_second_click_file_slot = slot;
+                                last_file_icon_click_tick = tick;
+                            }
+                            break;
+                        }
                     }
                 }
             }
         }
 
-        /* ---- keyboard: only affects notepad text when it's open+visible ---- */
+        /* ---- keyboard: routed to whichever window is topmost in
+         * z-order, if (and only if) that's a Notepad window -- Setting
+         * has no text fields, and if the desktop itself is topmost (or
+         * nothing is open at all), keystrokes just go nowhere. This is
+         * also why raising a window on click matters beyond visuals:
+         * the topmost window IS the keyboard focus. ---- */
         int k = keyboard_poll_key();
+        int focused_id = -1;
+        for (int zi = z_count - 1; zi >= 0; zi--) {
+            int id = z_order[zi];
+            if (win_is_open(id) && !win_is_minimized(id)) { focused_id = id; break; }
+        }
 
-        if (confirm_mode != CONFIRM_NONE) {
+        if (focused_id >= 0 && focused_id != WIN_ID_SETTING) {
+            active_np = &notepads[focused_id];
+
+        if (active_np->confirm_mode != CONFIRM_NONE) {
             /* keyboard shortcuts for the confirm dialog, so it can be
              * driven without the mouse too */
             if (k == 'y' || k == 'Y') {
@@ -1580,51 +1809,52 @@ void kmain(void) {
             } else if (k == 'n' || k == 'N') {
                 confirm_no_action();
             }
-        } else if (k == KEY_RALT && notepad.open && !notepad.minimized && !file_menu_open) {
+        } else if (k == KEY_RALT && active_np->win.open && !active_np->win.minimized && !active_np->file_menu_open) {
             /* Right Alt cycles to the next ENABLED input method (see
              * SETTING.EXE > SYSTEM > IME) -- matches the 한/영 key
              * position on real Korean keyboards. F7 used to do this too,
              * but that's gone now that IME selection lives in Settings. */
             ime_cycle_next();
             status = (current_ime == IME_KOREAN) ? t(STR_HANGUL_MODE_ON) : t(STR_ENGLISH_MODE_ON);
-        } else if (k > 0 && notepad.open && !notepad.minimized && !file_menu_open) {
+        } else if (k > 0 && active_np->win.open && !active_np->win.minimized && !active_np->file_menu_open) {
             char c = (char)k;
             if (keyboard_ctrl_held()) {
                 /* Ctrl+S / Ctrl+N / Ctrl+W accelerators, mirroring the
                  * File menu and the title bar's close button */
-                if (ko_ime_is_composing()) ko_ime_commit(text_buf, &text_len, sizeof(text_buf));
+                if (ko_ime_is_composing()) ko_ime_commit(active_np->text_buf, &active_np->text_len, sizeof(active_np->text_buf));
                 if (c == 's' || c == 'S') {
                     int saved_slot = save_current_document();
                     status = saved_slot >= 0 ? format_saved_status(saved_slot) : t(STR_STORAGE_FULL_NOT_SAVED);
                 } else if (c == 'n' || c == 'N') {
-                    confirm_mode = CONFIRM_NEW;
+                    active_np->confirm_mode = CONFIRM_NEW;
                     beep_warning();
                 } else if (c == 'w' || c == 'W') {
-                    confirm_mode = CONFIRM_CLOSE;
+                    active_np->confirm_mode = CONFIRM_CLOSE;
                     beep_warning();
                 }
             } else if (c == '\b') {
                 if (current_ime == IME_KOREAN && ko_ime_backspace()) {
                     /* consumed by the IME: undid one step of the syllable
                      * currently being composed, nothing else to do */
-                } else if (text_len > 0) {
-                    int del = ko_utf8_last_char_len(text_buf, text_len);
-                    text_len -= del;
-                    text_buf[text_len] = 0;
+                } else if (active_np->text_len > 0) {
+                    int del = ko_utf8_last_char_len(active_np->text_buf, active_np->text_len);
+                    active_np->text_len -= del;
+                    active_np->text_buf[active_np->text_len] = 0;
                 }
-            } else if (current_ime == IME_KOREAN && ko_ime_feed_key(c, text_buf, &text_len, sizeof(text_buf))) {
+            } else if (current_ime == IME_KOREAN && ko_ime_feed_key(c, active_np->text_buf, &active_np->text_len, sizeof(active_np->text_buf))) {
                 /* consumed as a jamo keystroke -- composition state
                  * updated (and/or a completed syllable was appended to
-                 * text_buf) inside ko_ime_feed_key() itself */
+                 * active_np->text_buf) inside ko_ime_feed_key() itself */
             } else if (c == '\n' || c == ' ' || (c >= 32 && c < 127)) {
                 if (current_ime == IME_KOREAN && ko_ime_is_composing()) {
                     /* a non-jamo key (space, enter, punctuation) always
                      * flushes an in-progress syllable first, matching how
                      * every real Hangul IME behaves */
-                    ko_ime_commit(text_buf, &text_len, sizeof(text_buf));
+                    ko_ime_commit(active_np->text_buf, &active_np->text_len, sizeof(active_np->text_buf));
                 }
-                kstrcpy_append(text_buf, &text_len, sizeof(text_buf), c);
+                kstrcpy_append(active_np->text_buf, &active_np->text_len, sizeof(active_np->text_buf), c);
             }
+        }
         }
 
         render_frame(mx, my, status);

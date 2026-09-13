@@ -9,7 +9,7 @@
  * "Save" stops eating your previous file every single time, which,
  * before this existed, it absolutely did. Saving always grabs the first
  * empty slot (or reuses the one this document already belongs to),
- * giving you NEW_TXT_DOC.TXT, then _2, then _3, then _4, and then a
+ * giving you NEWDOC.TXT, then _2, then _3, then _4, and then a
  * polite "sorry, full" if you try for a 5th.
  *
  * Disk layout (LBA = sector number, 512 bytes a pop):
@@ -17,10 +17,10 @@
  *   LBA 1-1024   - the kernel (512KB budget -- it's got a whole Hangul
  *                  font, and a network stack is still on the way)
  *   LBA 1100+    - the four file slots, 9 sectors each (1 header + 8 data):
- *                    slot 0: LBA 1100-1108 -> "NEW_TXT_DOC.TXT"
- *                    slot 1: LBA 1109-1117 -> "NEW_TXT_DOC_2.TXT"
- *                    slot 2: LBA 1118-1126 -> "NEW_TXT_DOC_3.TXT"
- *                    slot 3: LBA 1127-1135 -> "NEW_TXT_DOC_4.TXT"
+ *                    slot 0: LBA 1100-1108 -> "NEWDOC.TXT"
+ *                    slot 1: LBA 1109-1117 -> "NEWDOC_2.TXT"
+ *                    slot 2: LBA 1118-1126 -> "NEWDOC_3.TXT"
+ *                    slot 3: LBA 1127-1135 -> "NEWDOC_4.TXT"
  * (There's a gap between LBA 1024 and 1100 on purpose -- room to grow
  * the kernel's own budget again later without immediately colliding
  * with the file storage area the way the old LBA-300 layout eventually
@@ -35,10 +35,10 @@
 #define FS_MAX_FILES       4
 
 static const char *fs_slot_names[FS_MAX_FILES] = {
-    "NEW_TXT_DOC.TXT",
-    "NEW_TXT_DOC_2.TXT",
-    "NEW_TXT_DOC_3.TXT",
-    "NEW_TXT_DOC_4.TXT",
+    "NEWDOC.TXT",
+    "NEWDOC_2.TXT",
+    "NEWDOC_3.TXT",
+    "NEWDOC_4.TXT",
 };
 
 static inline u32 fs_slot_header_lba(int slot) { return FS_BASE_LBA + (u32)slot * FS_SLOT_SECTORS; }
