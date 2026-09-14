@@ -154,8 +154,3 @@ asks:
   sign-in are planned, since this kernel has no TCP/IP stack, no TLS, and
   no registered OAuth credentials to talk to those services with -- any
   "sign in" UI here would need to be honestly local-only.
-
-## License
-
-MiniWin's own code is licensed under the GNU General Public License v3.0 (GPL-3.0) -- see `LICENSE`.
-The bundled Dalmoori font (`third_party/dalmoori-font/`) is Apache-2.0 licensed by its own authors; see the `LICENSE`/`NOTICE.md` in that directory.
