@@ -8,10 +8,12 @@
 #include "font_ko.h"
 #include "hangul_ime.h"
 #include "speaker.h"
+#include "rtc.h"
 #include "serial.h"
 #include "pci.h"
 #include "nic.h"
 #include "rtl8139.h"
+#include "e1000.h"
 #include "net_diag.h"
 
 #define DESKTOP_COLOR_BG      COL_LCYAN
@@ -116,6 +118,7 @@ typedef enum {
     STR_HANGUL_MODE_ON, STR_ENGLISH_MODE_ON,
     STR_IME_MIN_ONE,
     STR_ALL_NOTEPAD_WINDOWS_OPEN,
+    STR_TIMEZONE,
     STR_COUNT
 } ui_str_id;
 
@@ -157,6 +160,7 @@ static const char *ui_strings_en[STR_COUNT] = {
     [STR_ENGLISH_MODE_ON] = "ENGLISH MODE ON (RIGHT ALT TO SWITCH)",
     [STR_IME_MIN_ONE] = "AT LEAST ONE IME MUST STAY ENABLED",
     [STR_ALL_NOTEPAD_WINDOWS_OPEN] = "ALL 4 NOTEPAD WINDOWS ALREADY OPEN",
+    [STR_TIMEZONE] = "Time Zone",
 };
 
 static const char *ui_strings_ko[STR_COUNT] = {
@@ -197,6 +201,7 @@ static const char *ui_strings_ko[STR_COUNT] = {
     [STR_ENGLISH_MODE_ON] = "\xec\x98\x81\xec\x96\xb4 \xeb\xaa\xa8\xeb\x93\x9c \xec\xbc\x9c\xec\xa7\x90 (RIGHT ALT\xeb\xa1\x9c \xec\xa0\x84\xed\x99\x98)",
     [STR_IME_MIN_ONE] = "\xec\xb5\x9c\xec\x86\x8c 1\xea\xb0\x9c\xec\x9d\x98 \xec\x9e\x85\xeb\xa0\xa5\xea\xb8\xb0\xeb\x8a\x94 \xec\xbc\x9c\xec\xa0\xb8 \xec\x9e\x88\xec\x96\xb4\xec\x95\xbc \xed\x95\xa8",
     [STR_ALL_NOTEPAD_WINDOWS_OPEN] = "\xeb\x85\xb8\xed\x8a\xb8\xed\x8c\xa8\xeb\x93\x9c \xec\xb0\xbd 4\xea\xb0\x9c\xea\xb0\x80 \xec\x9d\xb4\xeb\xaf\xb8 \xeb\xaa\xa8\xeb\x91\x90 \xec\x97\xb4\xeb\xa0\xa4 \xec\x9e\x88\xec\x9d\x8c",
+    [STR_TIMEZONE] = "\xec\x8b\x9c\xea\xb0\x84\xeb\x8c\x80",
 };
 
 
@@ -259,11 +264,136 @@ static void draw_desktop_icon2(void) {
     font_draw_string(ICON2_X + (ICON_SLOT_W - 8 * 4) / 2, ICON2_Y + 22, line2, COL_BLACK);
 }
 
+#define TASKBAR_H     14
+#define TASKBAR_Y     (VGA_HEIGHT - TASKBAR_H)
+
+/* ============================================================
+ * Clock -- bottom-right of the taskbar. Real CMOS hardware time (see
+ * rtc.h), not a simulated tick counter. There's deliberately no
+ * "automatic" timezone-by-location here: that would need a working
+ * IP/DNS/HTTP stack to ask some geolocation service where in the world
+ * this machine is, and this kernel only has raw Ethernet + ARP so far
+ * (see kernel/net_diag.h) -- no IP layer, no DNS, no HTTP client. So
+ * instead, the timezone is a plain manual UTC offset, set in
+ * SETTING.EXE > SYSTEM > Time Zone, and applied to the CMOS reading via
+ * rtc_apply_offset(). Honest > fake.
+ * ============================================================ */
+static int tz_offset_hours = 9;  /* default UTC+9 (KST) -- arbitrary starting point, adjustable in Settings */
+static int clock_popup_open = 0;
+
+static const char *weekday_names_en[7] = {
+    "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"
+};
+static const char *month_names_en[12] = {
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December"
+};
+/* Korean dates are conventionally numeric ("9월 14일"), so there's no
+ * month-name table to localize -- just the weekday name and the
+ * 년/월/일 particles, built directly into format_full_date() below. */
+static const char *weekday_names_ko[7] = {
+    "\xec\x9d\xbc\xec\x9a\x94\xec\x9d\xbc", "\xec\x9b\x94\xec\x9a\x94\xec\x9d\xbc", "\xed\x99\x94\xec\x9a\x94\xec\x9d\xbc",
+    "\xec\x88\x98\xec\x9a\x94\xec\x9d\xbc", "\xeb\xaa\xa9\xec\x9a\x94\xec\x9d\xbc", "\xea\xb8\x88\xec\x9a\x94\xec\x9d\xbc",
+    "\xed\x86\xa0\xec\x9a\x94\xec\x9d\xbc"
+}; /* 일요일 월요일 화요일 수요일 목요일 금요일 토요일 */
+
+static void append_str(char *out, u32 *len, u32 outsz, const char *s) {
+    while (*s) kstrcpy_append(out, len, outsz, *s++);
+}
+static void append_uint(char *out, u32 *len, u32 outsz, int v) {
+    char tmp[12];
+    int n = 0;
+    if (v == 0) { kstrcpy_append(out, len, outsz, '0'); return; }
+    while (v > 0 && n < (int)sizeof(tmp)) { tmp[n++] = (char)('0' + (v % 10)); v /= 10; }
+    while (n > 0) kstrcpy_append(out, len, outsz, tmp[--n]);
+}
+static void append_uint2(char *out, u32 *len, u32 outsz, int v) { /* zero-padded to 2 digits */
+    kstrcpy_append(out, len, outsz, (char)('0' + (v / 10) % 10));
+    kstrcpy_append(out, len, outsz, (char)('0' + v % 10));
+}
+
+/* "3:45 PM" (English) or "오후 3:45" (Korean) -- what the taskbar shows. */
+static void format_clock_time(rtc_time_t *t, char *out, u32 outsz) {
+    u32 len = 0;
+    int h12 = t->hour % 12; if (h12 == 0) h12 = 12;
+    int is_pm = t->hour >= 12;
+
+    if (sys_language == LANG_KOREAN) {
+        append_str(out, &len, outsz, is_pm ? "\xec\x98\xa4\xed\x9b\x84" : "\xec\x98\xa4\xec\xa0\x84"); /* 오후/오전 */
+        kstrcpy_append(out, &len, outsz, ' ');
+    }
+    append_uint(out, &len, outsz, h12);
+    kstrcpy_append(out, &len, outsz, ':');
+    append_uint2(out, &len, outsz, t->minute);
+    if (sys_language == LANG_ENGLISH) {
+        kstrcpy_append(out, &len, outsz, ' ');
+        append_str(out, &len, outsz, is_pm ? "PM" : "AM");
+    }
+}
+
+/* "Monday, September 14, 2026" (English) or "2026년 9월 14일 월요일"
+ * (Korean) -- shown in the popup when the clock is clicked. */
+static void format_full_date(rtc_time_t *t, char *out, u32 outsz) {
+    u32 len = 0;
+    if (sys_language == LANG_KOREAN) {
+        append_uint(out, &len, outsz, t->year);
+        append_str(out, &len, outsz, "\xeb\x85\x84 "); /* 년 */
+        append_uint(out, &len, outsz, t->month);
+        append_str(out, &len, outsz, "\xec\x9b\x94 "); /* 월 */
+        append_uint(out, &len, outsz, t->day);
+        append_str(out, &len, outsz, "\xec\x9d\xbc "); /* 일 */
+        append_str(out, &len, outsz, weekday_names_ko[t->weekday]);
+    } else {
+        append_str(out, &len, outsz, weekday_names_en[t->weekday]);
+        append_str(out, &len, outsz, ", ");
+        append_str(out, &len, outsz, month_names_en[t->month - 1]);
+        kstrcpy_append(out, &len, outsz, ' ');
+        append_uint(out, &len, outsz, t->day);
+        append_str(out, &len, outsz, ", ");
+        append_uint(out, &len, outsz, t->year);
+    }
+}
+
+/* "UTC+9" / "UTC-5" -- shown in SETTING.EXE's Time Zone page. */
+static void build_tz_label(char *out, u32 outsz) {
+    u32 len = 0;
+    append_str(out, &len, outsz, "UTC");
+    kstrcpy_append(out, &len, outsz, tz_offset_hours >= 0 ? '+' : '-');
+    append_uint(out, &len, outsz, tz_offset_hours < 0 ? -tz_offset_hours : tz_offset_hours);
+}
+
+#define CLOCK_W  66
+#define CLOCK_H  10
+#define CLOCK_X  (VGA_WIDTH - CLOCK_W - 2)
+#define CLOCK_Y  (TASKBAR_Y + 2)
+
+static int clock_hit(int px, int py) {
+    return in_rect(px, py, CLOCK_X, CLOCK_Y, CLOCK_W, CLOCK_H);
+}
+
+#define DATE_POPUP_H 24
+
+static void draw_date_popup(void) {
+    rtc_time_t now;
+    rtc_read(&now);
+    rtc_time_t local = rtc_apply_offset(now, tz_offset_hours);
+    char date_str[40];
+    format_full_date(&local, date_str, sizeof(date_str));
+
+    int w = ko_string_width(date_str) + 12;
+    int x = CLOCK_X + CLOCK_W - w;
+    if (x < 2) x = 2;
+    int y = TASKBAR_Y - DATE_POPUP_H;
+
+    bb_fillrect(x + 2, y + 2, w, DATE_POPUP_H, COL_DGRAY);
+    bb_fillrect(x, y, w, DATE_POPUP_H, COL_LGRAY);
+    bb_rect(x, y, w, DATE_POPUP_H, COL_BLACK);
+    ko_draw_mixed_string(x + 6, y + 8, date_str, COL_BLACK);
+}
+
 /* ============================================================
  * Taskbar (bottom of screen, Windows-95-ish strip)
  * ============================================================ */
-#define TASKBAR_H     14
-#define TASKBAR_Y     (VGA_HEIGHT - TASKBAR_H)
 
 /* The Start button -- bottom-left corner, obviously. Every desktop OS
  * since 1995 has agreed on this location without ever holding a
@@ -676,7 +806,7 @@ static void taskbar_layout(int *ids_out, int *count_out, int *pill_w_out) {
         }
         ids_out[j + 1] = key;
     }
-    int avail_w = VGA_WIDTH - TASKBTN_X - 4;
+    int avail_w = VGA_WIDTH - TASKBTN_X - 4 - CLOCK_W - 4; /* leave room for the clock */
     int pw = (n > 0) ? avail_w / n : TASKBTN_MAXW;
     if (pw > TASKBTN_MAXW) pw = TASKBTN_MAXW;
     if (pw < TASKBTN_MINW) pw = TASKBTN_MINW;
@@ -745,6 +875,25 @@ static void draw_taskbar(void) {
             bb_putpixel(cx + k, cy + k, COL_BLACK);
             bb_putpixel(cx + k, cy + 6 - k, COL_BLACK);
         }
+    }
+
+    /* Clock, bottom-right corner. A sunken (rather than raised) look --
+     * opposite bevel from the Start button -- since it's a readout, not
+     * a button; pressed-looking while its date popup is open, same
+     * "flip which edge is light" trick as everywhere else in this UI. */
+    bb_fillrect(CLOCK_X, CLOCK_Y, CLOCK_W, CLOCK_H, COL_LGRAY);
+    u8 clo = clock_popup_open ? COL_WHITE : COL_DGRAY;
+    u8 chi = clock_popup_open ? COL_DGRAY : COL_WHITE;
+    bb_rect(CLOCK_X, CLOCK_Y, CLOCK_W, CLOCK_H, clo);
+    bb_putpixel(CLOCK_X, CLOCK_Y, chi);
+    {
+        rtc_time_t now;
+        rtc_read(&now);
+        rtc_time_t local = rtc_apply_offset(now, tz_offset_hours);
+        char clock_str[24];
+        format_clock_time(&local, clock_str, sizeof(clock_str));
+        int tw = ko_string_width(clock_str);
+        ko_draw_mixed_string(CLOCK_X + (CLOCK_W - tw) / 2, CLOCK_Y + 1, clock_str, COL_BLACK);
     }
 }
 
@@ -1069,6 +1218,7 @@ static void unmaximize_window(window_t *w) {
 
 #define SETTING_NAV_LANGUAGE 0
 #define SETTING_NAV_IME      1
+#define SETTING_NAV_TIMEZONE 2
 
 /* Which sidebar page is showing. Persists across close/reopen within
  * the same boot, same as any real settings app remembering your last
@@ -1113,6 +1263,18 @@ static inline int setting_row_y(int idx) { return setting_header_y() + idx * SET
 static int setting_row_hit(int px, int py, int idx) {
     return in_rect(px, py, setting_content_x(), setting_row_y(idx), SETTING_ROW_W, SETTING_ROW_H);
 }
+
+/* Time Zone page: "UTC+9  [-] [+]" -- two small buttons next to the
+ * current offset, rather than a text field this kernel has no widget
+ * for. Bounded to a plausible +/-14 range (the real-world extremes,
+ * roughly) when clicked. */
+#define TZ_BTN_W 12
+#define TZ_BTN_H 11
+static inline int tz_minus_x(void) { return setting_content_x() + 52; }
+static inline int tz_plus_x(void)  { return setting_content_x() + 68; }
+static inline int tz_btn_y(void)   { return setting_row_y(0) - 1; }
+static int tz_minus_hit(int px, int py) { return in_rect(px, py, tz_minus_x(), tz_btn_y(), TZ_BTN_W, TZ_BTN_H); }
+static int tz_plus_hit(int px, int py)  { return in_rect(px, py, tz_plus_x(),  tz_btn_y(), TZ_BTN_W, TZ_BTN_H); }
 
 /* Builds "(*) Name" / "( ) Name" (radio, single-select -- Language) or
  * "<x> Name" / "< > Name" (checkbox, multi-select -- IME) into `out`.
@@ -1174,10 +1336,10 @@ static void draw_setting_window(void) {
     int body_h = wh - TITLEBAR_H - 2;
     for (int j = 0; j < body_h; j++) bb_putpixel(wx + SETTING_SIDEBAR_W, body_y + j, COL_DGRAY);
 
-    /* "SYSTEM" section header, then the two navigable pages under it */
+    /* "SYSTEM" section header, then the three navigable pages under it */
     ko_draw_mixed_string(wx + 3, body_y + 2, t(STR_SYSTEM), COL_BLACK);
-    const char *nav_labels[2] = { t(STR_LANGUAGE), t(STR_IME) };
-    for (int i = 0; i < 2; i++) {
+    const char *nav_labels[3] = { t(STR_LANGUAGE), t(STR_IME), t(STR_TIMEZONE) };
+    for (int i = 0; i < 3; i++) {
         int ny = setting_nav_y(i);
         int active = (setting_page == i);
         u8 bg = active ? COL_BLUE : COL_LGRAY;
@@ -1193,11 +1355,22 @@ static void draw_setting_window(void) {
         ko_draw_mixed_string(setting_content_x(), setting_row_y(0), label, COL_BLACK);
         build_option_label(label, sizeof(label), 1, sys_language == LANG_KOREAN, "\xed\x95\x9c\xea\xb5\xad\xec\x96\xb4");
         ko_draw_mixed_string(setting_content_x(), setting_row_y(1), label, COL_BLACK);
-    } else {
+    } else if (setting_page == SETTING_NAV_IME) {
         build_option_label(label, sizeof(label), 0, ime_enabled[IME_ENGLISH], "English");
         ko_draw_mixed_string(setting_content_x(), setting_row_y(0), label, COL_BLACK);
         build_option_label(label, sizeof(label), 0, ime_enabled[IME_KOREAN], "\xed\x95\x9c\xea\xb5\xad\xec\x96\xb4");
         ko_draw_mixed_string(setting_content_x(), setting_row_y(1), label, COL_BLACK);
+    } else {
+        build_tz_label(label, sizeof(label));
+        ko_draw_mixed_string(setting_content_x(), setting_row_y(0) + 1, label, COL_BLACK);
+
+        int mnx = tz_minus_x(), mxx = tz_plus_x(), by = tz_btn_y();
+        bb_fillrect(mnx, by, TZ_BTN_W, TZ_BTN_H, COL_LGRAY);
+        bb_rect(mnx, by, TZ_BTN_W, TZ_BTN_H, COL_BLACK);
+        font_draw_string(mnx + 3, by + 1, "-", COL_BLACK);
+        bb_fillrect(mxx, by, TZ_BTN_W, TZ_BTN_H, COL_LGRAY);
+        bb_rect(mxx, by, TZ_BTN_W, TZ_BTN_H, COL_BLACK);
+        font_draw_string(mxx + 3, by + 1, "+", COL_BLACK);
     }
 }
 
@@ -1378,6 +1551,7 @@ static void render_frame(int mouse_x, int mouse_y, const char *status_msg) {
      * it sits on top of all of them -- popups always win the z-order
      * argument */
     if (start_menu_open) draw_start_menu(mouse_x, mouse_y);
+    if (clock_popup_open) draw_date_popup();
     draw_cursor(mouse_x, mouse_y);
 
     vga_present();
@@ -1427,14 +1601,16 @@ void kmain(void) {
     serial_init();
     pci_scan();
 
-    /* If an RTL8139 is present, bring it up and immediately prove both
-     * directions of it actually work: send a real ARP request for
+    /* If a supported NIC is present, bring it up and immediately prove
+     * both directions of it actually work: send a real ARP request for
      * QEMU SLIRP's default gateway (10.0.2.2, when the guest is
      * 10.0.2.15) and let net_diag_poll() in the main loop log whatever
      * comes back. This is driver bring-up instrumentation, not a
-     * feature -- there's no IP stack yet, just a NIC that can prove it
-     * sends and receives real frames. */
-    if (rtl8139_init()) {
+     * feature -- there's no IP stack yet, just NIC drivers that can
+     * prove they send and receive real frames. Only one NIC is ever
+     * "active" (see nic.h) -- try RTL8139 first, then e1000, whichever
+     * one QEMU (or real hardware) actually presented on the PCI bus. */
+    if (rtl8139_init() || e1000_init()) {
         net_send_arp_request(NET_IP4(10,0,2,15), NET_IP4(10,0,2,2));
     }
 
@@ -1531,7 +1707,12 @@ void kmain(void) {
                 int taskbar_restore_id = taskbar_glyph_hit(mx, my, 0);
                 int taskbar_close_id   = taskbar_glyph_hit(mx, my, 1);
 
-                if (power_menu_open) {
+                if (clock_popup_open) {
+                    /* Purely informational popup, no controls inside it
+                     * -- any click (including on the clock itself again)
+                     * just closes it. */
+                    clock_popup_open = 0;
+                } else if (power_menu_open) {
                     /* Cascaded off the Start Menu's power item. Whatever
                      * this click was for -- an action or a miss -- both
                      * menus close afterward, same as clicking a Start
@@ -1578,6 +1759,8 @@ void kmain(void) {
                     }
                 } else if (start_button_hit(mx, my)) {
                     start_menu_open = 1;
+                } else if (clock_hit(mx, my)) {
+                    clock_popup_open = 1;
                 } else if (taskbar_restore_id >= 0) {
                     win_restore(taskbar_restore_id);
                     status = (taskbar_restore_id == WIN_ID_SETTING)
@@ -1634,6 +1817,8 @@ void kmain(void) {
                             setting_page = SETTING_NAV_LANGUAGE;
                         } else if (setting_nav_hit(mx, my, SETTING_NAV_IME)) {
                             setting_page = SETTING_NAV_IME;
+                        } else if (setting_nav_hit(mx, my, SETTING_NAV_TIMEZONE)) {
+                            setting_page = SETTING_NAV_TIMEZONE;
                         } else if (setting_page == SETTING_NAV_LANGUAGE && setting_row_hit(mx, my, 0)) {
                             sys_language = LANG_ENGLISH;
                             status = t(STR_DEFAULT_HINT);
@@ -1657,6 +1842,10 @@ void kmain(void) {
                                 ime_enabled[IME_KOREAN] = !ime_enabled[IME_KOREAN];
                                 ime_ensure_current_enabled();
                             }
+                        } else if (setting_page == SETTING_NAV_TIMEZONE && tz_minus_hit(mx, my)) {
+                            if (tz_offset_hours > -12) tz_offset_hours--;
+                        } else if (setting_page == SETTING_NAV_TIMEZONE && tz_plus_hit(mx, my)) {
+                            if (tz_offset_hours < 14) tz_offset_hours++;
                         } else if (setting_titlebar_drag_hit(mx, my) && !setting.maximized) {
                             dragging_id = WIN_ID_SETTING;
                             drag_offset_x = mx - setting.x;

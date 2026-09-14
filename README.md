@@ -23,6 +23,17 @@ system with no libc, no bootloader framework, and no borrowed kernel code.
   Windows-95-style Start Menu with a cascading Shut Down/Restart flyout
   (both genuinely halt/reboot the machine), and a taskbar that lists
   minimized windows in the order you minimized them.
+- **Clock**: bottom-right of the taskbar, reading the real CMOS hardware
+  clock (`kernel/rtc.h`) -- not a simulated counter. Shows "3:45 PM"
+  (English) or "오후 3:45" (Korean, meridiem-first as is conventional);
+  click it for a small popup with the full date ("Monday, September 14,
+  2026" / "2026년 9월 14일 월요일"). Timezone is a manual UTC offset set
+  in SETTING.EXE > SYSTEM > Time Zone -- there's deliberately no
+  "automatic by location" here, since that would need a working
+  IP/DNS/HTTP stack to query a geolocation service, and this kernel only
+  has raw Ethernet + ARP so far (see Networking below). Honest manual
+  setting now, real automatic detection once there's an actual network
+  stack to ask with.
 - **Apps**: NOTEPAD.EXE (supports opening several documents at once, each
   in its own window, saving to real persistent disk storage) and
   SETTING.EXE (System language switch between English/한국어 -- actually
@@ -99,22 +110,37 @@ asks:
 - **Persistence**: real, already working -- saved files live on the ATA
   disk image itself (`kernel/fs.h`), and survive across QEMU runs as long
   as `os-image.img` isn't rebuilt from scratch.
-- **Networking**: a real, verified RTL8139 driver (`kernel/rtl8139.h`) --
-  PCI bus mastering, ring-buffer RX, 4-slot round-robin TX, all polled
-  (no interrupts). Verified end-to-end against QEMU's SLIRP gateway: the
-  driver sends a real hand-built ARP request and genuinely receives the
-  gateway's ARP reply back, logged over the serial port
-  (`kernel/serial.h`) for anyone who wants to reproduce it:
+- **Networking**: two real, independently verified NIC drivers sharing
+  one common interface (`kernel/nic.h`):
+  - **RTL8139** (`kernel/rtl8139.h`) -- pure port I/O, ring-buffer RX,
+    4-slot round-robin TX.
+  - **e1000 / 82540EM** (`kernel/e1000.h`) -- memory-mapped registers
+    (no port I/O at all) plus real RX/TX descriptor rings the card DMAs
+    through on its own. Works because this kernel runs with paging
+    disabled, so a physical address and a C pointer are the same
+    number -- no page-table plumbing needed to talk to the card's MMIO
+    space.
+
+  Both are polled (no interrupts) and both were verified end-to-end
+  against QEMU's SLIRP gateway the same way: send a real hand-built ARP
+  request, genuinely receive the gateway's reply back, logged over the
+  serial port (`kernel/serial.h`):
   ```
   [RTL8139] initialized, MAC=52:54:00:12:34:56
   [ARP] sending request
   [RX] 0040 bytes, ethertype=0806 ARP REPLY from 52:55:0A:00:02:02
   ```
-  An e1000 driver is next (MMIO-based, meaningfully more involved than
-  RTL8139's pure port-I/O interface -- in progress). Above the NIC driver
-  layer there's still no ARP/IP/TCP stack or browser (MiniWeb) yet --
-  `kernel/net_diag.h` is explicitly a throwaway bring-up harness for
-  proving the driver works, not a network stack.
+  ```
+  [e1000] initialized, MAC=52:54:00:12:34:56
+  [ARP] sending request
+  [RX] 0040 bytes, ethertype=0806 ARP REPLY from 52:55:0A:00:02:02
+  ```
+  Whichever chip QEMU (or real hardware) actually presents on the PCI
+  bus gets picked up automatically (RTL8139 tried first, e1000 as
+  fallback). Above the NIC driver layer there's still no ARP/IP/TCP
+  stack or browser (MiniWeb) yet -- `kernel/net_diag.h` is explicitly a
+  throwaway bring-up harness for proving the drivers work, not a network
+  stack.
 - **File Manager**: not built yet.
 - Full HTML4/5/XHTML rendering and "SSE3 support" are not realistic
   targets for a 320x200, 16-/256-color, no-libc kernel like this one --
