@@ -553,6 +553,42 @@ static void win_z_raise(int id) {
     z_order[z_count++] = id;
 }
 
+/* ------------------------------------------------------------
+ * Title-bar button press state -- shared by every _/[]/X button in the
+ * OS (Notepad's, Setting's, and the Warning dialog's lone X). Pressing
+ * one down doesn't fire it immediately anymore: it just "arms" that
+ * specific button (kind + which window) and the button's own bevel
+ * flips to a sunken look. The action only actually happens when the
+ * mouse button is RELEASED while still over that same button -- the
+ * same press-hold-release contract every real button widget uses, and
+ * releasing anywhere else (drag off first) quietly cancels it.
+ * ------------------------------------------------------------ */
+#define BTN_NONE          0
+#define BTN_MIN           1
+#define BTN_MAX           2
+#define BTN_CLOSE         3
+#define BTN_CONFIRM_CLOSE 4  /* the Warning dialog's X -- tied to a notepad id like BTN_CLOSE is */
+
+static int pressed_btn_kind = BTN_NONE;
+static int pressed_btn_win = -1;   /* which window id this press belongs to (WIN_ID_SETTING or a notepad index) */
+
+/* Draws a raised (or, while pressed, sunken) 3D bevel background for a
+ * title-bar-style button -- the exact same "light top-left / dark
+ * bottom-right, flip both while pressed" trick the AM Start button
+ * already uses, just factored out so every other button in the OS can
+ * share it instead of staying flat. Leaves the interior ready for a
+ * glyph to be drawn on top (the caller nudges that glyph's coordinates
+ * by +1,+1 while pressed, so it looks like it physically sank in). */
+static void draw_bevel_button(int x, int y, int w, int h, int pressed) {
+    bb_fillrect(x, y, w, h, COL_LGRAY);
+    u8 hi = pressed ? COL_DGRAY : COL_WHITE;
+    u8 lo = pressed ? COL_WHITE : COL_DGRAY;
+    for (int i = 0; i < w - 1; i++) bb_putpixel(x + i, y, hi);
+    for (int j = 0; j < h - 1; j++) bb_putpixel(x, y + j, hi);
+    for (int i = 0; i < w; i++) bb_putpixel(x + i, y + h - 1, lo);
+    for (int j = 0; j < h; j++) bb_putpixel(x + w - 1, y + j, lo);
+}
+
 /* Separate from z-order on purpose: z-order is about on-screen stacking
  * of VISIBLE windows, while this is purely "what order were things
  * minimized in," used only to lay out taskbar pills left-to-right in
@@ -1057,26 +1093,29 @@ static void draw_start_menu(int mx, int my) {
  * ============================================================ */
 static void draw_titlebar_buttons(void) {
     int y = btn_y();
+    int p_min = (pressed_btn_kind == BTN_MIN && pressed_btn_win == active_np->id);
+    int p_max = (pressed_btn_kind == BTN_MAX && pressed_btn_win == active_np->id);
+    int p_close = (pressed_btn_kind == BTN_CLOSE && pressed_btn_win == active_np->id);
 
     /* minimize "_" */
     int mnx = btn_min_x();
-    bb_fillrect(mnx, y, BTN_W, BTN_H, COL_LGRAY);
-    bb_rect(mnx, y, BTN_W, BTN_H, COL_BLACK);
-    for (int i = 2; i < BTN_W - 2; i++) bb_putpixel(mnx + i, y + BTN_H - 3, COL_BLACK);
+    draw_bevel_button(mnx, y, BTN_W, BTN_H, p_min);
+    int o = p_min ? 1 : 0;
+    for (int i = 2; i < BTN_W - 2; i++) bb_putpixel(mnx + i + o, y + BTN_H - 3 + o, COL_BLACK);
 
     /* maximize "[]" -- toggles fullscreen (above the taskbar) */
     int mxx = btn_max_x();
-    bb_fillrect(mxx, y, BTN_W, BTN_H, COL_LGRAY);
-    bb_rect(mxx, y, BTN_W, BTN_H, COL_BLACK);
-    bb_rect(mxx + 2, y + 2, BTN_W - 4, BTN_H - 4, COL_BLACK);
+    draw_bevel_button(mxx, y, BTN_W, BTN_H, p_max);
+    o = p_max ? 1 : 0;
+    bb_rect(mxx + 2 + o, y + 2 + o, BTN_W - 4, BTN_H - 4, COL_BLACK);
 
     /* close "X" */
     int clx = btn_close_x();
-    bb_fillrect(clx, y, BTN_W, BTN_H, COL_LGRAY);
-    bb_rect(clx, y, BTN_W, BTN_H, COL_BLACK);
+    draw_bevel_button(clx, y, BTN_W, BTN_H, p_close);
+    o = p_close ? 1 : 0;
     for (int i = 2; i < BTN_W - 2; i++) {
-        bb_putpixel(clx + i, y + 2 + (i - 2), COL_BLACK);
-        bb_putpixel(clx + (BTN_W - 1 - i), y + 2 + (i - 2), COL_BLACK);
+        bb_putpixel(clx + i + o, y + 2 + (i - 2) + o, COL_BLACK);
+        bb_putpixel(clx + (BTN_W - 1 - i) + o, y + 2 + (i - 2) + o, COL_BLACK);
     }
 }
 
@@ -1313,22 +1352,26 @@ static void draw_setting_window(void) {
      * draw_titlebar_buttons() -- kept as its own copy since it draws
      * against setting_btn_*() instead of Notepad's btn_*() */
     int by = setting_btn_y();
+    int p_min = (pressed_btn_kind == BTN_MIN && pressed_btn_win == WIN_ID_SETTING);
+    int p_max = (pressed_btn_kind == BTN_MAX && pressed_btn_win == WIN_ID_SETTING);
+    int p_close = (pressed_btn_kind == BTN_CLOSE && pressed_btn_win == WIN_ID_SETTING);
+
     int mnx = setting_btn_min_x();
-    bb_fillrect(mnx, by, BTN_W, BTN_H, COL_LGRAY);
-    bb_rect(mnx, by, BTN_W, BTN_H, COL_BLACK);
-    for (int i = 2; i < BTN_W - 2; i++) bb_putpixel(mnx + i, by + BTN_H - 3, COL_BLACK);
+    draw_bevel_button(mnx, by, BTN_W, BTN_H, p_min);
+    int o = p_min ? 1 : 0;
+    for (int i = 2; i < BTN_W - 2; i++) bb_putpixel(mnx + i + o, by + BTN_H - 3 + o, COL_BLACK);
 
     int mxx = setting_btn_max_x();
-    bb_fillrect(mxx, by, BTN_W, BTN_H, COL_LGRAY);
-    bb_rect(mxx, by, BTN_W, BTN_H, COL_BLACK);
-    bb_rect(mxx + 2, by + 2, BTN_W - 4, BTN_H - 4, COL_BLACK);
+    draw_bevel_button(mxx, by, BTN_W, BTN_H, p_max);
+    o = p_max ? 1 : 0;
+    bb_rect(mxx + 2 + o, by + 2 + o, BTN_W - 4, BTN_H - 4, COL_BLACK);
 
     int clx = setting_btn_close_x();
-    bb_fillrect(clx, by, BTN_W, BTN_H, COL_LGRAY);
-    bb_rect(clx, by, BTN_W, BTN_H, COL_BLACK);
+    draw_bevel_button(clx, by, BTN_W, BTN_H, p_close);
+    o = p_close ? 1 : 0;
     for (int i = 2; i < BTN_W - 2; i++) {
-        bb_putpixel(clx + i, by + 2 + (i - 2), COL_BLACK);
-        bb_putpixel(clx + (BTN_W - 1 - i), by + 2 + (i - 2), COL_BLACK);
+        bb_putpixel(clx + i + o, by + 2 + (i - 2) + o, COL_BLACK);
+        bb_putpixel(clx + (BTN_W - 1 - i) + o, by + 2 + (i - 2) + o, COL_BLACK);
     }
 
     /* sidebar / content divider */
@@ -1429,11 +1472,12 @@ static void draw_confirm_dialog(int mx, int my) {
     bb_fillrect(x + 1, y + 1, CONFIRM_W - 2, TITLEBAR_H, COL_BLUE);
     font_draw_string(x + 3, y + 1, "Warning!", COL_WHITE);
     int clx = confirm_close_x(), cy = confirm_close_y();
-    bb_fillrect(clx, cy, BTN_W, BTN_H, COL_LGRAY);
-    bb_rect(clx, cy, BTN_W, BTN_H, COL_BLACK);
+    int p_close = (pressed_btn_kind == BTN_CONFIRM_CLOSE && pressed_btn_win == active_np->id);
+    draw_bevel_button(clx, cy, BTN_W, BTN_H, p_close);
+    int o = p_close ? 1 : 0;
     for (int i = 2; i < BTN_W - 2; i++) {
-        bb_putpixel(clx + i, cy + i - 1, COL_BLACK);
-        bb_putpixel(clx + (BTN_W - 1 - i), cy + i - 1, COL_BLACK);
+        bb_putpixel(clx + i + o, cy + i - 1 + o, COL_BLACK);
+        bb_putpixel(clx + (BTN_W - 1 - i) + o, cy + i - 1 + o, COL_BLACK);
     }
 
     int body_y = y + TITLEBAR_H + 3;
@@ -1800,19 +1844,14 @@ void kmain(void) {
                          * the front, same as any real window manager. */
                         win_z_raise(WIN_ID_SETTING);
                         if (setting_min_hit(mx, my)) {
-                            win_minimize(WIN_ID_SETTING);
-                            status = t(STR_SETTING_MINIMIZED);
+                            pressed_btn_kind = BTN_MIN;
+                            pressed_btn_win = WIN_ID_SETTING;
                         } else if (setting_max_hit(mx, my)) {
-                            if (setting.maximized) {
-                                unmaximize_window(&setting);
-                                status = t(STR_SETTING_RESTORED);
-                            } else {
-                                maximize_window(&setting);
-                                status = t(STR_SETTING_MAXIMIZED);
-                            }
+                            pressed_btn_kind = BTN_MAX;
+                            pressed_btn_win = WIN_ID_SETTING;
                         } else if (setting_close_hit(mx, my)) {
-                            setting.open = 0;
-                            win_z_remove(WIN_ID_SETTING);
+                            pressed_btn_kind = BTN_CLOSE;
+                            pressed_btn_win = WIN_ID_SETTING;
                         } else if (setting_nav_hit(mx, my, SETTING_NAV_LANGUAGE)) {
                             setting_page = SETTING_NAV_LANGUAGE;
                         } else if (setting_nav_hit(mx, my, SETTING_NAV_IME)) {
@@ -1864,7 +1903,8 @@ void kmain(void) {
                             } else if (confirm_no_hit(mx, my)) {
                                 confirm_no_action();
                             } else if (confirm_close_hit(mx, my)) {
-                                active_np->confirm_mode = CONFIRM_NONE;
+                                pressed_btn_kind = BTN_CONFIRM_CLOSE;
+                                pressed_btn_win = hit_id;
                             }
                         } else if (active_np->file_menu_open) {
                             if (file_menu_item_hit(mx, my, 0)) {
@@ -1882,20 +1922,14 @@ void kmain(void) {
                                 active_np->file_menu_open = 0; /* click outside just dismisses it */
                             }
                         } else if (in_rect(mx, my, btn_min_x(), btn_y(), BTN_W, BTN_H)) {
-                            win_minimize(hit_id);
-                            status = t(STR_NOTEPAD_MINIMIZED);
+                            pressed_btn_kind = BTN_MIN;
+                            pressed_btn_win = hit_id;
                         } else if (in_rect(mx, my, btn_max_x(), btn_y(), BTN_W, BTN_H)) {
-                            if (active_np->win.maximized) {
-                                unmaximize_window(&active_np->win);
-                                status = t(STR_NOTEPAD_RESTORED);
-                            } else {
-                                maximize_window(&active_np->win);
-                                status = t(STR_NOTEPAD_MAXIMIZED);
-                            }
+                            pressed_btn_kind = BTN_MAX;
+                            pressed_btn_win = hit_id;
                         } else if (in_rect(mx, my, btn_close_x(), btn_y(), BTN_W, BTN_H)) {
-                            /* Ask before closing, same Yes/No pattern as New. */
-                            active_np->confirm_mode = CONFIRM_CLOSE;
-                            beep_warning();
+                            pressed_btn_kind = BTN_CLOSE;
+                            pressed_btn_win = hit_id;
                         } else if (file_label_hit(mx, my)) {
                             active_np->file_menu_open = 1;
                         } else if (titlebar_drag_hit(mx, my) && !active_np->win.maximized) {
@@ -1985,6 +2019,68 @@ void kmain(void) {
                         }
                     }
                 }
+            }
+
+            /* ---- button release: fire the action IF the cursor is
+             * still over the exact button that was pressed, then clear
+             * the press state either way. Dragging off before letting
+             * go cancels it -- same contract as any real button. ---- */
+            if (mouse_release_event && pressed_btn_kind != BTN_NONE) {
+                int kind = pressed_btn_kind, win = pressed_btn_win;
+                int still_over = 0;
+
+                if (win == WIN_ID_SETTING) {
+                    if (kind == BTN_MIN) still_over = setting_min_hit(mx, my);
+                    else if (kind == BTN_MAX) still_over = setting_max_hit(mx, my);
+                    else if (kind == BTN_CLOSE) still_over = setting_close_hit(mx, my);
+                } else if (win >= 0 && win < NOTEPAD_MAX) {
+                    active_np = &notepads[win];
+                    if (kind == BTN_MIN) still_over = in_rect(mx, my, btn_min_x(), btn_y(), BTN_W, BTN_H);
+                    else if (kind == BTN_MAX) still_over = in_rect(mx, my, btn_max_x(), btn_y(), BTN_W, BTN_H);
+                    else if (kind == BTN_CLOSE) still_over = in_rect(mx, my, btn_close_x(), btn_y(), BTN_W, BTN_H);
+                    else if (kind == BTN_CONFIRM_CLOSE) still_over = confirm_close_hit(mx, my);
+                }
+
+                if (still_over) {
+                    if (win == WIN_ID_SETTING) {
+                        if (kind == BTN_MIN) {
+                            win_minimize(WIN_ID_SETTING);
+                            status = t(STR_SETTING_MINIMIZED);
+                        } else if (kind == BTN_MAX) {
+                            if (setting.maximized) {
+                                unmaximize_window(&setting);
+                                status = t(STR_SETTING_RESTORED);
+                            } else {
+                                maximize_window(&setting);
+                                status = t(STR_SETTING_MAXIMIZED);
+                            }
+                        } else if (kind == BTN_CLOSE) {
+                            setting.open = 0;
+                            win_z_remove(WIN_ID_SETTING);
+                        }
+                    } else {
+                        if (kind == BTN_MIN) {
+                            win_minimize(win);
+                            status = t(STR_NOTEPAD_MINIMIZED);
+                        } else if (kind == BTN_MAX) {
+                            if (active_np->win.maximized) {
+                                unmaximize_window(&active_np->win);
+                                status = t(STR_NOTEPAD_RESTORED);
+                            } else {
+                                maximize_window(&active_np->win);
+                                status = t(STR_NOTEPAD_MAXIMIZED);
+                            }
+                        } else if (kind == BTN_CLOSE) {
+                            /* Ask before closing, same Yes/No pattern as New. */
+                            active_np->confirm_mode = CONFIRM_CLOSE;
+                            beep_warning();
+                        } else if (kind == BTN_CONFIRM_CLOSE) {
+                            active_np->confirm_mode = CONFIRM_NONE;
+                        }
+                    }
+                }
+                pressed_btn_kind = BTN_NONE;
+                pressed_btn_win = -1;
             }
         }
 

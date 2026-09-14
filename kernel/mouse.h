@@ -48,6 +48,7 @@ static int mouse_dx = 0, mouse_dy = 0;   /* how far the mouse moved since we las
 static int mouse_left = 0, mouse_right = 0;
 static int mouse_left_prev = 0;           /* left-button state last time we looked */
 static int mouse_click_event = 0;         /* 1 if the left button went down THIS poll -- a real click, not just "still held" */
+static int mouse_release_event = 0;       /* 1 if the left button went UP this poll -- the other half of a press-and-release */
 static u8  mouse_packet[3];
 static int mouse_packet_idx = 0;
 
@@ -83,6 +84,7 @@ static inline int mouse_poll(void) {
     int got_any = 0;
     int acc_dx = 0, acc_dy = 0;
     int click_event = 0;
+    int release_event = 0;
 
     while (1) {
         u8 status = inb(PS2_STATUS);
@@ -119,6 +121,7 @@ static inline int mouse_poll(void) {
          * bug to ship. */
         int this_left = flags & 0x01;
         if (this_left && !mouse_left_prev) click_event = 1;
+        if (!this_left && mouse_left_prev) release_event = 1;
         mouse_left_prev = this_left;
 
         mouse_left  = this_left;
@@ -163,6 +166,7 @@ static inline int mouse_poll(void) {
     mouse_dx = acc_dx;
     mouse_dy = acc_dy;
     mouse_click_event = click_event;
+    mouse_release_event = release_event;
     return got_any;
 }
 
