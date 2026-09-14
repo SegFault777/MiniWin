@@ -5,7 +5,7 @@ disk image straight into a Windows-95-flavored GUI: real mode → protected
 mode by hand, a from-scratch VGA/mouse/keyboard/ATA stack, and a windowing
 system with no libc, no bootloader framework, and no borrowed kernel code.
 
-![Desktop](screenshots/01-boot-desktop.png)
+![Desktop](screenshots/09-clock-taskbar.png)
 
 ## What's actually in here
 
