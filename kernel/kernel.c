@@ -1634,7 +1634,7 @@ static void system_shutdown(void) {
  * Kernel entry
  * ============================================================ */
 void kmain(void) {
-    vga_set_mode13h();
+    vga_init_display();
     vga_set_standard_palette();
     mouse_init();
 

@@ -9,15 +9,26 @@ system with no libc, no bootloader framework, and no borrowed kernel code.
 
 ## What's actually in here
 
-- **Boot**: a 512-byte MBR bootloader (`boot/boot.asm`) that switches to
-  protected mode and loads the kernel via BIOS INT13h extended (LBA) reads,
-  512KB budget, all real addressing under 1MB so it works with no A20
+- **Boot**: a 512-byte MBR bootloader (`boot/boot.asm`) that sets a real
+  VBE (VESA) video mode via a genuine BIOS call, switches to protected
+  mode, and loads the kernel via BIOS INT13h extended (LBA) reads, 512KB
+  budget, all real addressing under 1MB so it works with no A20
   shenanigans during load.
-- **Kernel**: freestanding C (`kernel/kernel.c` + headers), no libc. VGA
-  mode 13h (320x200, 256-color palette -- a 6x6x6 color cube + grayscale
-  ramp on top of the classic 16), a PS/2 mouse + keyboard driver, PC
-  speaker beep, a tiny 4-slot ATA-backed filesystem, PCI enumeration, and
-  a COM1 serial debug log.
+- **Display**: 640x400, 256-color linear framebuffer -- VBE mode 0100h,
+  set by a real BIOS `INT 10h` call in the bootloader (VBE mode-setting
+  can only happen in real mode, before protected mode takes over). This
+  went from the original 320x200 mode 13h; every UI element (fonts,
+  icons, windows, taskbar) deliberately kept its original absolute pixel
+  size, so the desktop now has real breathing room instead of everything
+  scaling up to fill the bigger canvas. The kernel reads back wherever
+  the BIOS actually put the framebuffer (`PhysBasePtr`) and its real
+  scanline pitch, rather than assuming a fixed address the way mode 13h
+  allowed.
+- **Kernel**: freestanding C (`kernel/kernel.c` + headers), no libc. A
+  256-color palette (a 6x6x6 color cube + grayscale ramp on top of the
+  classic 16), a PS/2 mouse + keyboard driver, PC speaker beep, a tiny
+  4-slot ATA-backed filesystem, PCI enumeration, and a COM1 serial debug
+  log.
 - **Desktop**: draggable/resizable/minimizable/maximizable windows with
   real overlapping z-order (click a window, it comes to front), a
   Windows-95-style Start Menu with a cascading Shut Down/Restart flyout
@@ -154,3 +165,9 @@ asks:
   sign-in are planned, since this kernel has no TCP/IP stack, no TLS, and
   no registered OAuth credentials to talk to those services with -- any
   "sign in" UI here would need to be honestly local-only.
+
+## License
+
+MiniWin's own code is MIT-licensed -- see `LICENSE`. The bundled Dalmoori
+font (`third_party/dalmoori-font/`) is Apache-2.0 licensed by its own
+authors; see the `LICENSE`/`NOTICE.md` in that directory.

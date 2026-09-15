@@ -63,6 +63,45 @@ start:
     mov si, msg_loaded
     call print_string
 
+    ; ---- Switch video to VBE mode 0100h: 640x400, 256 colors ----
+    ; Standard VGA only ever offered fixed resolutions (mode 13h =
+    ; 320x200x256), but VBE (VESA BIOS Extensions) has been a near-
+    ; universal VGA BIOS standard since the mid-90s -- QEMU's own VGA
+    ; BIOS implements it too. Mode 0100h is the standard VBE mode number
+    ; for 640x400 at 8 bits/pixel: same one-byte-per-pixel, 256-color-
+    ; palette format as mode 13h, just a bigger canvas, so the kernel's
+    ; whole drawing model (backbuf, bb_putpixel, the DAC palette) barely
+    ; has to change -- only VGA_WIDTH/VGA_HEIGHT do.
+    ;
+    ; Unlike mode 13h, the linear framebuffer for a VBE mode isn't
+    ; guaranteed to sit at a fixed address, so we ask the BIOS where it
+    ; actually put it (PhysBasePtr, at offset 40 in the mode info block)
+    ; and leave that answer sitting in memory at 0x9000 for the kernel
+    ; to read directly later -- there's nothing else using that address
+    ; at this point, and the kernel runs without paging, so "read a
+    ; physical address" is just "read a pointer" to it.
+    xor ax, ax
+    mov es, ax
+    mov di, 0x9000               ; scratch buffer: 256 bytes, well below the kernel's 0x10000 load point
+    mov ax, 0x4F01
+    mov cx, 0x0100
+    int 0x10
+    cmp ax, 0x004F
+    jne vbe_error
+
+    mov ax, 0x4F02
+    mov bx, 0x4100               ; mode 0100h | 4000h (request a linear framebuffer)
+    int 0x10
+    cmp ax, 0x004F
+    jne vbe_error
+    jmp vbe_done
+
+vbe_error:
+    mov si, msg_vbe_err
+    call print_string
+    jmp $
+
+vbe_done:
     ; ---- Enable A20 line (fast method via port 0x92) ----
     ; Without this, memory access wraps around at 1MB like it's still
     ; 1981, and everything above that just silently aliases back to zero.
@@ -108,6 +147,7 @@ boot_drive: db 0
 msg_boot:      db "MiniWin: booting...", 13, 10, 0
 msg_loaded:    db "MiniWin: kernel loaded, entering 32-bit mode...", 13, 10, 0
 msg_disk_err:  db "MiniWin: DISK READ ERROR", 13, 10, 0
+msg_vbe_err:   db "MiniWin: VBE 640x400 MODE NOT SUPPORTED", 13, 10, 0
 
 ; ============================================================
 ; Single reusable Disk Address Packet for the load loop above. Standard

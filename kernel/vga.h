@@ -2,62 +2,33 @@
 #define VGA_H
 #include "io.h"
 
-#define VGA_WIDTH  320
-#define VGA_HEIGHT 200
-#define VGA_MEMORY ((u8*)0xA0000)
+#define VGA_WIDTH  640
+#define VGA_HEIGHT 400
 
-/* Slam the VGA controller into Mode 13h (320x200, 256 color, one nice
- * flat linear framebuffer) by hand-writing the whole register sequence
- * ourselves, because BIOS int 0x10 stopped answering our calls the
- * second we entered protected mode. Rude, but that's the deal. */
-static inline void vga_set_mode13h(void) {
-    /* Misc output register */
-    outb(0x3C2, 0x63);
+/* The video mode itself (VBE mode 0100h, 640x400x256) is set by the
+ * bootloader in real mode -- BIOS calls fundamentally can't be made
+ * from protected mode without extra VM86/real-mode-shim machinery this
+ * kernel doesn't have, so unlike the old mode-13h days (which could be
+ * bit-banged directly via VGA registers from anywhere, including here),
+ * VBE mode-setting has to happen before boot.asm ever switches to
+ * protected mode -- see boot/boot.asm.
+ *
+ * All that's left for the kernel to do is find out where the BIOS
+ * actually put the linear framebuffer: boot.asm stashed the VBE mode
+ * info block at physical address 0x9000, and PhysBasePtr (the LFB's
+ * physical base address) lives 40 bytes into it, with BytesPerScanLine
+ * (the real hardware's row pitch, which isn't guaranteed to equal
+ * VGA_WIDTH the way it always did in mode 13h) at offset 16. Since this
+ * kernel runs with paging disabled, "read a physical address" is just
+ * "dereference a pointer" -- no mapping step needed. */
+static u8 *vga_lfb_ptr = 0;
+static u32 vga_pitch = 0;
+#define VGA_MEMORY vga_lfb_ptr
 
-    /* Sequencer registers */
-    static const u8 seq[5] = {0x03, 0x01, 0x0F, 0x00, 0x0E};
-    outb(0x3C4, 0x00); outb(0x3C5, seq[0]);
-    outb(0x3C4, 0x01); outb(0x3C5, seq[1]);
-    outb(0x3C4, 0x02); outb(0x3C5, seq[2]);
-    outb(0x3C4, 0x03); outb(0x3C5, seq[3]);
-    outb(0x3C4, 0x04); outb(0x3C5, seq[4]);
-
-    /* Unlock CRTC registers -- they're write-protected by default, which
-     * is a fantastic way to waste twenty minutes wondering why half your
-     * settings aren't taking effect */
-    outb(0x3D4, 0x11); outb(0x3D5, inb(0x3D5) & 0x7F);
-
-    static const u8 crtc[25] = {
-        0x5F,0x4F,0x50,0x82,0x54,0x80,0xBF,0x1F,
-        0x00,0x41,0x00,0x00,0x00,0x00,0x00,0x00,
-        0x9C,0x0E,0x8F,0x28,0x40,0x96,0xB9,0xA3,
-        0xFF
-    };
-    for (u8 i = 0; i < 25; i++) {
-        outb(0x3D4, i);
-        outb(0x3D5, crtc[i]);
-    }
-
-    /* Graphics controller registers */
-    static const u8 gfx[9] = {0x00,0x00,0x00,0x00,0x00,0x40,0x05,0x0F,0xFF};
-    for (u8 i = 0; i < 9; i++) {
-        outb(0x3CE, i);
-        outb(0x3CF, gfx[i]);
-    }
-
-    /* Attribute controller registers */
-    static const u8 att[21] = {
-        0x00,0x01,0x02,0x03,0x04,0x05,0x06,0x07,
-        0x08,0x09,0x0A,0x0B,0x0C,0x0D,0x0E,0x0F,
-        0x41,0x00,0x0F,0x00,0x00
-    };
-    (void)inb(0x3DA); /* reset the flip-flop, or the next writes go to the wrong register */
-    for (u8 i = 0; i < 21; i++) {
-        outb(0x3C0, i);
-        outb(0x3C0, att[i]);
-    }
-    (void)inb(0x3DA);
-    outb(0x3C0, 0x20); /* okay NOW actually turn the screen on */
+static inline void vga_init_display(void) {
+    vga_lfb_ptr = *(u8 **)(0x9000 + 40);
+    vga_pitch = *(u16 *)(0x9000 + 16);
+    if (vga_pitch == 0) vga_pitch = VGA_WIDTH; /* paranoia fallback, shouldn't trigger */
 }
 
 /* Manually program the first 16 DAC palette entries to sane VGA colors.
@@ -127,7 +98,7 @@ static inline u8 col_gray(int step) {
 
 static inline void vga_putpixel(int x, int y, u8 color) {
     if (x < 0 || y < 0 || x >= VGA_WIDTH || y >= VGA_HEIGHT) return;
-    VGA_MEMORY[y * VGA_WIDTH + x] = color;
+    VGA_MEMORY[y * vga_pitch + x] = color;
 }
 
 /* ---------------------------------------------------------------------
@@ -167,12 +138,17 @@ static inline void bb_rect(int x, int y, int w, int h, u8 color) {
 }
 
 static inline void vga_present(void) {
-    /* One tight little copy loop, moving 4 bytes at a time instead of 1,
-     * because both buffers are exactly VGA_WIDTH*VGA_HEIGHT and nobody's
-     * got time for per-pixel bounds checks on a straight memcpy. */
-    u32 *src = (u32*)backbuf;
-    u32 *dst = (u32*)VGA_MEMORY;
-    for (int i = 0; i < (VGA_WIDTH * VGA_HEIGHT) / 4; i++) dst[i] = src[i];
+    /* Row-by-row instead of one giant blit, since the real hardware's
+     * scanline pitch (vga_pitch) isn't guaranteed to equal VGA_WIDTH the
+     * way it always did in mode 13h -- backbuf itself stays tightly
+     * packed (it's our own buffer, our own layout choice), but the real
+     * framebuffer's rows have to be addressed by whatever pitch the
+     * BIOS actually reported. Still 4 bytes at a time within each row. */
+    for (int y = 0; y < VGA_HEIGHT; y++) {
+        u32 *src = (u32 *)(backbuf + (u32)y * VGA_WIDTH);
+        u32 *dst = (u32 *)(VGA_MEMORY + (u32)y * vga_pitch);
+        for (int i = 0; i < VGA_WIDTH / 4; i++) dst[i] = src[i];
+    }
 }
 
 /* Direct-to-screen variants -- these still exist but nothing in the
@@ -192,7 +168,9 @@ static inline void vga_rect(int x, int y, int w, int h, u8 color) {
 }
 
 static inline void vga_clear(u8 color) {
-    for (int i = 0; i < VGA_WIDTH * VGA_HEIGHT; i++) VGA_MEMORY[i] = color;
+    for (int y = 0; y < VGA_HEIGHT; y++)
+        for (int x = 0; x < VGA_WIDTH; x++)
+            VGA_MEMORY[y * vga_pitch + x] = color;
 }
 
 /* Standard 16-color VGA palette indices (works fine even in our 256-color
