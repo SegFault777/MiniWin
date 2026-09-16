@@ -42,11 +42,11 @@ system with no libc, no bootloader framework, and no borrowed kernel code.
   click it for a small popup with the full date ("Monday, September 14,
   2026" / "2026년 9월 14일 월요일"). Timezone is a manual UTC offset set
   in SETTING.EXE > SYSTEM > Time Zone -- there's deliberately no
-  "automatic by location" here, since that would need a working
-  IP/DNS/HTTP stack to query a geolocation service, and this kernel only
-  has raw Ethernet + ARP so far (see Networking below). Honest manual
-  setting now, real automatic detection once there's an actual network
-  stack to ask with.
+  "automatic by location" here yet, since that would need a DNS
+  resolver (to find a geolocation service by name) this kernel doesn't
+  have, on top of the HTTP client it now does (see Networking below).
+  Honest manual setting now, real automatic detection once DNS exists
+  to ask a service by hostname instead of a hardcoded IP.
 - **Apps**: NOTEPAD.EXE (supports opening several documents at once, each
   in its own window, saving to real persistent disk storage) and
   SETTING.EXE (System language switch between English/한국어 -- actually
@@ -65,7 +65,15 @@ you're on a 64-bit host), and `ld`.
 ./build.sh
 ```
 
-Produces `build/os-image.img`, a raw disk image.
+Produces `build/os-image.img`, a raw disk image -- exactly 256KB
+(262,144 bytes), a deliberately round size rather than arbitrary
+padding. `build.sh` derives the kernel's boot budget and the
+file-storage layout from the same constants `boot/boot.asm` and
+`kernel/fs.h` use (instead of duplicating them as separate magic
+numbers), and fails loudly instead of silently shipping something
+broken if: the kernel's `.bss` ever grows enough to collide with the
+boot stack, the compiled kernel exceeds its boot-loader read budget, or
+the file-storage slots would overlap the kernel or overflow the image.
 
 ## Running
 
@@ -109,6 +117,16 @@ kernel/kentry.asm   32-bit entry stub (BSS clear, calls kmain)
 kernel/kernel.c     the OS itself: GUI, window manager, Notepad, Settings
 kernel/*.h          one subsystem per header (vga, keyboard, mouse, ata,
                     fs, font, font_ko, hangul_ime, speaker, serial, pci, io)
+kernel/nic.h        common NIC driver interface (rtl8139.h, e1000.h implement it)
+kernel/net.h        shared endianness/checksum helpers for the network stack
+kernel/arp.h        ARP cache + request/reply
+kernel/ip.h         IPv4 header build/parse, routing, ARP-miss pending queue
+kernel/icmp.h       ping (echo request/reply)
+kernel/udp.h        UDP send + port listener dispatch
+kernel/dhcp.h       DHCP client (DISCOVER/OFFER/REQUEST/ACK)
+kernel/tcp.h        TCP (single connection, active open, retransmit timer)
+kernel/http.h       HTTP/1.1 GET client on top of tcp.h
+kernel/net_stack.h  wires all of the above into one init()/poll() pair
 tools/gen_hangul_font.py   generates font_ko_data.h from the Dalmoori TTF
 third_party/        bundled font source + its own license/notice
 build.sh            nasm + gcc + ld pipeline -> build/os-image.img
@@ -123,8 +141,9 @@ asks:
 - **Persistence**: real, already working -- saved files live on the ATA
   disk image itself (`kernel/fs.h`), and survive across QEMU runs as long
   as `os-image.img` isn't rebuilt from scratch.
-- **Networking**: two real, independently verified NIC drivers sharing
-  one common interface (`kernel/nic.h`):
+- **Networking**: a real, layered TCP/IP stack, built from raw Ethernet
+  all the way up to HTTP, running on top of two independently verified
+  NIC drivers sharing one common interface (`kernel/nic.h`):
   - **RTL8139** (`kernel/rtl8139.h`) -- pure port I/O, ring-buffer RX,
     4-slot round-robin TX.
   - **e1000 / 82540EM** (`kernel/e1000.h`) -- memory-mapped registers
@@ -134,26 +153,57 @@ asks:
     number -- no page-table plumbing needed to talk to the card's MMIO
     space.
 
-  Both are polled (no interrupts) and both were verified end-to-end
-  against QEMU's SLIRP gateway the same way: send a real hand-built ARP
-  request, genuinely receive the gateway's reply back, logged over the
-  serial port (`kernel/serial.h`):
-  ```
-  [RTL8139] initialized, MAC=52:54:00:12:34:56
-  [ARP] sending request
-  [RX] 0040 bytes, ethertype=0806 ARP REPLY from 52:55:0A:00:02:02
-  ```
-  ```
-  [e1000] initialized, MAC=52:54:00:12:34:56
-  [ARP] sending request
-  [RX] 0040 bytes, ethertype=0806 ARP REPLY from 52:55:0A:00:02:02
-  ```
   Whichever chip QEMU (or real hardware) actually presents on the PCI
   bus gets picked up automatically (RTL8139 tried first, e1000 as
-  fallback). Above the NIC driver layer there's still no ARP/IP/TCP
-  stack or browser (MiniWeb) yet -- `kernel/net_diag.h` is explicitly a
-  throwaway bring-up harness for proving the drivers work, not a network
-  stack.
+  fallback). Both are polled (no interrupts). Above the driver layer,
+  one header per protocol (`kernel/net_stack.h` wires them all
+  together):
+  - **ARP** (`kernel/arp.h`) -- an 8-entry cache, request/reply, and an
+    ARP-miss packet queue that auto-flushes the instant a reply lands
+    instead of making every caller implement its own retry.
+  - **IPv4** (`kernel/ip.h`) -- header build/parse, checksums, and a
+    one-line "same subnet or gateway" routing decision (no
+    fragmentation -- this kernel never needs to send anything bigger
+    than one Ethernet frame).
+  - **ICMP** (`kernel/icmp.h`) -- echo request/reply (ping).
+  - **UDP** (`kernel/udp.h`) -- checksummed send, port-based listener
+    dispatch.
+  - **DHCP** (`kernel/dhcp.h`) -- a real client: DISCOVER, OFFER,
+    REQUEST, ACK. MiniWin gets its IP, subnet mask, gateway, and DNS
+    server from whatever network it's plugged into, instead of a
+    hardcoded address that only ever worked inside one specific QEMU
+    invocation.
+  - **TCP** (`kernel/tcp.h`) -- one connection at a time, active opens
+    only, a textbook state machine (SYN_SENT -> ESTABLISHED ->
+    FIN_WAIT -> closed), one segment in flight with a retransmit timer.
+    No sliding window, no congestion control -- enough TCP to reliably
+    fetch a web page, not enough to replace a stack you'd trust with
+    anything that matters.
+  - **HTTP** (`kernel/http.h`) -- a GET client on top of that TCP, built
+    and polled as a small state machine (connect -> send request ->
+    drain response -> close) so nothing in this single-threaded kernel
+    ever blocks waiting on the network.
+
+  Every layer was verified for real, not just compiled: DHCP against
+  QEMU SLIRP's actual DHCP server, TCP's 3-way handshake and HTTP GET
+  against a real Internet host (a full HTTP/1.1 response, headers and
+  all, from pypi.org, over MiniWin's own from-scratch TCP), logged over
+  the serial port (`kernel/serial.h`):
+  ```
+  [DHCP] -> DISCOVER
+  [DHCP] <- OFFER of 10.0.2.15 from server 10.0.2.2
+  [DHCP] -> REQUEST for 10.0.2.15
+  [DHCP] <- ACK, bound to 10.0.2.15 mask=255.255.255.0 gw=10.0.2.2 dns=10.0.2.3
+  [HTTP] GET / from <server ip>
+  [TCP] connecting to <server ip>:80
+  [TCP] established
+  [TCP] peer closed their side
+  [HTTP] response complete, 1042 bytes
+  [TCP] closing
+  ```
+  What's still missing: DNS (targets above are raw IPs, not hostnames),
+  TLS/HTTPS, and a browser (MiniWeb) to put on top of the HTTP client
+  that now exists.
 - **File Manager**: not built yet.
 - Full HTML4/5/XHTML rendering and "SSE3 support" are not realistic
   targets for a 320x200, 16-/256-color, no-libc kernel like this one --
@@ -164,9 +214,10 @@ asks:
   .MPI programs" system would need a loader and some kind of process
   model that doesn't exist yet.
 - No real internet-backed accounts or third-party (Google/Microsoft)
-  sign-in are planned, since this kernel has no TCP/IP stack, no TLS, and
-  no registered OAuth credentials to talk to those services with -- any
-  "sign in" UI here would need to be honestly local-only.
+  sign-in are planned -- this kernel has a working TCP/IP stack now, but
+  still no TLS (so no HTTPS), no DNS resolver, and no registered OAuth
+  credentials to talk to those services with -- any "sign in" UI here
+  would need to be honestly local-only.
 
 ## License
 

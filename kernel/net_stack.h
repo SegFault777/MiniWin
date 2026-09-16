@@ -8,20 +8,21 @@
 #include "icmp.h"
 #include "udp.h"
 #include "dhcp.h"
+#include "tcp.h"
 #include "serial.h"
 
 /* ============================================================
  * net_stack.h -- the front door. Everything above the NIC drivers
- * (ARP, IP, ICMP, UDP, DHCP, and TCP once it exists) gets wired together
- * here into one coherent stack with exactly two entry points the rest
- * of the kernel needs to know about:
+ * (ARP, IP, ICMP, UDP, DHCP, and now TCP) gets wired together here into
+ * one coherent stack with exactly two entry points the rest of the
+ * kernel needs to know about:
  *
  *   net_stack_init()  -- call once, after a NIC driver has come up
  *   net_stack_poll()  -- call once per main-loop iteration, forever
  *
- * Nothing outside this file needs to know that ARP and IP and UDP are
- * even separate layers; that's an implementation detail this header is
- * built specifically to hide.
+ * Nothing outside this file needs to know that ARP and IP and UDP and
+ * TCP are even separate layers; that's an implementation detail this
+ * header is built specifically to hide.
  * ============================================================ */
 
 /* Brings the whole stack up: resets protocol state, registers the
@@ -33,6 +34,7 @@ static inline void net_stack_init(void) {
     arp_cache_init();
     udp_init();
     net_cfg.ready = 0; /* not until DHCP says otherwise */
+    tcp_conn.state = TCP_CLOSED; /* only one connection ever exists; start it idle */
     /* Wires ARP's "an address just resolved" event to IP's one-slot
      * pending-packet queue, so a packet delayed by an ARP miss gets
      * sent the instant the reply lands instead of waiting for whichever
@@ -65,7 +67,7 @@ static inline void net_stack_handle_frame(const u8 *frame, u16 len) {
     switch (ip.proto) {
         case IP_PROTO_ICMP: icmp_handle_packet(&ip); break;
         case IP_PROTO_UDP:  udp_handle_packet(&ip);  break;
-        /* IP_PROTO_TCP lands here once tcp.h exists */
+        case IP_PROTO_TCP:  tcp_handle_packet(&ip);  break;
         default:
             /* some protocol we don't implement -- correct behavior is
              * silence, same as udp_handle_packet does for unclaimed
@@ -78,6 +80,7 @@ static inline void net_stack_handle_frame(const u8 *frame, u16 len) {
  * sitting in the NIC's receive buffer (there may be more than one per
  * iteration under load) and hands each to the dispatcher above. */
 static inline void net_stack_poll(void) {
+    net_stack_tick();
     if (!nic.present) return;
     u8 buf[NET_BUF_SIZE];
     u16 len;
@@ -88,6 +91,7 @@ static inline void net_stack_poll(void) {
     while (nic.recv(buf, sizeof(buf), &len)) {
         net_stack_handle_frame(buf, len);
     }
+    tcp_poll_retransmit();
 }
 
 #endif

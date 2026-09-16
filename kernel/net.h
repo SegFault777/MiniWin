@@ -115,4 +115,19 @@ typedef struct {
 
 static net_config_t net_cfg = { 0, 0, 0, 0, 0 };
 
+/* A coarse "how much time has passed" counter for anything in the
+ * network stack that needs to reason about timeouts -- TCP's
+ * retransmission timer, mainly. This is *not* wall-clock time (see
+ * rtc.h for that); it's just net_stack_tick() being called once per
+ * main-loop iteration, same spirit as the GUI's own `tick` variable in
+ * kmain() that drives double-click detection. Deliberately kept as its
+ * own counter instead of reaching into kmain()'s local `tick` -- the
+ * network stack shouldn't need to know the GUI loop's internal variable
+ * names, and a loop-iteration counter is honestly all TCP needs here;
+ * this kernel isn't calibrating retransmission timeouts to real
+ * milliseconds, just giving up on a SYN that's been unanswered for
+ * "clearly too many iterations now." */
+static u32 net_ticks = 0;
+static inline void net_stack_tick(void) { net_ticks++; }
+
 #endif
