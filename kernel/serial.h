@@ -58,4 +58,20 @@ static inline void serial_put_hex32(u32 v) {
     serial_put_hex16((u16)(v & 0xFFFF));
 }
 
+/* Plain decimal, for the one audience that actually reads dotted-quad
+ * IPs and port numbers as base 10 like civilized beings: humans. Built
+ * by hand, digit by digit, because there is no itoa() waiting for us
+ * out here in freestanding-land. Handles 0..4294967295, which covers
+ * every u32 this kernel will ever ask it to print. */
+static inline void serial_put_dec(u32 v) {
+    char digits[10];
+    int n = 0;
+    if (v == 0) { serial_putc('0'); return; }
+    while (v > 0 && n < 10) {
+        digits[n++] = (char)('0' + (v % 10));
+        v /= 10;
+    }
+    while (n > 0) serial_putc(digits[--n]);
+}
+
 #endif

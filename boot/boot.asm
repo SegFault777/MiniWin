@@ -11,7 +11,15 @@ BITS 16
 ORG 0x7C00
 
 KERNEL_LOAD_SEG   equ 0x1000      ; kernel lands at physical 0x10000 (seg 0x1000, off 0)
-KERNEL_CHUNKS             equ 16  ; 16 x 64 sectors = 1024 sectors = 512KB budget
+KERNEL_CHUNKS             equ 5   ; 5 x 64 sectors = 320 sectors = 160KB budget --
+                                  ; shrunk down from 512KB now that -Os and
+                                  ; --gc-sections (see build.sh) keep the real
+                                  ; kernel around 118KB; 160KB leaves ~35%
+                                  ; headroom for what's still coming (TCP, an
+                                  ; HTTP client) without dragging the whole
+                                  ; disk image's minimum size up with it. See
+                                  ; kernel/fs.h for how this budget lines up
+                                  ; with where the file-storage slots start.
 KERNEL_SECTORS_PER_CHUNK  equ 64
 
 start:
@@ -30,19 +38,15 @@ start:
     call print_string
 
     ; ---- Load kernel from disk using BIOS INT13h extended (LBA) reads ----
-    ; The kernel keeps growing (Hangul font, then a PCI scanner, and
-    ; there's a whole network stack still coming), so instead of the
-    ; four hand-copied disk-address-packets this used to be, it's now a
-    ; genuine runtime loop: one reusable DAP, 16 iterations of 64 sectors
-    ; (32KB) apiece, walking the destination segment up by 0x800 each
-    ; time so all 16 chunks land back-to-back starting at 0x10000 --
-    ; right where the linker script expects the kernel. 16 x 32KB = 512KB
-    ; of budget, versus 128KB before. Every physical address involved
-    ; stays comfortably under the 1MB mark, so none of this needs the
-    ; A20 line enabled yet -- that still happens after, same as before.
-    ; Legacy CHS reads (AH=02h) cap out at 255 sectors per call anyway,
-    ; which is exactly the kind of limit this rewrite exists to stop
-    ; hitting.
+    ; One reusable DAP (disk address packet), KERNEL_CHUNKS iterations of
+    ; KERNEL_SECTORS_PER_CHUNK sectors apiece, walking the destination
+    ; segment up by 0x800 each time so every chunk lands back-to-back
+    ; starting at 0x10000 -- right where the linker script expects the
+    ; kernel. Every physical address involved stays comfortably under
+    ; the 1MB mark, so none of this needs the A20 line enabled yet --
+    ; that still happens after, same as before. Legacy CHS reads (AH=02h)
+    ; cap out at 255 sectors per call anyway, which is exactly the kind
+    ; of limit an LBA-based DAP loop like this one sidesteps entirely.
     mov word [dap_sectors], KERNEL_SECTORS_PER_CHUNK
     mov word [dap_lba], 1              ; kernel starts at LBA 1 (LBA 0 is this boot sector)
     mov word [dap_lba+2], 0
@@ -208,7 +212,24 @@ protected_mode_entry:
     mov fs, ax
     mov gs, ax
     mov ss, ax
-    mov esp, 0x90000             ; brand new 32-bit stack, never been used
+    ; Stack base: as high as conventional memory safely goes. Real BIOS
+    ; conventional memory ends at 0xA0000 (640KB) -- above that is the
+    ; VGA framebuffer's memory-mapped window, not RAM, so writing there
+    ; corrupts the screen instead of the stack. 0x9FC00 leaves exactly
+    ; 1KB of breathing room below that hard ceiling (a nod to the fact
+    ; that the last KB of conventional memory has historically been
+    ; reserved for the Extended BIOS Data Area on real hardware, even
+    ; though QEMU doesn't enforce that -- no reason to test the theory).
+    ; This used to be 0x90000, which put the stack a mere 64KB above
+    ; where .bss starts growing (kernel/link.ld) -- fine when this
+    ; kernel's globals were small, but every NIC ring buffer, font
+    ; table, and now the whole network stack's tables have been eating
+    ; into that gap for a while. Moving the stack up here instead of
+    ; trimming .bss buys a much larger, much longer-lived margin for
+    ; whatever gets added next -- see build.sh's .bss-vs-stack check,
+    ; which enforces that margin at every build from now on instead of
+    ; letting it erode silently again.
+    mov esp, 0x9FC00
 
     ; Off we go into the C kernel, loaded at 0x10000. This bootloader's
     ; entire job is now done. It was a good run.

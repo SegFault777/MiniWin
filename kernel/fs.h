@@ -12,23 +12,31 @@
  * giving you NEWDOC.TXT, then _2, then _3, then _4, and then a
  * polite "sorry, full" if you try for a 5th.
  *
- * Disk layout (LBA = sector number, 512 bytes a pop):
+ * Disk layout (LBA = sector number, 512 bytes a pop) -- the whole image
+ * is exactly 256KB (512 sectors), a round number chosen on purpose (see
+ * build.sh) instead of padding out to whatever happened to be left over:
  *   LBA 0        - boot sector
- *   LBA 1-1024   - the kernel (512KB budget -- it's got a whole Hangul
- *                  font, and a network stack is still on the way)
- *   LBA 1100+    - the four file slots, 9 sectors each (1 header + 8 data):
- *                    slot 0: LBA 1100-1108 -> "NEWDOC.TXT"
- *                    slot 1: LBA 1109-1117 -> "NEWDOC_2.TXT"
- *                    slot 2: LBA 1118-1126 -> "NEWDOC_3.TXT"
- *                    slot 3: LBA 1127-1135 -> "NEWDOC_4.TXT"
- * (There's a gap between LBA 1024 and 1100 on purpose -- room to grow
- * the kernel's own budget again later without immediately colliding
- * with the file storage area the way the old LBA-300 layout eventually
- * would have.)
+ *   LBA 1-320    - the kernel (160KB budget -- real usage sits around
+ *                  118KB with -Os and --gc-sections doing their job;
+ *                  see boot/boot.asm's KERNEL_CHUNKS for the loader side
+ *                  of this same number)
+ *   LBA 321+     - the four file slots, 9 sectors each (1 header + 8 data):
+ *                    slot 0: LBA 321-329 -> "NEWDOC.TXT"
+ *                    slot 1: LBA 330-338 -> "NEWDOC_2.TXT"
+ *                    slot 2: LBA 339-347 -> "NEWDOC_3.TXT"
+ *                    slot 3: LBA 348-356 -> "NEWDOC_4.TXT"
+ *   LBA 357-511  - unused headroom (77.5KB) -- room for the kernel or
+ *                  the file area to grow without immediately forcing
+ *                  the image past the 256KB line; see build.sh's size
+ *                  check, which fails loudly if either one ever does.
+ * (File slots start the sector immediately after the kernel budget ends
+ * -- no gap between them the way there used to be back when the kernel
+ * budget was 512KB and file storage started way out at LBA 1100. Every
+ * sector between LBA 1 and LBA 356 is now spoken for on purpose.)
  */
 
 #define FS_MAGIC           0x31573154u
-#define FS_BASE_LBA        1100
+#define FS_BASE_LBA        321
 #define FS_SLOT_SECTORS    9      /* 1 header + 8 data sectors per slot */
 #define FS_DATA_SECTORS    8
 #define FS_MAX_FILE_BYTES  (FS_DATA_SECTORS * 512)  /* 4096 bytes, don't write a novel */
@@ -87,7 +95,9 @@ static inline int fs_save_slot(int slot, const char *data, u32 len) {
  * Fills *out_len if so. */
 static inline int fs_check_slot(int slot, u32 *out_len) {
     if (slot < 0 || slot >= FS_MAX_FILES) return 0;
-    u8 header[512];
+    u8 header[512] = {0}; /* zeroed so a failed read reads back as "no magic found"
+                           * instead of leaving the compiler (rightly) suspicious
+                           * that we might inspect uninitialized stack garbage */
     if (!ata_read_sector(fs_slot_header_lba(slot), header)) return 0;
     u32 magic = *(u32*)(header + 0);
     if (magic != FS_MAGIC) return 0; /* nope, just leftover zeros or noise */

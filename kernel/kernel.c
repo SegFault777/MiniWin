@@ -14,7 +14,13 @@
 #include "nic.h"
 #include "rtl8139.h"
 #include "e1000.h"
-#include "net_diag.h"
+#include "net.h"
+#include "arp.h"
+#include "ip.h"
+#include "icmp.h"
+#include "udp.h"
+#include "dhcp.h"
+#include "net_stack.h"
 
 #define DESKTOP_COLOR_BG      COL_LCYAN
 #define DESKTOP_COLOR_ICON_BG COL_LCYAN
@@ -271,10 +277,10 @@ static void draw_desktop_icon2(void) {
  * Clock -- bottom-right of the taskbar. Real CMOS hardware time (see
  * rtc.h), not a simulated tick counter. There's deliberately no
  * "automatic" timezone-by-location here: that would need a working
- * IP/DNS/HTTP stack to ask some geolocation service where in the world
- * this machine is, and this kernel only has raw Ethernet + ARP so far
- * (see kernel/net_diag.h) -- no IP layer, no DNS, no HTTP client. So
- * instead, the timezone is a plain manual UTC offset, set in
+ * HTTP client to ask some geolocation service where in the world this
+ * machine is, and this kernel's network stack (see kernel/net_stack.h)
+ * goes up through ARP/IP/ICMP/UDP/DHCP but doesn't speak TCP or HTTP
+ * yet. So instead, the timezone is a plain manual UTC offset, set in
  * SETTING.EXE > SYSTEM > Time Zone, and applied to the CMOS reading via
  * rtc_apply_offset(). Honest > fake.
  * ============================================================ */
@@ -1755,17 +1761,15 @@ void kmain(void) {
     serial_init();
     pci_scan();
 
-    /* If a supported NIC is present, bring it up and immediately prove
-     * both directions of it actually work: send a real ARP request for
-     * QEMU SLIRP's default gateway (10.0.2.2, when the guest is
-     * 10.0.2.15) and let net_diag_poll() in the main loop log whatever
-     * comes back. This is driver bring-up instrumentation, not a
-     * feature -- there's no IP stack yet, just NIC drivers that can
-     * prove they send and receive real frames. Only one NIC is ever
-     * "active" (see nic.h) -- try RTL8139 first, then e1000, whichever
-     * one QEMU (or real hardware) actually presented on the PCI bus. */
+    /* If a supported NIC is present, bring the whole network stack up:
+     * ARP cache, IPv4, ICMP, UDP, and a DHCP client that goes and asks
+     * whatever network we're plugged into for a real address -- no more
+     * hardcoding 10.0.2.15 and hoping the guest is always QEMU SLIRP.
+     * Only one NIC is ever "active" (see nic.h) -- try RTL8139 first,
+     * then e1000, whichever one QEMU (or real hardware) actually
+     * presented on the PCI bus. */
     if (rtl8139_init() || e1000_init()) {
-        net_send_arp_request(NET_IP4(10,0,2,15), NET_IP4(10,0,2,2));
+        net_stack_init();
     }
 
     /* Check for previously-saved files on disk (real, persistent storage
@@ -2315,7 +2319,19 @@ void kmain(void) {
         }
         }
 
-        net_diag_poll(); /* driver bring-up: logs any received frame over serial */
+        net_stack_poll(); /* drains and dispatches any received frames: ARP, IP/ICMP/UDP, DHCP */
+
+        /* One-shot bring-up check: the instant DHCP hands us an address,
+         * ping the gateway once. This is temporary verification
+         * instrumentation (same spirit as the old net_diag.h harness),
+         * proving ICMP end-to-end before TCP gets built on top of it. */
+        {
+            static int icmp_probe_sent = 0;
+            if (net_cfg.ready && !icmp_probe_sent) {
+                icmp_probe_sent = 1;
+                icmp_send_echo_request(net_cfg.gateway_ip, 0xC1A0, 1);
+            }
+        }
 
         render_frame(mx, my, status);
         delay(2000); /* lowered further from 8000 -- mouse felt sluggish/
