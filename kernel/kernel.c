@@ -425,6 +425,7 @@ static void draw_date_popup(void) {
 #define WIN_DEFAULT_H   130
 #define TITLEBAR_H      10
 #define MIN_WIN_H       (TITLEBAR_H + 12 + 20) /* title + menu + a little edit area */
+#define MIN_WIN_W       120                     /* enough for the 3 title bar buttons + a sliver of title text */
 
 /* Maximized geometry: fill the screen above the taskbar entirely. */
 #define MAXIMIZED_X 0
@@ -524,10 +525,6 @@ static int win_is_minimized(int id) {
 }
 static window_t *win_ptr(int id) {
     return (id == WIN_ID_SETTING) ? &setting : &notepads[id].win;
-}
-static void win_get_rect(int id, int *x, int *y, int *w, int *h) {
-    window_t *w_ = win_ptr(id);
-    *x = w_->x; *y = w_->y; *w = w_->w; *h = w_->h;
 }
 
 /* z_order[0..z_count-1] lists every currently-OPEN window id, back
@@ -1544,19 +1541,132 @@ static void draw_desktop_file_icons(void) {
 }
 
 /* ============================================================
- * Mouse cursor
+ * Window edge/corner resizing
+ *
+ * A thin margin straddling each window's border acts as a grab zone --
+ * hovering it swaps the cursor to the matching directional arrow, and
+ * pressing there starts a resize instead of a drag or a content click.
+ * Corners resize two edges at once; maximized windows aren't resizable
+ * at all (same as real window managers -- there's nothing to resize
+ * when a window is already filling all the space it can).
  * ============================================================ */
-static const char cursor_shape[11][7] = {
+#define RESIZE_MARGIN 4
+
+#define RESIZE_NONE 0
+#define RESIZE_N    1
+#define RESIZE_S    2
+#define RESIZE_E    4
+#define RESIZE_W    8
+
+/* Which edges (if any) of THIS window's rect are under (px,py), given
+ * the window's own current geometry -- corners come back as two bits
+ * set together (e.g. RESIZE_N|RESIZE_W for the top-left corner). */
+static int resize_zone_at(int px, int py, int x, int y, int w, int h) {
+    int within_x = (px >= x - RESIZE_MARGIN && px <= x + w + RESIZE_MARGIN);
+    int within_y = (py >= y - RESIZE_MARGIN && py <= y + h + RESIZE_MARGIN);
+    int on_top    = within_x && py >= y - RESIZE_MARGIN     && py <= y + RESIZE_MARGIN;
+    int on_bottom = within_x && py >= y + h - RESIZE_MARGIN && py <= y + h + RESIZE_MARGIN;
+    int on_left   = within_y && px >= x - RESIZE_MARGIN     && px <= x + RESIZE_MARGIN;
+    int on_right  = within_y && px >= x + w - RESIZE_MARGIN && px <= x + w + RESIZE_MARGIN;
+
+    int zone = RESIZE_NONE;
+    if (on_top) zone |= RESIZE_N;
+    if (on_bottom) zone |= RESIZE_S;
+    if (on_left) zone |= RESIZE_W;
+    if (on_right) zone |= RESIZE_E;
+    return zone;
+}
+
+/* Walks z-order front-to-back (same priority as click hit-testing) and
+ * returns the resize zone under (px,py) for whichever window is
+ * topmost there, plus that window's id via *out_win_id. A maximized
+ * window still "claims" the point (so clicks there don't fall through
+ * to whatever's behind it) but always reports RESIZE_NONE, since it
+ * can't be resized while maximized. */
+static int compute_hover_resize_zone(int px, int py, int *out_win_id) {
+    for (int zi = z_count - 1; zi >= 0; zi--) {
+        int id = z_order[zi];
+        if (!win_is_open(id) || win_is_minimized(id)) continue;
+        window_t *w = win_ptr(id);
+        int ex = w->x - RESIZE_MARGIN, ey = w->y - RESIZE_MARGIN;
+        int ew = w->w + 2 * RESIZE_MARGIN, eh = w->h + 2 * RESIZE_MARGIN;
+        if (!in_rect(px, py, ex, ey, ew, eh)) continue;
+        *out_win_id = id;
+        if (w->maximized) return RESIZE_NONE;
+        return resize_zone_at(px, py, w->x, w->y, w->w, w->h);
+    }
+    *out_win_id = -1;
+    return RESIZE_NONE;
+}
+
+/* Active resize, if any -- one shared mechanism for every window, same
+ * pattern as dragging_id. */
+static int resizing_id = -1;
+static int resizing_zone = RESIZE_NONE;
+static int resize_start_mx, resize_start_my;
+static int resize_start_x, resize_start_y, resize_start_w, resize_start_h;
+
+/* ============================================================
+ * Mouse cursor -- the default arrow, plus four directional resize
+ * cursors swapped in whenever the pointer is over a window's edge or
+ * corner (see compute_hover_resize_zone() above). Each shape is just a
+ * small array of row-strings, same pixel-art-by-hand approach as every
+ * other icon in this OS, drawn through one generic walker instead of a
+ * separate function per shape.
+ * ============================================================ */
+static const char *cursor_arrow[11] = {
     "X......","XX.....","X.X....","X..X...","X...X..",
     "X....X.","X.....X","X....XX","X..X.X.","X.X..X.","XX...X.",
 };
+static const char *cursor_hresize[5] = {
+    "...X...X...",
+    "..XX...XX..",
+    ".XXXXXXXXX.",
+    "..XX...XX..",
+    "...X...X...",
+};
+static const char *cursor_vresize[11] = {
+    "..X..",".XXX.","XXXXX","..X..","..X..",
+    "..X..","..X..","..X..","XXXXX",".XXX.","..X..",
+};
+/* top-left <-> bottom-right ("\") */
+static const char *cursor_diag_nwse[9] = {
+    "XX.......","XXX......",".XXX.....","..XXX....","...XXX...",
+    "....XXX..",".....XXX.","......XXX",".......XX",
+};
+/* top-right <-> bottom-left ("/") */
+static const char *cursor_diag_nesw[9] = {
+    ".......XX","......XXX",".....XXX.","....XXX..","...XXX...",
+    "..XXX....",".XXX.....","XXX......","XX.......",
+};
+
+static void draw_cursor_shape(int x, int y, const char *const *rows, int nrows) {
+    for (int j = 0; j < nrows; j++) {
+        const char *row = rows[j];
+        for (int i = 0; row[i]; i++) {
+            if (row[i] == 'X') bb_putpixel(x + i, y + j, COL_BLACK);
+        }
+    }
+}
 
 static void draw_cursor(int x, int y) {
-    for (int j = 0; j < 11; j++)
-        for (int i = 0; i < 7; i++)
-            if (cursor_shape[j][i] == 'X')
-                bb_putpixel(x + i, y + j, COL_BLACK);
+    int dummy_win;
+    int zone = (resizing_id >= 0) ? resizing_zone : compute_hover_resize_zone(x, y, &dummy_win);
+
+    if (zone == (RESIZE_N | RESIZE_W) || zone == (RESIZE_S | RESIZE_E)) {
+        draw_cursor_shape(x - 4, y - 4, cursor_diag_nwse, 9);
+    } else if (zone == (RESIZE_N | RESIZE_E) || zone == (RESIZE_S | RESIZE_W)) {
+        draw_cursor_shape(x - 4, y - 4, cursor_diag_nesw, 9);
+    } else if (zone == RESIZE_W || zone == RESIZE_E) {
+        draw_cursor_shape(x - 5, y - 2, cursor_hresize, 5);
+    } else if (zone == RESIZE_N || zone == RESIZE_S) {
+        draw_cursor_shape(x - 2, y - 5, cursor_vresize, 11);
+    } else {
+        draw_cursor_shape(x, y, cursor_arrow, 11);
+    }
 }
+
+
 
 /* ============================================================
  * Frame composition
@@ -1743,6 +1853,45 @@ void kmain(void) {
                 }
             }
 
+            /* ---- resize in progress: grow/shrink from whichever
+             * edge(s) were grabbed, anchored on the opposite edge(s) so
+             * the corner/side you're NOT dragging stays put ---- */
+            if (resizing_id >= 0) {
+                if (left_now) {
+                    int dx = mx - resize_start_mx;
+                    int dy = my - resize_start_my;
+                    int nx = resize_start_x, ny = resize_start_y;
+                    int nw = resize_start_w, nh = resize_start_h;
+
+                    if (resizing_zone & RESIZE_E) nw = resize_start_w + dx;
+                    if (resizing_zone & RESIZE_S) nh = resize_start_h + dy;
+                    if (resizing_zone & RESIZE_W) { nx = resize_start_x + dx; nw = resize_start_w - dx; }
+                    if (resizing_zone & RESIZE_N) { ny = resize_start_y + dy; nh = resize_start_h - dy; }
+
+                    if (nw < MIN_WIN_W) {
+                        if (resizing_zone & RESIZE_W) nx -= (MIN_WIN_W - nw);
+                        nw = MIN_WIN_W;
+                    }
+                    if (nh < MIN_WIN_H) {
+                        if (resizing_zone & RESIZE_N) ny -= (MIN_WIN_H - nh);
+                        nh = MIN_WIN_H;
+                    }
+                    if (nx < 0) nx = 0;
+                    if (ny < 0) ny = 0;
+
+                    window_t *rw = win_ptr(resizing_id);
+                    rw->x = nx; rw->y = ny; rw->w = nw; rw->h = nh;
+                    /* keep restore_* in sync too, so a later maximize+
+                     * restore cycle snaps back to this size, not
+                     * whatever size the window happened to be before
+                     * this resize started */
+                    rw->restore_x = nx; rw->restore_y = ny; rw->restore_w = nw; rw->restore_h = nh;
+                } else {
+                    resizing_id = -1;
+                    resizing_zone = RESIZE_NONE;
+                }
+            }
+
             if (clicked) {
                 /* Recomputed once per click since there are at most
                  * WIN_ID_COUNT (5) windows -- cheap enough not to bother
@@ -1826,19 +1975,29 @@ void kmain(void) {
                         win_z_raise(taskbar_close_id);
                     }
                 } else {
-                    /* Topmost open+visible window whose rect contains the
-                     * click, z-order back-to-front reversed so the FRONT-
-                     * most window wins when two happen to overlap. */
-                    int hit_id = -1;
-                    for (int zi = z_count - 1; zi >= 0; zi--) {
-                        int id = z_order[zi];
-                        if (!win_is_open(id) || win_is_minimized(id)) continue;
-                        int wx, wy, ww, wh;
-                        win_get_rect(id, &wx, &wy, &ww, &wh);
-                        if (in_rect(mx, my, wx, wy, ww, wh)) { hit_id = id; break; }
-                    }
+                    /* Topmost open+visible window whose rect (or resize
+                     * margin) contains the click, z-order back-to-front
+                     * reversed so the FRONT-most window wins when two
+                     * happen to overlap. */
+                    int hit_id;
+                    int zone = compute_hover_resize_zone(mx, my, &hit_id);
 
-                    if (hit_id == WIN_ID_SETTING) {
+                    if (zone != RESIZE_NONE) {
+                        /* Grabbed an edge or corner: start resizing
+                         * instead of any of the normal window-content
+                         * handling below. Brings the window to front
+                         * too, same as any other interaction with it. */
+                        win_z_raise(hit_id);
+                        resizing_id = hit_id;
+                        resizing_zone = zone;
+                        resize_start_mx = mx;
+                        resize_start_my = my;
+                        window_t *rw = win_ptr(hit_id);
+                        resize_start_x = rw->x;
+                        resize_start_y = rw->y;
+                        resize_start_w = rw->w;
+                        resize_start_h = rw->h;
+                    } else if (hit_id == WIN_ID_SETTING) {
                         /* Clicking anywhere on a window -- not just a
                          * control that does something -- brings it to
                          * the front, same as any real window manager. */

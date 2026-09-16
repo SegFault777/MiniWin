@@ -30,7 +30,9 @@ system with no libc, no bootloader framework, and no borrowed kernel code.
   4-slot ATA-backed filesystem, PCI enumeration, and a COM1 serial debug
   log.
 - **Desktop**: draggable/resizable/minimizable/maximizable windows with
-  real overlapping z-order (click a window, it comes to front), a
+  real overlapping z-order (click a window, it comes to front), edge/
+  corner resize handles that swap the cursor to a matching directional
+  arrow (horizontal, vertical, or either diagonal) while hovering, a
   Windows-95-style Start Menu with a cascading Shut Down/Restart flyout
   (both genuinely halt/reboot the machine), and a taskbar that lists
   minimized windows in the order you minimized them.
