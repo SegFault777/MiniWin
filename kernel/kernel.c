@@ -115,9 +115,10 @@ typedef enum {
     STR_SAVE_CHANGES, STR_BEFORE_CLOSING, STR_BEFORE_NEW,
     STR_SHUT_DOWN, STR_RESTART, STR_SAFE_TO_TURN_OFF,
     STR_DEFAULT_HINT,
-    STR_NOTEPAD_OPENED, STR_SETTING_OPENED,
+    STR_NOTEPAD_OPENED, STR_SETTING_OPENED, STR_WEB_OPENED,
     STR_NOTEPAD_MINIMIZED, STR_NOTEPAD_MAXIMIZED, STR_NOTEPAD_RESTORED,
     STR_SETTING_MINIMIZED, STR_SETTING_MAXIMIZED, STR_SETTING_RESTORED,
+    STR_WEB_MINIMIZED, STR_WEB_MAXIMIZED, STR_WEB_RESTORED,
     STR_SAVE_AS_COMING_SOON,
     STR_STORAGE_FULL_NOT_SAVED,
     STR_SAVED_PREFIX,
@@ -151,12 +152,16 @@ static const char *ui_strings_en[STR_COUNT] = {
     [STR_DEFAULT_HINT] = "MINIWIN 1.0 - DOUBLE-CLICK NOTEPAD.EXE TO OPEN",
     [STR_NOTEPAD_OPENED] = "NOTEPAD.EXE OPENED (RIGHT ALT: SWITCH IME)",
     [STR_SETTING_OPENED] = "SETTING.EXE OPENED",
+    [STR_WEB_OPENED] = "WEB.EXE OPENED",
     [STR_NOTEPAD_MINIMIZED] = "NOTEPAD.EXE MINIMIZED",
     [STR_NOTEPAD_MAXIMIZED] = "NOTEPAD.EXE MAXIMIZED",
     [STR_NOTEPAD_RESTORED] = "NOTEPAD.EXE RESTORED",
     [STR_SETTING_MINIMIZED] = "SETTING.EXE MINIMIZED",
     [STR_SETTING_MAXIMIZED] = "SETTING.EXE MAXIMIZED",
     [STR_SETTING_RESTORED] = "SETTING.EXE RESTORED",
+    [STR_WEB_MINIMIZED] = "WEB.EXE MINIMIZED",
+    [STR_WEB_MAXIMIZED] = "WEB.EXE MAXIMIZED",
+    [STR_WEB_RESTORED] = "WEB.EXE RESTORED",
     [STR_SAVE_AS_COMING_SOON] = "SAVE AS - COMING SOON",
     [STR_STORAGE_FULL_NOT_SAVED] = "STORAGE FULL - NOT SAVED",
     [STR_SAVED_PREFIX] = "SAVED: ",
@@ -192,12 +197,16 @@ static const char *ui_strings_ko[STR_COUNT] = {
     [STR_DEFAULT_HINT] = "MINIWIN 1.0 - NOTEPAD.EXE \xeb\x8d\x94\xeb\xb8\x94\xed\x81\xb4\xeb\xa6\xad\xec\x9c\xbc\xeb\xa1\x9c \xec\x8b\xa4\xed\x96\x89",
     [STR_NOTEPAD_OPENED] = "NOTEPAD.EXE \xec\x8b\xa4\xed\x96\x89\xeb\x90\xa8 (RIGHT ALT: \xec\x9e\x85\xeb\xa0\xa5\xea\xb8\xb0 \xec\xa0\x84\xed\x99\x98)",
     [STR_SETTING_OPENED] = "SETTING.EXE \xec\x8b\xa4\xed\x96\x89\xeb\x90\xa8",
+    [STR_WEB_OPENED] = "WEB.EXE \xec\x8b\xa4\xed\x96\x89\xeb\x90\xa8",
     [STR_NOTEPAD_MINIMIZED] = "NOTEPAD.EXE \xec\xb5\x9c\xec\x86\x8c\xed\x99\x94\xeb\x90\xa8",
     [STR_NOTEPAD_MAXIMIZED] = "NOTEPAD.EXE \xec\xb5\x9c\xeb\x8c\x80\xed\x99\x94\xeb\x90\xa8",
     [STR_NOTEPAD_RESTORED] = "NOTEPAD.EXE \xeb\xb3\xb5\xec\x9b\x90\xeb\x90\xa8",
     [STR_SETTING_MINIMIZED] = "SETTING.EXE \xec\xb5\x9c\xec\x86\x8c\xed\x99\x94\xeb\x90\xa8",
     [STR_SETTING_MAXIMIZED] = "SETTING.EXE \xec\xb5\x9c\xeb\x8c\x80\xed\x99\x94\xeb\x90\xa8",
     [STR_SETTING_RESTORED] = "SETTING.EXE \xeb\xb3\xb5\xec\x9b\x90\xeb\x90\xa8",
+    [STR_WEB_MINIMIZED] = "WEB.EXE \xec\xb5\x9c\xec\x86\x8c\xed\x99\x94\xeb\x90\xa8",
+    [STR_WEB_MAXIMIZED] = "WEB.EXE \xec\xb5\x9c\xeb\x8c\x80\xed\x99\x94\xeb\x90\xa8",
+    [STR_WEB_RESTORED] = "WEB.EXE \xeb\xb3\xb5\xec\x9b\x90\xeb\x90\xa8",
     [STR_SAVE_AS_COMING_SOON] = "\xeb\x8b\xa4\xeb\xa5\xb8 \xec\x9d\xb4\xeb\xa6\x84\xec\x9c\xbc\xeb\xa1\x9c \xec\xa0\x80\xec\x9e\xa5 - \xec\xa4\x80\xeb\xb9\x84 \xec\xa4\x91",
     [STR_STORAGE_FULL_NOT_SAVED] = "\xec\xa0\x80\xec\x9e\xa5 \xea\xb3\xb5\xea\xb0\x84 \xeb\xb6\x80\xec\xa1\xb1 - \xec\xa0\x80\xec\x9e\xa5 \xec\x95\x88 \xeb\x90\xa8",
     [STR_SAVED_PREFIX] = "\xec\xa0\x80\xec\x9e\xa5\xeb\x90\xa8: ",
@@ -270,6 +279,37 @@ static void draw_desktop_icon2(void) {
     const char *line1 = "SETTING", *line2 = ".EXE";
     font_draw_string(ICON2_X + (ICON_SLOT_W - 8 * 7) / 2, ICON2_Y + 14, line1, COL_BLACK);
     font_draw_string(ICON2_X + (ICON_SLOT_W - 8 * 4) / 2, ICON2_Y + 22, line2, COL_BLACK);
+}
+
+/* WEB.EXE -- third icon in the same top row. Double-clicking opens
+ * MiniWeb, the small HTTP client browser built on kernel/http.h and
+ * kernel/tcp.h -- this OS's actual "layer above the network stack,"
+ * not just a diagnostic harness proving the stack works. */
+#define ICON3_X  (ICON2_X + ICON_SLOT_W + 8)
+#define ICON3_Y  6
+#define ICON3_W  ICON_SLOT_W
+#define ICON3_H  26
+
+static void draw_desktop_icon3(void) {
+    /* a little globe: circle outline plus one horizontal and one
+     * vertical meridian line through the middle -- instantly reads as
+     * "network/internet" at icon scale without needing a real bitmap */
+    int gx = ICON3_X + (ICON_SLOT_W - ICON_GLYPH_W) / 2;
+    bb_fillrect(gx, ICON3_Y, ICON_GLYPH_W, 12, COL_WHITE);
+    bb_rect(gx, ICON3_Y, ICON_GLYPH_W, 12, COL_BLACK);
+    /* equator */
+    for (int i = 2; i < ICON_GLYPH_W - 2; i++) bb_putpixel(gx + i, ICON3_Y + 6, COL_BLACK);
+    /* prime meridian (just the visible half of it, an ellipse-ish curve
+     * approximated with a few pixels -- this is an icon, not a globe) */
+    for (int j = 1; j < 11; j++) {
+        int inset = (j <= 5) ? (5 - j) : (j - 6);
+        bb_putpixel(gx + 3 + inset / 2, ICON3_Y + j, COL_BLACK);
+        bb_putpixel(gx + 12 - inset / 2, ICON3_Y + j, COL_BLACK);
+    }
+
+    const char *line1 = "WEB", *line2 = ".EXE";
+    font_draw_string(ICON3_X + (ICON_SLOT_W - 8 * 3) / 2, ICON3_Y + 14, line1, COL_BLACK);
+    font_draw_string(ICON3_X + (ICON_SLOT_W - 8 * 4) / 2, ICON3_Y + 22, line2, COL_BLACK);
 }
 
 #define TASKBAR_H     14
@@ -478,6 +518,23 @@ static window_t setting = {
     .restore_w = SETTING_DEFAULT_W, .restore_h = SETTING_DEFAULT_H,
 };
 
+/* WEB.EXE's window state, same treatment as setting's above -- a
+ * single-instance window_t living here so the taskbar/z-order/generic
+ * resize machinery can see it, with the app-specific drawing and hit-
+ * testing code grouped further down near draw_web_window(). */
+#define WEB_DEFAULT_X   140
+#define WEB_DEFAULT_Y   50
+#define WEB_DEFAULT_W   260
+#define WEB_DEFAULT_H   160
+
+static window_t web_win = {
+    .open = 0, .minimized = 0, .maximized = 0,
+    .x = WEB_DEFAULT_X, .y = WEB_DEFAULT_Y,
+    .w = WEB_DEFAULT_W, .h = WEB_DEFAULT_H,
+    .restore_x = WEB_DEFAULT_X, .restore_y = WEB_DEFAULT_Y,
+    .restore_w = WEB_DEFAULT_W, .restore_h = WEB_DEFAULT_H,
+};
+
 /* ============================================================
  * Multiple Notepad windows
  *
@@ -517,22 +574,30 @@ static notepad_t *active_np = &notepads[0];
  * Window IDs + z-order (stacking) + minimize-order (taskbar layout)
  *
  * A "window id" is just 0..NOTEPAD_MAX-1 for notepads[id], or
- * WIN_ID_SETTING for the Setting window -- one small integer namespace
- * covering every top-level window in the OS, so the taskbar, z-order,
- * and focus-on-click logic can all treat "which window" generically
- * instead of hardcoding "Notepad vs Setting" at every call site.
+ * WIN_ID_SETTING for the Setting window, or WIN_ID_WEB for the MiniWeb
+ * browser window -- one small integer namespace covering every
+ * top-level window in the OS, so the taskbar, z-order, and
+ * focus-on-click logic can all treat "which window" generically instead
+ * of hardcoding every app by name at every call site.
  * ------------------------------------------------------------ */
 #define WIN_ID_SETTING NOTEPAD_MAX
-#define WIN_ID_COUNT   (NOTEPAD_MAX + 1)
+#define WIN_ID_WEB     (NOTEPAD_MAX + 1)
+#define WIN_ID_COUNT   (NOTEPAD_MAX + 2)
 
 static int win_is_open(int id) {
-    return (id == WIN_ID_SETTING) ? setting.open : notepads[id].win.open;
+    if (id == WIN_ID_SETTING) return setting.open;
+    if (id == WIN_ID_WEB) return web_win.open;
+    return notepads[id].win.open;
 }
 static int win_is_minimized(int id) {
-    return (id == WIN_ID_SETTING) ? setting.minimized : notepads[id].win.minimized;
+    if (id == WIN_ID_SETTING) return setting.minimized;
+    if (id == WIN_ID_WEB) return web_win.minimized;
+    return notepads[id].win.minimized;
 }
 static window_t *win_ptr(int id) {
-    return (id == WIN_ID_SETTING) ? &setting : &notepads[id].win;
+    if (id == WIN_ID_SETTING) return &setting;
+    if (id == WIN_ID_WEB) return &web_win;
+    return &notepads[id].win;
 }
 
 /* z_order[0..z_count-1] lists every currently-OPEN window id, back
@@ -862,6 +927,9 @@ static void taskbar_pill_label(int id, char *out, u32 outsz) {
     if (id == WIN_ID_SETTING) {
         const char *s = "S...";
         while (*s) kstrcpy_append(out, &len, outsz, *s++);
+    } else if (id == WIN_ID_WEB) {
+        const char *s = "W...";
+        while (*s) kstrcpy_append(out, &len, outsz, *s++);
     } else {
         kstrcpy_append(out, &len, outsz, 'N');
         kstrcpy_append(out, &len, outsz, (char)('1' + id));
@@ -969,7 +1037,7 @@ static int taskbar_glyph_hit(int px, int py, int kind) {
 #define STARTMENU_W         120
 #define STARTMENU_H         74
 #define STARTMENU_ITEM_H    12
-#define STARTMENU_ITEMS     3   /* 0=Notepad.exe, 1=Setting.exe, 2=power */
+#define STARTMENU_ITEMS     4   /* 0=Notepad.exe, 1=Setting.exe, 2=Web.exe, 3=power */
 #define STARTMENU_POWER_IDX (STARTMENU_ITEMS - 1)
 
 static inline int start_menu_x(void) { return STARTBTN_X; }
@@ -1065,7 +1133,7 @@ static void draw_start_menu(int mx, int my) {
     bb_fillrect(x + 1, y + 1, STARTMENU_BANNER_W - 1, h - 2, COL_BLUE);
     font_draw_string_vertical(x + 3, y + h - 9, "MINIWIN", COL_WHITE);
 
-    const char *labels[2] = {"Notepad.exe", "Setting.exe"};
+    const char *labels[3] = {"Notepad.exe", "Setting.exe", "Web.exe"};
     int ix = x + STARTMENU_BANNER_W + 2;
     int iw = w - STARTMENU_BANNER_W - 4;
     for (int i = 0; i < STARTMENU_ITEMS; i++) {
@@ -1423,6 +1491,191 @@ static void draw_setting_window(void) {
 }
 
 /* ============================================================
+ * WEB.EXE -- MiniWeb, a tiny HTTP client browser.
+ *
+ * This is the actual "layer above TCP/HTTP" -- an application a person
+ * clicks on, not a headless bring-up probe. Two hardcoded target rows
+ * (no DNS resolver exists yet, so there's no address bar to type a
+ * hostname into -- see kernel/http.h's file header for the same
+ * limitation) each fire one HTTP GET through http_get()/http_poll()
+ * when clicked, and the response -- or a plain-English reason it
+ * failed -- gets drawn as wrapped plain text in the content area below.
+ *
+ * Reuses the exact same window chrome pattern as SETTING.EXE (own
+ * btn_*_x()/hit-test helpers against web_win instead of setting, same
+ * draw_bevel_button() calls for the three title bar buttons) rather
+ * than trying to generalize that chrome into a shared helper -- two
+ * copies of ~15 lines of button-drawing arithmetic is a better trade
+ * than a shared abstraction that has to know about both windows'
+ * slightly different constant names.
+ * ============================================================ */
+#define WEB_SITE_ROW_H   11
+#define WEB_SITE_COUNT   2
+#define WEB_SITE_PYPI    0
+#define WEB_SITE_GATEWAY 1
+
+/* Which site row (if any) is the source of whatever's currently in
+ * http_client -- purely so the content area can show "Loading
+ * PYPI.ORG..." instead of a generic "Loading..." that doesn't say what
+ * it's loading. -1 means nothing has been requested yet this boot. */
+static int web_current_site = -1;
+
+static inline int web_btn_close_x(void) { return web_win.x + web_win.w - 2 - BTN_W; }
+static inline int web_btn_max_x(void)   { return web_btn_close_x() - BTN_W - BTN_GAP; }
+static inline int web_btn_min_x(void)   { return web_btn_max_x() - BTN_W - BTN_GAP; }
+static inline int web_btn_y(void) { return web_win.y + 1; }
+
+static int web_close_hit(int px, int py) { return in_rect(px, py, web_btn_close_x(), web_btn_y(), BTN_W, BTN_H); }
+static int web_min_hit(int px, int py)   { return in_rect(px, py, web_btn_min_x(),   web_btn_y(), BTN_W, BTN_H); }
+static int web_max_hit(int px, int py)   { return in_rect(px, py, web_btn_max_x(),   web_btn_y(), BTN_W, BTN_H); }
+
+static int web_titlebar_drag_hit(int px, int py) {
+    if (!in_rect(px, py, web_win.x + 1, web_win.y + 1, web_win.w - 2, TITLEBAR_H)) return 0;
+    if (in_rect(px, py, web_btn_min_x(), web_btn_y(), BTN_W, BTN_H)) return 0;
+    if (in_rect(px, py, web_btn_max_x(), web_btn_y(), BTN_W, BTN_H)) return 0;
+    if (in_rect(px, py, web_btn_close_x(), web_btn_y(), BTN_W, BTN_H)) return 0;
+    return 1;
+}
+
+static inline int web_header_y(void) { return web_win.y + TITLEBAR_H + 3; }
+static inline int web_site_row_y(int idx) { return web_header_y() + idx * WEB_SITE_ROW_H; }
+static int web_site_row_hit(int px, int py, int idx) {
+    return in_rect(px, py, web_win.x + 3, web_site_row_y(idx), web_win.w - 6, WEB_SITE_ROW_H);
+}
+static inline int web_content_y(void) { return web_site_row_y(WEB_SITE_COUNT) + 3; }
+
+/* Fires off the actual request for one of the two hardcoded targets.
+ * IPs are literals (no DNS -- see the file-header comment on
+ * kernel/http.h) and were both reachable and verified during this
+ * kernel's own development; either can drift if the target host's
+ * address ever changes, same caveat any hardcoded-IP client has. */
+static void web_go(int site) {
+    web_current_site = site;
+    if (site == WEB_SITE_PYPI) {
+        http_get(NET_IP4(151,101,192,223), "pypi.org", "/");
+    } else {
+        /* Deliberately included even though nothing answers on this
+         * port: a fast, reliable "connection refused" is still a real,
+         * useful demonstration that TCP's RST handling works, and it
+         * always succeeds at *that* regardless of whether this
+         * particular boot happens to have outbound Internet access. */
+        http_get(net_cfg.gateway_ip, "10.0.2.2 (gateway)", "/");
+    }
+}
+
+/* Draws whatever http_client currently holds as wrapped plain-ASCII
+ * text -- deliberately NOT HTML-aware (no tag stripping, no entity
+ * decoding): this shows the raw bytes the server sent, headers and all,
+ * which is exactly the right level of "browser" for a kernel whose
+ * point is proving the network stack works, not rendering the web.
+ * Truncates to whatever fits the content area rather than scrolling --
+ * this kernel doesn't have a text-scroll widget yet, and an HTTP
+ * response's opening lines (status line + headers) are the most useful
+ * ones to see at a glance anyway. */
+static void draw_web_response_text(int x, int y, int w, int h) {
+    int cx = x, cy = y;
+    int max_x = x + w - 8;
+    int max_y = y + h - 8;
+    for (u16 i = 0; i < http_client.response_len; i++) {
+        char c = (char)http_client.response[i];
+        if (c == '\r') continue; /* CRLF line endings -- skip the \r, act on the \n */
+        if (c == '\n' || cx > max_x) {
+            cx = x;
+            cy += 9;
+            if (c == '\n') continue;
+        }
+        if (cy > max_y) break;
+        /* font_draw_char() already upper-cases lowercase letters itself
+         * (see font.h's to_upper()) and covers the full 0x20-0x5A range
+         * that results from that -- so the only bytes actually worth
+         * blanking out here are the genuine non-printable ones (raw
+         * control bytes, high-bit-set bytes) that show up occasionally
+         * in real HTTP traffic; letters, digits, and punctuation all
+         * pass through untouched and let font_draw_char do its own
+         * case-folding. */
+        font_draw_char(cx, cy, (c >= 0x20 && c < 0x7F) ? c : ' ', COL_BLACK);
+        cx += 8;
+    }
+}
+
+static void draw_web_window(void) {
+    int wx = web_win.x, wy = web_win.y, ww = web_win.w, wh = web_win.h;
+
+    if (!web_win.maximized) {
+        bb_fillrect(wx + 3, wy + 3, ww, wh, COL_DGRAY); /* drop shadow */
+    }
+    bb_fillrect(wx, wy, ww, wh, COL_LGRAY);
+    bb_rect(wx, wy, ww, wh, COL_BLACK);
+
+    bb_fillrect(wx + 1, wy + 1, ww - 2, TITLEBAR_H, COL_BLUE);
+    font_draw_string(wx + 3, wy + 1, "WEB.EXE", COL_WHITE);
+
+    int by = web_btn_y();
+    int p_min = (pressed_btn_kind == BTN_MIN && pressed_btn_win == WIN_ID_WEB);
+    int p_max = (pressed_btn_kind == BTN_MAX && pressed_btn_win == WIN_ID_WEB);
+    int p_close = (pressed_btn_kind == BTN_CLOSE && pressed_btn_win == WIN_ID_WEB);
+
+    int mnx = web_btn_min_x();
+    draw_bevel_button(mnx, by, BTN_W, BTN_H, p_min);
+    int o = p_min ? 1 : 0;
+    for (int i = 2; i < BTN_W - 2; i++) bb_putpixel(mnx + i + o, by + BTN_H - 3 + o, COL_BLACK);
+
+    int mxx = web_btn_max_x();
+    draw_bevel_button(mxx, by, BTN_W, BTN_H, p_max);
+    o = p_max ? 1 : 0;
+    bb_rect(mxx + 2 + o, by + 2 + o, BTN_W - 4, BTN_H - 4, COL_BLACK);
+
+    int clx = web_btn_close_x();
+    draw_bevel_button(clx, by, BTN_W, BTN_H, p_close);
+    o = p_close ? 1 : 0;
+    for (int i = 2; i < BTN_W - 2; i++) {
+        bb_putpixel(clx + i + o, by + 2 + (i - 2) + o, COL_BLACK);
+        bb_putpixel(clx + (BTN_W - 1 - i) + o, by + 2 + (i - 2) + o, COL_BLACK);
+    }
+
+    /* two clickable site rows -- the closest thing this browser has to
+     * bookmarks, since there's no address bar to type into */
+    const char *site_labels[WEB_SITE_COUNT] = { "> PYPI.ORG", "> GATEWAY (10.0.2.2)" };
+    for (int i = 0; i < WEB_SITE_COUNT; i++) {
+        int ry = web_site_row_y(i);
+        int active = (web_current_site == i);
+        u8 bg = active ? COL_BLUE : COL_LGRAY;
+        u8 fg = active ? COL_WHITE : COL_BLACK;
+        bb_fillrect(wx + 2, ry, ww - 4, WEB_SITE_ROW_H, bg);
+        font_draw_string(wx + 4, ry + 1, site_labels[i], fg);
+    }
+
+    /* divider between the site rows and the response content */
+    int div_y = web_content_y() - 2;
+    for (int i = 0; i < ww - 4; i++) bb_putpixel(wx + 2 + i, div_y, COL_DGRAY);
+
+    /* status line: what's currently happening, in plain language rather
+     * than exposing the raw http_state_t enum to whoever's looking */
+    const char *status_text;
+    if (web_current_site < 0) {
+        status_text = "Click a site above to fetch it.";
+    } else {
+        switch (http_client.state) {
+            case HTTP_CONNECTING:        status_text = "Connecting..."; break;
+            case HTTP_SENDING_REQUEST:   status_text = "Sending request..."; break;
+            case HTTP_AWAITING_RESPONSE: status_text = "Waiting for response..."; break;
+            case HTTP_DONE:              status_text = "Done."; break;
+            case HTTP_FAILED:            status_text = "Failed to connect."; break;
+            default:                     status_text = ""; break;
+        }
+    }
+    font_draw_string(wx + 3, web_content_y(), status_text, COL_BLUE);
+
+    /* response body (or nothing yet, or the failure already explained
+     * by the status line above) */
+    int body_y = web_content_y() + 10;
+    int body_h = wy + wh - body_y - 3;
+    if (http_client.state == HTTP_DONE || http_client.state == HTTP_AWAITING_RESPONSE) {
+        draw_web_response_text(wx + 3, body_y, ww - 6, body_h);
+    }
+}
+
+/* ============================================================
  * File menu dropdown + Save/New confirm dialog drawing
  * ============================================================ */
 static void draw_file_menu(int mx, int my) {
@@ -1688,6 +1941,7 @@ static void render_frame(int mouse_x, int mouse_y, const char *status_msg) {
 
     draw_desktop_icon();
     draw_desktop_icon2();
+    draw_desktop_icon3();
     draw_desktop_file_icons();
 
     if (status_msg) draw_status_line(status_msg);
@@ -1700,6 +1954,8 @@ static void render_frame(int mouse_x, int mouse_y, const char *status_msg) {
         if (!win_is_open(id) || win_is_minimized(id)) continue;
         if (id == WIN_ID_SETTING) {
             draw_setting_window();
+        } else if (id == WIN_ID_WEB) {
+            draw_web_window();
         } else {
             active_np = &notepads[id];
             draw_window();
@@ -1808,6 +2064,8 @@ void kmain(void) {
     u32 last_icon_click_tick = 0;
     int awaiting_second_click_setting = 0;   /* same idea, but for the SETTING.EXE icon */
     u32 last_setting_click_tick = 0;
+    int awaiting_second_click_web = 0;   /* same idea, but for the WEB.EXE icon */
+    u32 last_web_click_tick = 0;
     int awaiting_second_click_file_slot = -1;   /* which file icon (if any) saw a first click */
     u32 last_file_icon_click_tick = 0;
     u32 tick = 0;
@@ -1951,6 +2209,11 @@ void kmain(void) {
                         win_z_raise(WIN_ID_SETTING);
                         status = t(STR_SETTING_OPENED);
                         start_menu_open = 0;
+                    } else if (start_menu_item_hit(mx, my, 2)) {
+                        web_win.open = 1;
+                        win_z_raise(WIN_ID_WEB);
+                        status = t(STR_WEB_OPENED);
+                        start_menu_open = 0;
                     } else if (start_menu_item_hit(mx, my, STARTMENU_POWER_IDX)) {
                         power_menu_open = 1;
                     } else {
@@ -1962,8 +2225,9 @@ void kmain(void) {
                     clock_popup_open = 1;
                 } else if (taskbar_restore_id >= 0) {
                     win_restore(taskbar_restore_id);
-                    status = (taskbar_restore_id == WIN_ID_SETTING)
-                                 ? t(STR_SETTING_RESTORED) : t(STR_NOTEPAD_RESTORED);
+                    if (taskbar_restore_id == WIN_ID_SETTING) status = t(STR_SETTING_RESTORED);
+                    else if (taskbar_restore_id == WIN_ID_WEB) status = t(STR_WEB_RESTORED);
+                    else status = t(STR_NOTEPAD_RESTORED);
                 } else if (taskbar_close_id >= 0) {
                     if (taskbar_close_id == WIN_ID_SETTING) {
                         /* No unsaved-changes concept in Settings, so its
@@ -1971,6 +2235,13 @@ void kmain(void) {
                         setting.open = 0;
                         setting.minimized = 0;
                         win_z_remove(WIN_ID_SETTING);
+                    } else if (taskbar_close_id == WIN_ID_WEB) {
+                        /* Same reasoning as Settings -- MiniWeb has no
+                         * unsaved state (a fetched page isn't a
+                         * document), so its taskbar close just closes. */
+                        web_win.open = 0;
+                        web_win.minimized = 0;
+                        win_z_remove(WIN_ID_WEB);
                     } else {
                         /* Minimized taskbar close also asks first, for
                          * consistency with the window's own X button. */
@@ -2055,6 +2326,26 @@ void kmain(void) {
                             drag_offset_x = mx - setting.x;
                             drag_offset_y = my - setting.y;
                         }
+                    } else if (hit_id == WIN_ID_WEB) {
+                        win_z_raise(WIN_ID_WEB);
+                        if (web_min_hit(mx, my)) {
+                            pressed_btn_kind = BTN_MIN;
+                            pressed_btn_win = WIN_ID_WEB;
+                        } else if (web_max_hit(mx, my)) {
+                            pressed_btn_kind = BTN_MAX;
+                            pressed_btn_win = WIN_ID_WEB;
+                        } else if (web_close_hit(mx, my)) {
+                            pressed_btn_kind = BTN_CLOSE;
+                            pressed_btn_win = WIN_ID_WEB;
+                        } else if (web_site_row_hit(mx, my, WEB_SITE_PYPI)) {
+                            web_go(WEB_SITE_PYPI);
+                        } else if (web_site_row_hit(mx, my, WEB_SITE_GATEWAY)) {
+                            web_go(WEB_SITE_GATEWAY);
+                        } else if (web_titlebar_drag_hit(mx, my) && !web_win.maximized) {
+                            dragging_id = WIN_ID_WEB;
+                            drag_offset_x = mx - web_win.x;
+                            drag_offset_y = my - web_win.y;
+                        }
                     } else if (hit_id >= 0) {
                         active_np = &notepads[hit_id];
                         win_z_raise(hit_id);
@@ -2138,6 +2429,16 @@ void kmain(void) {
                             awaiting_second_click_setting = 1;
                             last_setting_click_tick = tick;
                         }
+                    } else if (in_rect(mx, my, ICON3_X, ICON3_Y, ICON3_W, ICON3_H)) {
+                        if (awaiting_second_click_web && (tick - last_web_click_tick) < double_click_window) {
+                            web_win.open = 1;
+                            win_z_raise(WIN_ID_WEB);
+                            status = t(STR_WEB_OPENED);
+                            awaiting_second_click_web = 0;
+                        } else {
+                            awaiting_second_click_web = 1;
+                            last_web_click_tick = tick;
+                        }
                     } else {
                         /* Check desktop file icons last (any slot). */
                         for (int slot = 0; slot < FS_MAX_FILES; slot++) {
@@ -2198,6 +2499,10 @@ void kmain(void) {
                     if (kind == BTN_MIN) still_over = setting_min_hit(mx, my);
                     else if (kind == BTN_MAX) still_over = setting_max_hit(mx, my);
                     else if (kind == BTN_CLOSE) still_over = setting_close_hit(mx, my);
+                } else if (win == WIN_ID_WEB) {
+                    if (kind == BTN_MIN) still_over = web_min_hit(mx, my);
+                    else if (kind == BTN_MAX) still_over = web_max_hit(mx, my);
+                    else if (kind == BTN_CLOSE) still_over = web_close_hit(mx, my);
                 } else if (win >= 0 && win < NOTEPAD_MAX) {
                     active_np = &notepads[win];
                     if (kind == BTN_MIN) still_over = in_rect(mx, my, btn_min_x(), btn_y(), BTN_W, BTN_H);
@@ -2222,6 +2527,26 @@ void kmain(void) {
                         } else if (kind == BTN_CLOSE) {
                             setting.open = 0;
                             win_z_remove(WIN_ID_SETTING);
+                        }
+                    } else if (win == WIN_ID_WEB) {
+                        if (kind == BTN_MIN) {
+                            win_minimize(WIN_ID_WEB);
+                            status = t(STR_WEB_MINIMIZED);
+                        } else if (kind == BTN_MAX) {
+                            if (web_win.maximized) {
+                                unmaximize_window(&web_win);
+                                status = t(STR_WEB_RESTORED);
+                            } else {
+                                maximize_window(&web_win);
+                                status = t(STR_WEB_MAXIMIZED);
+                            }
+                        } else if (kind == BTN_CLOSE) {
+                            /* No unsaved-changes concept here either --
+                             * a fetched page isn't a document, so this
+                             * closes immediately, same reasoning as
+                             * Settings' own close button. */
+                            web_win.open = 0;
+                            win_z_remove(WIN_ID_WEB);
                         }
                     } else {
                         if (kind == BTN_MIN) {
@@ -2262,7 +2587,7 @@ void kmain(void) {
             if (win_is_open(id) && !win_is_minimized(id)) { focused_id = id; break; }
         }
 
-        if (focused_id >= 0 && focused_id != WIN_ID_SETTING) {
+        if (focused_id >= 0 && focused_id != WIN_ID_SETTING && focused_id != WIN_ID_WEB) {
             active_np = &notepads[focused_id];
 
         if (active_np->confirm_mode != CONFIRM_NONE) {
@@ -2323,39 +2648,19 @@ void kmain(void) {
 
         net_stack_poll(); /* drains and dispatches any received frames: ARP, IP/ICMP/UDP/TCP, DHCP */
 
-        /* One-shot bring-up check: the instant DHCP hands us an address,
-         * fire off one HTTP GET. This is temporary verification
-         * instrumentation (same spirit as the old net_diag.h harness
-         * that proved ARP, and the ICMP probe that proved IP before
-         * it) -- proving the *entire* stack works end to end, all the
-         * way up through TCP's 3-way handshake and HTTP's request/
-         * response cycle, by actually doing the thing the network
-         * stack exists for.
-         *
-         * Target here is the QEMU SLIRP gateway itself (10.0.2.2),
-         * which has nothing listening on port 80 -- so this always
-         * produces a quick, clean "[TCP] connection reset by peer" /
-         * "[HTTP] connect failed" in the serial log, on any network
-         * this build happens to run on, instead of hanging waiting for
-         * outbound Internet access that may or may not exist wherever
-         * it's booted. That's a deliberate choice, not a limitation:
-         * during development, this exact code (just pointed at a real
-         * IP:80 instead) completed a full 3-way handshake, sent a real
-         * HTTP/1.1 request, and received a genuine multi-header
-         * response from pypi.org before closing cleanly -- proof the
-         * stack works against the actual Internet, not just QEMU's
-         * SLIRP. Point http_get() below at any real server's IP to
-         * repeat that. */
-        {
-            static int http_probe_started = 0;
-            if (net_cfg.ready && !http_probe_started) {
-                http_probe_started = 1;
-                http_get(net_cfg.gateway_ip, "10.0.2.2", "/");
-            }
-            if (http_probe_started && http_client.state != HTTP_IDLE &&
-                http_client.state != HTTP_DONE && http_client.state != HTTP_FAILED) {
-                http_poll();
-            }
+        /* Advances whatever HTTP request MiniWeb (WEB.EXE) currently has
+         * outstanding -- the app itself is the network stack's real
+         * verification now (see draw_web_window()/web_go() above): it
+         * drove a full 3-way handshake, an HTTP/1.1 request, and a
+         * genuine multi-header response from pypi.org during this
+         * kernel's own development, all reachable by clicking an icon
+         * rather than reading a serial log. Only polls while a request
+         * is actually in flight -- once it's HTTP_DONE or HTTP_FAILED,
+         * there's nothing left to advance until the next click on a
+         * site row calls web_go() again. */
+        if (http_client.state != HTTP_IDLE &&
+            http_client.state != HTTP_DONE && http_client.state != HTTP_FAILED) {
+            http_poll();
         }
 
         render_frame(mx, my, status);

@@ -48,10 +48,16 @@ system with no libc, no bootloader framework, and no borrowed kernel code.
   Honest manual setting now, real automatic detection once DNS exists
   to ask a service by hostname instead of a hardcoded IP.
 - **Apps**: NOTEPAD.EXE (supports opening several documents at once, each
-  in its own window, saving to real persistent disk storage) and
+  in its own window, saving to real persistent disk storage),
   SETTING.EXE (System language switch between English/한국어 -- actually
   retranslates the whole UI live -- and a multi-select IME picker that
-  controls what Right Alt cycles through while typing).
+  controls what Right Alt cycles through while typing), and WEB.EXE
+  ("MiniWeb" -- a tiny HTTP client browser built on kernel/tcp.h and
+  kernel/http.h: click a hardcoded site row, watch a real 3-way
+  handshake and HTTP/1.1 GET happen, and see the response -- headers and
+  all, as raw text, no HTML rendering -- appear in the window. No
+  address bar yet since there's no DNS resolver to type a hostname
+  into).
 - **Hangul**: a real IME (2-beolsik-style jamo composition) backed by a
   full modern-Hangul-syllable bitmap font (11,172 glyphs, generated from
   the bundled Dalmoori TTF -- see `tools/gen_hangul_font.py`).
@@ -185,10 +191,11 @@ asks:
     ever blocks waiting on the network.
 
   Every layer was verified for real, not just compiled: DHCP against
-  QEMU SLIRP's actual DHCP server, TCP's 3-way handshake and HTTP GET
-  against a real Internet host (a full HTTP/1.1 response, headers and
-  all, from pypi.org, over MiniWin's own from-scratch TCP), logged over
-  the serial port (`kernel/serial.h`):
+  QEMU SLIRP's actual DHCP server, and TCP's 3-way handshake plus a real
+  HTTP/1.1 GET against a real Internet host -- by clicking WEB.EXE's
+  PYPI.ORG row and watching a full response, headers and all, come back
+  over MiniWin's own from-scratch TCP and render in the window. Logged
+  over the serial port (`kernel/serial.h`) the same run looked like:
   ```
   [DHCP] -> DISCOVER
   [DHCP] <- OFFER of 10.0.2.15 from server 10.0.2.2
@@ -201,9 +208,9 @@ asks:
   [HTTP] response complete, 1042 bytes
   [TCP] closing
   ```
-  What's still missing: DNS (targets above are raw IPs, not hostnames),
-  TLS/HTTPS, and a browser (MiniWeb) to put on top of the HTTP client
-  that now exists.
+  What's still missing: DNS (targets above are raw IPs, not hostnames)
+  and TLS/HTTPS. The browser itself now exists -- see WEB.EXE ("MiniWeb")
+  in Apps below, built directly on this stack.
 - **File Manager**: not built yet.
 - Full HTML4/5/XHTML rendering and "SSE3 support" are not realistic
   targets for a 320x200, 16-/256-color, no-libc kernel like this one --
