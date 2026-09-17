@@ -52,12 +52,14 @@ system with no libc, no bootloader framework, and no borrowed kernel code.
   SETTING.EXE (System language switch between English/한국어 -- actually
   retranslates the whole UI live -- and a multi-select IME picker that
   controls what Right Alt cycles through while typing), and WEB.EXE
-  ("MiniWeb" -- a tiny HTTP client browser built on kernel/tcp.h and
-  kernel/http.h: click a hardcoded site row, watch a real 3-way
-  handshake and HTTP/1.1 GET happen, and see the response -- headers and
-  all, as raw text, no HTML rendering -- appear in the window. No
-  address bar yet since there's no DNS resolver to type a hostname
-  into).
+  ("MiniWeb" -- a tiny HTTP client browser built on kernel/tcp.h,
+  kernel/http.h, and kernel/dns.h: click PYPI.ORG and watch a real DNS
+  lookup resolve the hostname, then a 3-way TCP handshake and HTTP/1.1
+  GET happen, then the response -- headers and all, as raw text, no
+  HTML rendering -- appear in the window. Still no address bar to type
+  an arbitrary hostname into -- the two site rows are hardcoded -- but
+  the one it does fetch is resolved for real, not from a baked-in IP
+  literal anymore).
 - **Hangul**: a real IME (2-beolsik-style jamo composition) backed by a
   full modern-Hangul-syllable bitmap font (11,172 glyphs, generated from
   the bundled Dalmoori TTF -- see `tools/gen_hangul_font.py`).
@@ -130,6 +132,7 @@ kernel/ip.h         IPv4 header build/parse, routing, ARP-miss pending queue
 kernel/icmp.h       ping (echo request/reply)
 kernel/udp.h        UDP send + port listener dispatch
 kernel/dhcp.h       DHCP client (DISCOVER/OFFER/REQUEST/ACK)
+kernel/dns.h        DNS resolver (A records only, one query at a time)
 kernel/tcp.h        TCP (single connection, active open, retransmit timer)
 kernel/http.h       HTTP/1.1 GET client on top of tcp.h
 kernel/net_stack.h  wires all of the above into one init()/poll() pair
@@ -179,6 +182,12 @@ asks:
     server from whatever network it's plugged into, instead of a
     hardcoded address that only ever worked inside one specific QEMU
     invocation.
+  - **DNS** (`kernel/dns.h`) -- an A-record resolver: one query in
+    flight at a time, sent to whatever server DHCP handed us, with a
+    timeout (no retry) if nothing answers. Handles compressed names in
+    responses and skips past any record type it doesn't care about, so
+    a CNAME-then-A answer chain resolves correctly instead of only
+    working against servers that answer with a bare A record.
   - **TCP** (`kernel/tcp.h`) -- one connection at a time, active opens
     only, a textbook state machine (SYN_SENT -> ESTABLISHED ->
     FIN_WAIT -> closed), one segment in flight with a retransmit timer.
@@ -191,40 +200,44 @@ asks:
     ever blocks waiting on the network.
 
   Every layer was verified for real, not just compiled: DHCP against
-  QEMU SLIRP's actual DHCP server, and TCP's 3-way handshake plus a real
-  HTTP/1.1 GET against a real Internet host -- by clicking WEB.EXE's
-  PYPI.ORG row and watching a full response, headers and all, come back
-  over MiniWin's own from-scratch TCP and render in the window. Logged
-  over the serial port (`kernel/serial.h`) the same run looked like:
+  QEMU SLIRP's actual DHCP server, and DNS + TCP's 3-way handshake +
+  HTTP/1.1 GET all together against a real Internet host -- by clicking
+  WEB.EXE's PYPI.ORG row and watching "pypi.org" actually get resolved,
+  then a full response, headers and all, come back over MiniWin's own
+  from-scratch TCP and render in the window. Logged over the serial
+  port (`kernel/serial.h`) the same run looked like:
   ```
   [DHCP] -> DISCOVER
   [DHCP] <- OFFER of 10.0.2.15 from server 10.0.2.2
   [DHCP] -> REQUEST for 10.0.2.15
   [DHCP] <- ACK, bound to 10.0.2.15 mask=255.255.255.0 gw=10.0.2.2 dns=10.0.2.3
-  [HTTP] GET / from <server ip>
-  [TCP] connecting to <server ip>:80
+  [DNS] querying pypi.org
+  [DNS] pypi.org is at 151.101.128.223
+  [HTTP] GET / from 151.101.128.223
+  [TCP] connecting to 151.101.128.223:80
   [TCP] established
   [TCP] peer closed their side
-  [HTTP] response complete, 1042 bytes
+  [HTTP] response complete, ...bytes
   [TCP] closing
   ```
-  What's still missing: DNS (targets above are raw IPs, not hostnames)
-  and TLS/HTTPS. The browser itself now exists -- see WEB.EXE ("MiniWeb")
-  in Apps below, built directly on this stack.
+  What's still missing: TLS/HTTPS (so no `https://` -- everything above
+  is plain HTTP). The browser itself now exists -- see WEB.EXE
+  ("MiniWeb") in Apps below, built directly on this stack.
 - **File Manager**: not built yet.
 - Full HTML4/5/XHTML rendering and "SSE3 support" are not realistic
   targets for a 320x200, 16-/256-color, no-libc kernel like this one --
-  if/when MiniWeb happens, it'll be an honestly-scoped local hypertext
-  viewer, not a general-purpose browser engine.
+  MiniWeb (WEB.EXE) is an honestly-scoped raw-response viewer, not a
+  general-purpose browser engine, and that's staying true even as it
+  grows an address bar and (eventually) basic HTML rendering.
 - No dynamic program loading/execution exists (everything is compiled
   into the one kernel binary) -- a real "install and run third-party
   .MPI programs" system would need a loader and some kind of process
   model that doesn't exist yet.
 - No real internet-backed accounts or third-party (Google/Microsoft)
-  sign-in are planned -- this kernel has a working TCP/IP stack now, but
-  still no TLS (so no HTTPS), no DNS resolver, and no registered OAuth
-  credentials to talk to those services with -- any "sign in" UI here
-  would need to be honestly local-only.
+  sign-in are planned -- this kernel has a working TCP/IP stack and a
+  DNS resolver now, but still no TLS (so no HTTPS) and no registered
+  OAuth credentials to talk to those services with -- any "sign in" UI
+  here would need to be honestly local-only.
 
 ## License
 

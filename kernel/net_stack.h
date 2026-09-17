@@ -7,6 +7,7 @@
 #include "ip.h"
 #include "icmp.h"
 #include "udp.h"
+#include "dns.h"
 #include "dhcp.h"
 #include "tcp.h"
 #include "serial.h"
@@ -35,6 +36,9 @@ static inline void net_stack_init(void) {
     udp_init();
     net_cfg.ready = 0; /* not until DHCP says otherwise */
     tcp_conn.state = TCP_CLOSED; /* only one connection ever exists; start it idle */
+    dns_init(); /* registers the DNS UDP listener; DHCP hasn't handed us
+                * a dns_ip yet at this point, but that's fine -- nothing
+                * calls dns_resolve() until well after DHCP finishes */
     /* Wires ARP's "an address just resolved" event to IP's one-slot
      * pending-packet queue, so a packet delayed by an ARP miss gets
      * sent the instant the reply lands instead of waiting for whichever
@@ -92,6 +96,7 @@ static inline void net_stack_poll(void) {
         net_stack_handle_frame(buf, len);
     }
     tcp_poll_retransmit();
+    dns_poll();
 }
 
 #endif

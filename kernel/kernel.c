@@ -19,6 +19,7 @@
 #include "ip.h"
 #include "icmp.h"
 #include "udp.h"
+#include "dns.h"
 #include "dhcp.h"
 #include "tcp.h"
 #include "http.h"
@@ -1519,6 +1520,14 @@ static void draw_setting_window(void) {
  * PYPI.ORG..." instead of a generic "Loading..." that doesn't say what
  * it's loading. -1 means nothing has been requested yet this boot. */
 static int web_current_site = -1;
+/* Set while PYPI.ORG's DNS lookup is outstanding -- see web_go()/
+ * web_poll() below. Kept separate from http_client.state (rather than
+ * overloading it) because a DNS failure and an HTTP failure are
+ * genuinely different things to report, and http.h shouldn't need to
+ * know MiniWeb pokes at its state from outside for a phase that isn't
+ * even HTTP yet. */
+static int web_resolving = 0;
+static int web_dns_failed = 0;
 
 static inline int web_btn_close_x(void) { return web_win.x + web_win.w - 2 - BTN_W; }
 static inline int web_btn_max_x(void)   { return web_btn_close_x() - BTN_W - BTN_GAP; }
@@ -1551,15 +1560,52 @@ static inline int web_content_y(void) { return web_site_row_y(WEB_SITE_COUNT) + 
  * address ever changes, same caveat any hardcoded-IP client has. */
 static void web_go(int site) {
     web_current_site = site;
+    web_dns_failed = 0;
+    web_resolving = 0;
+    http_client.state = HTTP_IDLE; /* clear any previous fetch's leftover
+                                    * state so status text and the
+                                    * response area don't show stale
+                                    * results from a different site
+                                    * while this one is still in flight */
     if (site == WEB_SITE_PYPI) {
-        http_get(NET_IP4(151,101,192,223), "pypi.org", "/");
+        /* Real DNS now, no more hardcoded IP -- see dns.h. If this
+         * lookup fails (no DNS server reachable, NXDOMAIN, a dropped
+         * query with nothing to retry it), web_poll() below notices via
+         * dns_client.state and reports it rather than ever calling
+         * http_get() with a garbage address. */
+        web_resolving = 1;
+        dns_resolve("pypi.org");
     } else {
-        /* Deliberately included even though nothing answers on this
-         * port: a fast, reliable "connection refused" is still a real,
-         * useful demonstration that TCP's RST handling works, and it
-         * always succeeds at *that* regardless of whether this
-         * particular boot happens to have outbound Internet access. */
+        /* The gateway has no hostname worth resolving -- it's not a
+         * server anyone runs DNS for, it's QEMU's own SLIRP plumbing --
+         * so this path skips DNS entirely and connects by the address
+         * DHCP already told us was the gateway. */
         http_get(net_cfg.gateway_ip, "10.0.2.2 (gateway)", "/");
+    }
+}
+
+/* Advances whichever phase MiniWeb is currently in -- DNS lookup, then
+ * (once that resolves) the HTTP fetch itself. Call once per main-loop
+ * iteration; a no-op when nothing's in flight. Kept as MiniWeb's own
+ * function, separate from net_stack_poll()'s dns_poll()/tcp_poll_retransmit()
+ * calls, since deciding "DNS just finished, now start the HTTP request"
+ * is an application-level decision, not something dns.h or http.h
+ * should be reaching into each other to make on their own. */
+static void web_poll(void) {
+    if (web_resolving) {
+        if (dns_client.state == DNS_RESOLVED) {
+            web_resolving = 0;
+            http_get(dns_client.result_ip, dns_client.hostname, "/");
+        } else if (dns_client.state == DNS_FAILED) {
+            web_resolving = 0;
+            web_dns_failed = 1;
+        }
+        return; /* don't also poll HTTP this same tick -- there's
+                 * nothing for it to do yet */
+    }
+    if (http_client.state != HTTP_IDLE &&
+        http_client.state != HTTP_DONE && http_client.state != HTTP_FAILED) {
+        http_poll();
     }
 }
 
@@ -1654,6 +1700,10 @@ static void draw_web_window(void) {
     const char *status_text;
     if (web_current_site < 0) {
         status_text = "Click a site above to fetch it.";
+    } else if (web_resolving) {
+        status_text = "Resolving pypi.org...";
+    } else if (web_dns_failed) {
+        status_text = "DNS lookup failed.";
     } else {
         switch (http_client.state) {
             case HTTP_CONNECTING:        status_text = "Connecting..."; break;
@@ -2648,20 +2698,18 @@ void kmain(void) {
 
         net_stack_poll(); /* drains and dispatches any received frames: ARP, IP/ICMP/UDP/TCP, DHCP */
 
-        /* Advances whatever HTTP request MiniWeb (WEB.EXE) currently has
-         * outstanding -- the app itself is the network stack's real
-         * verification now (see draw_web_window()/web_go() above): it
-         * drove a full 3-way handshake, an HTTP/1.1 request, and a
-         * genuine multi-header response from pypi.org during this
+        /* Advances whatever MiniWeb (WEB.EXE) currently has outstanding
+         * -- a DNS lookup, an HTTP fetch, or nothing at all. The app
+         * itself is the network stack's real verification now (see
+         * draw_web_window()/web_go() above): it drove a real DNS
+         * resolution, a full TCP 3-way handshake, an HTTP/1.1 request,
+         * and a genuine multi-header response from pypi.org during this
          * kernel's own development, all reachable by clicking an icon
-         * rather than reading a serial log. Only polls while a request
-         * is actually in flight -- once it's HTTP_DONE or HTTP_FAILED,
-         * there's nothing left to advance until the next click on a
-         * site row calls web_go() again. */
-        if (http_client.state != HTTP_IDLE &&
-            http_client.state != HTTP_DONE && http_client.state != HTTP_FAILED) {
-            http_poll();
-        }
+         * rather than reading a serial log. web_poll() itself no-ops
+         * once everything's settled (DONE/FAILED on either the DNS or
+         * HTTP side) until the next click on a site row calls
+         * web_go() again. */
+        web_poll();
 
         render_frame(mx, my, status);
         delay(2000); /* lowered further from 8000 -- mouse felt sluggish/

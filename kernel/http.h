@@ -9,18 +9,24 @@
  * http.h -- the payoff for every layer underneath this one: an actual
  * HTTP GET, spoken over this kernel's own TCP, to a real server out on
  * whatever network DHCP found us on. This is "self-sufficient internet
- * connectivity" made literal -- boot, get an address, resolve nothing
- * (see the IP-only limitation below), connect, ask for a page, print
- * what comes back.
+ * connectivity" made literal -- boot, get an address, resolve a
+ * hostname (see kernel/dns.h), connect, ask for a page, print what
+ * comes back.
  *
- * Deliberately NOT here: HTTPS (this kernel has no TLS, and writing one
- * badly would be worse than not having one), chunked transfer-encoding
- * support, redirects, cookies, keep-alive, or DNS (the target is given
- * as a raw IP, not a hostname -- there's no resolver yet to turn
- * "example.com" into an address). What's here is exactly enough to GET
- * one small page from one server and see the bytes come back, which is
- * the whole point of the exercise: proving the stack underneath
- * actually works end to end, not building a browser.
+ * http_get() itself still takes a raw IP, not a hostname -- turning a
+ * name into an address is kernel/dns.h's job, kept as a separate layer
+ * on purpose (the same reason ip.h doesn't know about ARP internally:
+ * each layer owns exactly one translation, and the caller -- see
+ * web_go() in kernel.c -- is the one place that actually needs to know
+ * both exist and chain them together).
+ *
+ * Deliberately NOT here: HTTPS (this kernel has no TLS yet, and writing
+ * one badly would be worse than not having one), chunked
+ * transfer-encoding support, redirects, cookies, or keep-alive. What's
+ * here is exactly enough to GET one small page from one server and see
+ * the bytes come back, which is the whole point of the exercise:
+ * proving the stack underneath actually works end to end, not building
+ * a browser engine.
  *
  * Driven as a poll()-style state machine, same philosophy as TCP itself
  * -- call http_get() once to kick a request off, then call
@@ -67,8 +73,9 @@ static http_client_t http_client;
  * is old enough now that assuming a server still speaks it is no
  * longer a safe bet, even for a client this minimal. `host` populates
  * the Host: header (mandatory in 1.1, and needed for name-based virtual
- * hosting regardless); connection itself is still by raw IP, since this
- * kernel has no DNS resolver yet. */
+ * hosting regardless); connection itself is still by raw IP -- resolve
+ * one with kernel/dns.h's dns_resolve() first if all you have is a
+ * hostname. */
 static inline void http_get(u32 server_ip, const char *host, const char *path) {
     http_client.state = HTTP_CONNECTING;
     http_client.response_len = 0;
