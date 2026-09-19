@@ -22,7 +22,9 @@
 #include "dns.h"
 #include "dhcp.h"
 #include "tcp.h"
+#include "tls.h"
 #include "http.h"
+#include "https.h"
 #include "net_stack.h"
 
 #define DESKTOP_COLOR_BG      COL_LCYAN
@@ -1553,26 +1555,69 @@ static int web_site_row_hit(int px, int py, int idx) {
 }
 static inline int web_content_y(void) { return web_site_row_y(WEB_SITE_COUNT) + 3; }
 
-/* Fires off the actual request for one of the two hardcoded targets.
- * IPs are literals (no DNS -- see the file-header comment on
- * kernel/http.h) and were both reachable and verified during this
- * kernel's own development; either can drift if the target host's
- * address ever changes, same caveat any hardcoded-IP client has. */
+/* MiniWeb's site rows use two different transports on purpose: PYPI.ORG
+ * goes over real HTTPS now that kernel/tls.h exists (the site redirects
+ * plain HTTP to HTTPS anyway -- fetching it unencrypted just gets back
+ * a 301 with nothing to show), while GATEWAY stays deliberately on
+ * plain HTTP port 80 against a target that answers with nothing but a
+ * fast TCP RST -- that's still a useful, always-reproducible demo of
+ * connection-refused handling, and doesn't need (or benefit from)
+ * TLS. */
+static int web_use_https = 0;
+
+/* Builds a 16-byte seed for tls_connect()'s PRNG from the CMOS RTC plus
+ * a call counter, so two fetches in the same clock-second still get
+ * different seeds. See tls_conn's own rng_state comment for the honest
+ * caveat: this is real hardware-clock entropy, but coarse (one-second
+ * granularity) and not remotely a hardened CSPRNG -- adequate for this
+ * client's actual uses (a public client_random, and an ephemeral
+ * X25519 private key on a hobby OS not defending against a
+ * sophisticated adversary), not a general-purpose secure RNG. */
+static u32 web_entropy_counter = 0;
+static void web_make_entropy_seed(u8 seed[16]) {
+    rtc_time_t t;
+    rtc_read(&t);
+    web_entropy_counter++;
+    seed[0] = (u8)(t.year >> 8);   seed[1] = (u8)t.year;
+    seed[2] = (u8)t.month;         seed[3] = (u8)t.day;
+    seed[4] = (u8)t.hour;          seed[5] = (u8)t.minute;
+    seed[6] = (u8)t.second;        seed[7] = (u8)t.weekday;
+    seed[8]  = (u8)(web_entropy_counter >> 24);
+    seed[9]  = (u8)(web_entropy_counter >> 16);
+    seed[10] = (u8)(web_entropy_counter >> 8);
+    seed[11] = (u8)web_entropy_counter;
+    /* pad the rest with a simple mix rather than leaving it at zero --
+     * costs nothing and avoids handing tls_rng_seed() a suspiciously
+     * regular tail */
+    for (int i = 12; i < 16; i++) seed[i] = (u8)(seed[i - 12] ^ (0x5A + i));
+}
+
+/* Packs the current RTC date/time into the YYYYMMDDHHMMSS format
+ * kernel/tls.h's certificate validity checks use. */
+static u64 web_now_packed(void) {
+    rtc_time_t t;
+    rtc_read(&t);
+    return tls_pack_datetime((u32)t.year, (u32)t.month, (u32)t.day,
+                              (u32)t.hour, (u32)t.minute, (u32)t.second);
+}
+
 static void web_go(int site) {
     web_current_site = site;
     web_dns_failed = 0;
     web_resolving = 0;
-    http_client.state = HTTP_IDLE; /* clear any previous fetch's leftover
-                                    * state so status text and the
-                                    * response area don't show stale
-                                    * results from a different site
-                                    * while this one is still in flight */
+    http_client.state = HTTP_IDLE;   /* clear any previous fetch's leftover
+                                      * state so status text and the
+                                      * response area don't show stale
+                                      * results from a different site
+                                      * while this one is still in flight */
+    https_client.state = HTTPS_IDLE;
     if (site == WEB_SITE_PYPI) {
         /* Real DNS now, no more hardcoded IP -- see dns.h. If this
          * lookup fails (no DNS server reachable, NXDOMAIN, a dropped
          * query with nothing to retry it), web_poll() below notices via
          * dns_client.state and reports it rather than ever calling
-         * http_get() with a garbage address. */
+         * https_get() with a garbage address. */
+        web_use_https = 1;
         web_resolving = 1;
         dns_resolve("pypi.org");
     } else {
@@ -1580,32 +1625,47 @@ static void web_go(int site) {
          * server anyone runs DNS for, it's QEMU's own SLIRP plumbing --
          * so this path skips DNS entirely and connects by the address
          * DHCP already told us was the gateway. */
+        web_use_https = 0;
         http_get(net_cfg.gateway_ip, "10.0.2.2 (gateway)", "/");
     }
 }
 
 /* Advances whichever phase MiniWeb is currently in -- DNS lookup, then
- * (once that resolves) the HTTP fetch itself. Call once per main-loop
- * iteration; a no-op when nothing's in flight. Kept as MiniWeb's own
- * function, separate from net_stack_poll()'s dns_poll()/tcp_poll_retransmit()
- * calls, since deciding "DNS just finished, now start the HTTP request"
- * is an application-level decision, not something dns.h or http.h
- * should be reaching into each other to make on their own. */
+ * (once that resolves) the HTTP or HTTPS fetch itself, whichever this
+ * site uses. Call once per main-loop iteration; a no-op when nothing's
+ * in flight. Kept as MiniWeb's own function, separate from
+ * net_stack_poll()'s dns_poll()/tcp_poll_retransmit() calls, since
+ * deciding "DNS just finished, now start the fetch" is an
+ * application-level decision, not something dns.h/http.h/tls.h should
+ * be reaching into each other to make on their own. */
 static void web_poll(void) {
     if (web_resolving) {
         if (dns_client.state == DNS_RESOLVED) {
             web_resolving = 0;
-            http_get(dns_client.result_ip, dns_client.hostname, "/");
+            if (web_use_https) {
+                u8 seed[16];
+                web_make_entropy_seed(seed);
+                https_get(dns_client.result_ip, dns_client.hostname, "/", seed);
+            } else {
+                http_get(dns_client.result_ip, dns_client.hostname, "/");
+            }
         } else if (dns_client.state == DNS_FAILED) {
             web_resolving = 0;
             web_dns_failed = 1;
         }
-        return; /* don't also poll HTTP this same tick -- there's
+        return; /* don't also poll HTTP/HTTPS this same tick -- there's
                  * nothing for it to do yet */
     }
-    if (http_client.state != HTTP_IDLE &&
-        http_client.state != HTTP_DONE && http_client.state != HTTP_FAILED) {
-        http_poll();
+    if (web_use_https) {
+        if (https_client.state != HTTPS_IDLE &&
+            https_client.state != HTTPS_DONE && https_client.state != HTTPS_FAILED) {
+            https_poll(web_now_packed());
+        }
+    } else {
+        if (http_client.state != HTTP_IDLE &&
+            http_client.state != HTTP_DONE && http_client.state != HTTP_FAILED) {
+            http_poll();
+        }
     }
 }
 
@@ -1618,12 +1678,12 @@ static void web_poll(void) {
  * this kernel doesn't have a text-scroll widget yet, and an HTTP
  * response's opening lines (status line + headers) are the most useful
  * ones to see at a glance anyway. */
-static void draw_web_response_text(int x, int y, int w, int h) {
+static void draw_web_response_text(int x, int y, int w, int h, const u8 *data, u16 len) {
     int cx = x, cy = y;
     int max_x = x + w - 8;
     int max_y = y + h - 8;
-    for (u16 i = 0; i < http_client.response_len; i++) {
-        char c = (char)http_client.response[i];
+    for (u16 i = 0; i < len; i++) {
+        char c = (char)data[i];
         if (c == '\r') continue; /* CRLF line endings -- skip the \r, act on the \n */
         if (c == '\n' || cx > max_x) {
             cx = x;
@@ -1681,7 +1741,7 @@ static void draw_web_window(void) {
 
     /* two clickable site rows -- the closest thing this browser has to
      * bookmarks, since there's no address bar to type into */
-    const char *site_labels[WEB_SITE_COUNT] = { "> PYPI.ORG", "> GATEWAY (10.0.2.2)" };
+    const char *site_labels[WEB_SITE_COUNT] = { "> PYPI.ORG (HTTPS)", "> GATEWAY (10.0.2.2)" };
     for (int i = 0; i < WEB_SITE_COUNT; i++) {
         int ry = web_site_row_y(i);
         int active = (web_current_site == i);
@@ -1696,7 +1756,8 @@ static void draw_web_window(void) {
     for (int i = 0; i < ww - 4; i++) bb_putpixel(wx + 2 + i, div_y, COL_DGRAY);
 
     /* status line: what's currently happening, in plain language rather
-     * than exposing the raw http_state_t enum to whoever's looking */
+     * than exposing the raw http_state_t/https_state_t/tls_fail_reason_t
+     * enums to whoever's looking */
     const char *status_text;
     if (web_current_site < 0) {
         status_text = "Click a site above to fetch it.";
@@ -1704,6 +1765,15 @@ static void draw_web_window(void) {
         status_text = "Resolving pypi.org...";
     } else if (web_dns_failed) {
         status_text = "DNS lookup failed.";
+    } else if (web_use_https) {
+        switch (https_client.state) {
+            case HTTPS_CONNECTING:        status_text = "TLS handshake..."; break;
+            case HTTPS_SENDING_REQUEST:   status_text = "Sending request..."; break;
+            case HTTPS_AWAITING_RESPONSE: status_text = "Waiting for response..."; break;
+            case HTTPS_DONE:              status_text = "Done. (HTTPS)"; break;
+            case HTTPS_FAILED:            status_text = "TLS/HTTPS failed."; break;
+            default:                      status_text = ""; break;
+        }
     } else {
         switch (http_client.state) {
             case HTTP_CONNECTING:        status_text = "Connecting..."; break;
@@ -1720,8 +1790,14 @@ static void draw_web_window(void) {
      * by the status line above) */
     int body_y = web_content_y() + 10;
     int body_h = wy + wh - body_y - 3;
-    if (http_client.state == HTTP_DONE || http_client.state == HTTP_AWAITING_RESPONSE) {
-        draw_web_response_text(wx + 3, body_y, ww - 6, body_h);
+    if (web_use_https) {
+        if (https_client.state == HTTPS_DONE || https_client.state == HTTPS_AWAITING_RESPONSE) {
+            draw_web_response_text(wx + 3, body_y, ww - 6, body_h, https_client.response, https_client.response_len);
+        }
+    } else {
+        if (http_client.state == HTTP_DONE || http_client.state == HTTP_AWAITING_RESPONSE) {
+            draw_web_response_text(wx + 3, body_y, ww - 6, body_h, http_client.response, http_client.response_len);
+        }
     }
 }
 
