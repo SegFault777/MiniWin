@@ -654,8 +654,8 @@ static int pressed_btn_win = -1;   /* which window id this press belongs to (WIN
  * by +1,+1 while pressed, so it looks like it physically sank in). */
 static void draw_bevel_button(int x, int y, int w, int h, int pressed) {
     bb_fillrect(x, y, w, h, COL_LGRAY);
-    u8 hi = pressed ? COL_DGRAY : COL_WHITE;
-    u8 lo = pressed ? COL_WHITE : COL_DGRAY;
+    u32 hi = pressed ? COL_DGRAY : COL_WHITE;
+    u32 lo = pressed ? COL_WHITE : COL_DGRAY;
     for (int i = 0; i < w - 1; i++) bb_putpixel(x + i, y, hi);
     for (int j = 0; j < h - 1; j++) bb_putpixel(x, y + j, hi);
     for (int i = 0; i < w; i++) bb_putpixel(x + i, y + h - 1, lo);
@@ -951,8 +951,8 @@ static void draw_taskbar(void) {
      * while the menu is open. This exact four-line trick single-handedly
      * carried the entire aesthetic of 16-bit UI toolkits. We salute it. */
     bb_fillrect(STARTBTN_X, STARTBTN_Y, STARTBTN_W, STARTBTN_H, COL_LGRAY);
-    u8 hi = start_menu_open ? COL_DGRAY : COL_WHITE;
-    u8 lo = start_menu_open ? COL_WHITE : COL_DGRAY;
+    u32 hi = start_menu_open ? COL_DGRAY : COL_WHITE;
+    u32 lo = start_menu_open ? COL_WHITE : COL_DGRAY;
     for (int i = 0; i < STARTBTN_W - 1; i++) bb_putpixel(STARTBTN_X + i, STARTBTN_Y, hi);
     for (int j = 0; j < STARTBTN_H - 1; j++) bb_putpixel(STARTBTN_X, STARTBTN_Y + j, hi);
     for (int i = 0; i < STARTBTN_W; i++) bb_putpixel(STARTBTN_X + i, STARTBTN_Y + STARTBTN_H - 1, lo);
@@ -994,8 +994,8 @@ static void draw_taskbar(void) {
      * a button; pressed-looking while its date popup is open, same
      * "flip which edge is light" trick as everywhere else in this UI. */
     bb_fillrect(CLOCK_X, CLOCK_Y, CLOCK_W, CLOCK_H, COL_LGRAY);
-    u8 clo = clock_popup_open ? COL_WHITE : COL_DGRAY;
-    u8 chi = clock_popup_open ? COL_DGRAY : COL_WHITE;
+    u32 clo = clock_popup_open ? COL_WHITE : COL_DGRAY;
+    u32 chi = clock_popup_open ? COL_DGRAY : COL_WHITE;
     bb_rect(CLOCK_X, CLOCK_Y, CLOCK_W, CLOCK_H, clo);
     bb_putpixel(CLOCK_X, CLOCK_Y, chi);
     {
@@ -1070,7 +1070,7 @@ static int start_menu_item_hit(int px, int py, int idx) {
 static const u8 power_icon_bits[8] = {
     0x18, 0x18, 0x42, 0x81, 0x81, 0x42, 0x3C, 0x00
 };
-static void draw_power_icon(int x, int y, u8 color) {
+static void draw_power_icon(int x, int y, u32 color) {
     for (int row = 0; row < 8; row++) {
         u8 bits = power_icon_bits[row];
         for (int col = 0; col < 8; col++) {
@@ -1112,8 +1112,8 @@ static void draw_power_menu(int mx, int my) {
     for (int i = 0; i < POWERMENU_ITEMS; i++) {
         int iy = power_menu_item_y(i);
         int hover = in_rect(mx, my, x + 2, iy, w - 4, POWERMENU_ITEM_H);
-        u8 bg = hover ? COL_BLUE : COL_LGRAY;
-        u8 fg = hover ? COL_WHITE : COL_BLACK;
+        u32 bg = hover ? COL_BLUE : COL_LGRAY;
+        u32 fg = hover ? COL_WHITE : COL_BLACK;
         bb_fillrect(x + 2, iy, w - 4, POWERMENU_ITEM_H, bg);
         ko_draw_mixed_string(x + 5, iy + 2, labels[i], fg);
     }
@@ -1146,8 +1146,8 @@ static void draw_start_menu(int mx, int my) {
          * cascading menu keeps its parent item lit */
         int hover = (i == STARTMENU_POWER_IDX && power_menu_open)
                         || in_rect(mx, my, ix, iy, iw, STARTMENU_ITEM_H);
-        u8 bg = hover ? COL_BLUE : COL_LGRAY;
-        u8 fg = hover ? COL_WHITE : COL_BLACK;
+        u32 bg = hover ? COL_BLUE : COL_LGRAY;
+        u32 fg = hover ? COL_WHITE : COL_BLACK;
         bb_fillrect(ix, iy, iw, STARTMENU_ITEM_H, bg);
         if (i == STARTMENU_POWER_IDX) {
             draw_power_icon(ix + 3, iy + 2, fg);
@@ -1461,8 +1461,8 @@ static void draw_setting_window(void) {
     for (int i = 0; i < 3; i++) {
         int ny = setting_nav_y(i);
         int active = (setting_page == i);
-        u8 bg = active ? COL_BLUE : COL_LGRAY;
-        u8 fg = active ? COL_WHITE : COL_BLACK;
+        u32 bg = active ? COL_BLUE : COL_LGRAY;
+        u32 fg = active ? COL_WHITE : COL_BLACK;
         bb_fillrect(wx + 2, ny, SETTING_SIDEBAR_W - 3, SETTING_NAV_ITEM_H, bg);
         ko_draw_mixed_string(wx + 6, ny + 1, nav_labels[i], fg);
     }
@@ -1745,8 +1745,8 @@ static void draw_web_window(void) {
     for (int i = 0; i < WEB_SITE_COUNT; i++) {
         int ry = web_site_row_y(i);
         int active = (web_current_site == i);
-        u8 bg = active ? COL_BLUE : COL_LGRAY;
-        u8 fg = active ? COL_WHITE : COL_BLACK;
+        u32 bg = active ? COL_BLUE : COL_LGRAY;
+        u32 fg = active ? COL_WHITE : COL_BLACK;
         bb_fillrect(wx + 2, ry, ww - 4, WEB_SITE_ROW_H, bg);
         font_draw_string(wx + 4, ry + 1, site_labels[i], fg);
     }
@@ -1818,8 +1818,8 @@ static void draw_file_menu(int mx, int my) {
     for (int i = 0; i < 3; i++) {
         int iy = y + i * FILE_MENU_ITEM_H;
         int hover = in_rect(mx, my, x, iy, w, FILE_MENU_ITEM_H);
-        u8 bg = hover ? COL_BLUE : COL_LGRAY;
-        u8 fg = hover ? COL_WHITE : COL_BLACK;
+        u32 bg = hover ? COL_BLUE : COL_LGRAY;
+        u32 fg = hover ? COL_WHITE : COL_BLACK;
         bb_fillrect(x + 1, iy, w - 2, FILE_MENU_ITEM_H, bg);
         ko_draw_mixed_string(x + 4, iy + 1, labels[i], fg);
     }
@@ -2134,15 +2134,49 @@ static void system_shutdown(void) {
  * Kernel entry
  * ============================================================ */
 void kmain(void) {
+    /* Serial first, before anything else touches the framebuffer --
+     * if the memory-safety check just below ever fails, this is the
+     * only way left to say why, since writing to backbuf at that point
+     * is exactly the unsafe operation being guarded against. */
+    serial_init();
+
     vga_init_display();
-    vga_set_standard_palette();
+
+    /* The truecolor backbuffer lives at a fixed physical address well
+     * above 1MB (see vga.h's VGA_BACKBUF_PHYS_ADDR) rather than in this
+     * kernel's own .bss, because it's simply too big (1.2MB) to fit
+     * there. That address is only real, usable RAM if the machine
+     * actually has enough memory -- checked here against
+     * boot/stage2.asm's own INT15h/E801h probe, rather than assumed,
+     * before this kernel ever writes a single pixel through it. A
+     * machine that fails this check gets a clear reason over serial
+     * and a clean halt instead of silent memory corruption. */
+    if (!vga_verify_memory_safe()) {
+        serial_puts("[FATAL] not enough RAM for the truecolor framebuffer "
+                     "(need ~");
+        serial_put_dec(VGA_MIN_RAM_KB / 1024);
+        serial_puts("MB, see kernel/vga.h VGA_MIN_RAM_KB) -- halting\n");
+        for (;;) { __asm__ volatile ("hlt"); }
+    }
+    if (!vga_color_layout_is_standard()) {
+        /* Every real 32bpp direct-color VBE implementation this kernel
+         * has ever encountered uses the same red=16/green=8/blue=0 bit
+         * layout every COL_* constant assumes -- see vga.h's own
+         * comment on vga_color_layout_is_standard(). A machine that
+         * genuinely differs would render every color wrong in a way
+         * that's much harder to diagnose from a garbled screen than
+         * from this one clear line over serial. */
+        serial_puts("[FATAL] this VBE mode's color channel layout isn't "
+                     "the standard RGB order this kernel assumes -- halting\n");
+        for (;;) { __asm__ volatile ("hlt"); }
+    }
+
     mouse_init();
 
     /* Diagnostic-only for now: dumps every PCI device found (including
      * whatever network controller QEMU is presenting) out over the
      * serial port, so real hardware IDs can be confirmed before writing
      * a driver against them. Doesn't touch the GUI at all. */
-    serial_init();
     pci_scan();
 
     /* If a supported NIC is present, bring the whole network stack up:

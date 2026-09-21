@@ -35,7 +35,7 @@ static inline const u8 *ko_glyph_for_codepoint(int cp) {
     return 0;
 }
 
-static inline void ko_font_draw_glyph(int x, int y, const u8 *glyph, u8 color) {
+static inline void ko_font_draw_glyph(int x, int y, const u8 *glyph, u32 color) {
     if (!glyph) {
         /* We got asked to draw a codepoint we've never heard of. Rather
          * than silently drawing nothing (which just looks like a bug
@@ -54,7 +54,7 @@ static inline void ko_font_draw_glyph(int x, int y, const u8 *glyph, u8 color) {
     }
 }
 
-static inline void ko_font_draw_codepoint(int x, int y, int cp, u8 color) {
+static inline void ko_font_draw_codepoint(int x, int y, int cp, u32 color) {
     ko_font_draw_glyph(x, y, ko_glyph_for_codepoint(cp), color);
 }
 
@@ -108,7 +108,7 @@ static inline int ko_utf8_last_char_len(const char *buf, u32 len) {
  * again at every call site. No line-wrapping here on purpose -- UI
  * labels are short and single-line; that's Notepad's problem, not ours.
  * ============================================================ */
-static inline void ko_draw_mixed_string(int x, int y, const char *s, u8 color) {
+static inline void ko_draw_mixed_string(int x, int y, const char *s, u32 color) {
     int cx = x;
     u32 len = 0;
     while (s[len]) len++; /* freestanding kernel, no strlen() lying around */

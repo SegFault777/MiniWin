@@ -108,7 +108,7 @@ static inline char to_upper(char c) {
     return c;
 }
 
-static inline void font_draw_char(int x, int y, char c, u8 color) {
+static inline void font_draw_char(int x, int y, char c, u32 color) {
     const u8 *glyph;
 
     if (c >= 'a' && c <= 'z') {
@@ -129,7 +129,7 @@ static inline void font_draw_char(int x, int y, char c, u8 color) {
     }
 }
 
-static inline void font_draw_string(int x, int y, const char *s, u8 color) {
+static inline void font_draw_string(int x, int y, const char *s, u32 color) {
     int cx = x;
     while (*s) {
         if (*s == '\n') { cx = x; y += 9; s++; continue; }
@@ -147,7 +147,7 @@ static inline void font_draw_string(int x, int y, const char *s, u8 color) {
  * font just so a handful of letters can stand up straight.
  * (x,y) is the top-left corner of the resulting 8x8 box, same as
  * font_draw_char -- it just happens to contain a sideways letter. */
-static inline void font_draw_char_vertical(int x, int y, char c, u8 color) {
+static inline void font_draw_char_vertical(int x, int y, char c, u32 color) {
     char u = to_upper(c);
     if (u < 0x20 || u > 0x5A) return; /* lowercase-only glyphs don't get a rotated cousin; not worth it */
     const u8 *glyph = font8x8[(int)u - 0x20];
@@ -166,7 +166,7 @@ static inline void font_draw_char_vertical(int x, int y, char c, u8 color) {
  * reads bottom-to-top -- perfect for a thin vertical strip along the
  * left edge of a popup menu, or for silently judging anyone still
  * running this OS at 320x200. */
-static inline void font_draw_string_vertical(int x, int y_bottom, const char *s, u8 color) {
+static inline void font_draw_string_vertical(int x, int y_bottom, const char *s, u32 color) {
     int cy = y_bottom;
     while (*s) {
         font_draw_char_vertical(x, cy, *s, color);

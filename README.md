@@ -11,24 +11,33 @@ system with no libc, no bootloader framework, and no borrowed kernel code.
 
 - **Boot**: a 512-byte MBR bootloader (`boot/boot.asm`) that sets a real
   VBE (VESA) video mode via a genuine BIOS call, switches to protected
-  mode, and loads the kernel via BIOS INT13h extended (LBA) reads, 512KB
+  mode, and loads the kernel via BIOS INT13h extended (LBA) reads, 160KB
   budget, all real addressing under 1MB so it works with no A20
-  shenanigans during load.
-- **Display**: 640x400, 256-color linear framebuffer -- VBE mode 0100h,
-  set by a real BIOS `INT 10h` call in the bootloader (VBE mode-setting
-  can only happen in real mode, before protected mode takes over). This
-  went from the original 320x200 mode 13h; every UI element (fonts,
-  icons, windows, taskbar) deliberately kept its original absolute pixel
-  size, so the desktop now has real breathing room instead of everything
-  scaling up to fill the bigger canvas. The kernel reads back wherever
-  the BIOS actually put the framebuffer (`PhysBasePtr`) and its real
-  scanline pitch, rather than assuming a fixed address the way mode 13h
-  allowed.
+  shenanigans during load. Split into two stages (`boot/boot.asm`, an
+  exactly-512-byte MBR, and `boot/stage2.asm`, everything else) once
+  finding a real truecolor VBE mode by actually walking the BIOS's own
+  mode list -- rather than just requesting a fixed, hoped-for mode
+  number -- stopped fitting in a single boot sector's budget.
+- **Display**: 640x480, real 32-bit truecolor -- a genuine direct-color
+  VBE mode, found at boot by walking the BIOS's actual list of
+  supported video modes (`INT 10h AX=4F00h`/`4F01h`) looking for one
+  matching 640x480 at 32 bits/pixel, rather than assuming a fixed mode
+  NUMBER means that (there's no equivalent to mode 13h's or even VBE's
+  own 0100h's stable convention at truecolor depths -- different cards
+  and emulators number them differently). Any color a 24-bit RGB value
+  can express, not a palette lookup -- verified with an arbitrary
+  off-palette color (no relation to the classic 16), rendered and read
+  back pixel-perfect. The 1.2MB truecolor backbuffer this needs doesn't
+  fit in this kernel's usual sub-640KB footprint, so it lives at a
+  fixed physical address well above 1MB instead (the same "paging is
+  off, so a raw address is just a pointer" trick the framebuffer
+  pointer itself already relied on) -- guarded by a real BIOS memory-size
+  probe (`INT 15h AX=E801h`) the kernel checks before ever writing
+  through it, refusing to boot with a clear message rather than risk
+  silently corrupting memory on a machine too small for it.
 - **Kernel**: freestanding C (`kernel/kernel.c` + headers), no libc. A
-  256-color palette (a 6x6x6 color cube + grayscale ramp on top of the
-  classic 16), a PS/2 mouse + keyboard driver, PC speaker beep, a tiny
-  4-slot ATA-backed filesystem, PCI enumeration, and a COM1 serial debug
-  log.
+  PS/2 mouse + keyboard driver, PC speaker beep, a tiny 4-slot
+  ATA-backed filesystem, PCI enumeration, and a COM1 serial debug log.
 - **Desktop**: draggable/resizable/minimizable/maximizable windows with
   real overlapping z-order (click a window, it comes to front), edge/
   corner resize handles that swap the cursor to a matching directional
@@ -122,7 +131,8 @@ qemu-system-i386 -drive file=build/os-image.img,format=raw \
 ## Project layout
 
 ```
-boot/boot.asm       MBR bootloader (real mode -> protected mode, disk load)
+boot/boot.asm       stage 1: 512-byte MBR, loads stage 2 and jumps to it
+boot/stage2.asm     stage 2: kernel load, VBE truecolor mode search, A20, GDT, protected mode
 kernel/kentry.asm   32-bit entry stub (BSS clear, calls kmain)
 kernel/kernel.c     the OS itself: GUI, window manager, Notepad, Settings
 kernel/*.h          one subsystem per header (vga, keyboard, mouse, ata,
@@ -285,7 +295,7 @@ asks:
   finding an IP address, not itself a privacy guarantee).
 - **File Manager**: not built yet.
 - Full HTML4/5/XHTML rendering and "SSE3 support" are not realistic
-  targets for a 320x200, 16-/256-color, no-libc kernel like this one --
+  targets for a 640x480, truecolor, no-libc kernel like this one --
   MiniWeb (WEB.EXE) is an honestly-scoped raw-response viewer, not a
   general-purpose browser engine, and that's staying true even as it
   grows an address bar and (eventually) basic HTML rendering.

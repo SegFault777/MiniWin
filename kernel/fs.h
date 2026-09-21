@@ -15,28 +15,34 @@
  * Disk layout (LBA = sector number, 512 bytes a pop) -- the whole image
  * is exactly 256KB (512 sectors), a round number chosen on purpose (see
  * build.sh) instead of padding out to whatever happened to be left over:
- *   LBA 0        - boot sector
- *   LBA 1-320    - the kernel (160KB budget -- real usage sits around
+ *   LBA 0        - boot sector (stage 1: just enough real-mode code to
+ *                  load stage 2 and jump to it -- see boot/boot.asm)
+ *   LBA 1-4      - stage 2 (kernel loading, VBE truecolor mode search,
+ *                  A20, GDT, the jump into protected mode -- see
+ *                  boot/stage2.asm; moved out of stage 1 once finding a
+ *                  real 640x480x32bpp VBE mode by actually walking the
+ *                  BIOS's own mode list, instead of just requesting a
+ *                  fixed mode number, stopped fitting in a 512-byte MBR)
+ *   LBA 5-324    - the kernel (160KB budget -- real usage sits around
  *                  118KB with -Os and --gc-sections doing their job;
- *                  see boot/boot.asm's KERNEL_CHUNKS for the loader side
- *                  of this same number)
- *   LBA 321+     - the four file slots, 9 sectors each (1 header + 8 data):
- *                    slot 0: LBA 321-329 -> "NEWDOC.TXT"
- *                    slot 1: LBA 330-338 -> "NEWDOC_2.TXT"
- *                    slot 2: LBA 339-347 -> "NEWDOC_3.TXT"
- *                    slot 3: LBA 348-356 -> "NEWDOC_4.TXT"
- *   LBA 357-511  - unused headroom (77.5KB) -- room for the kernel or
+ *                  see boot/stage2.asm's KERNEL_CHUNKS for the loader
+ *                  side of this same number)
+ *   LBA 325+     - the four file slots, 9 sectors each (1 header + 8 data):
+ *                    slot 0: LBA 325-333 -> "NEWDOC.TXT"
+ *                    slot 1: LBA 334-342 -> "NEWDOC_2.TXT"
+ *                    slot 2: LBA 343-351 -> "NEWDOC_3.TXT"
+ *                    slot 3: LBA 352-360 -> "NEWDOC_4.TXT"
+ *   LBA 361-511  - unused headroom (75.5KB) -- room for the kernel or
  *                  the file area to grow without immediately forcing
  *                  the image past the 256KB line; see build.sh's size
  *                  check, which fails loudly if either one ever does.
  * (File slots start the sector immediately after the kernel budget ends
- * -- no gap between them the way there used to be back when the kernel
- * budget was 512KB and file storage started way out at LBA 1100. Every
- * sector between LBA 1 and LBA 356 is now spoken for on purpose.)
+ * -- no gap between them. Every sector between LBA 1 and LBA 360 is now
+ * spoken for on purpose.)
  */
 
 #define FS_MAGIC           0x31573154u
-#define FS_BASE_LBA        321
+#define FS_BASE_LBA        325
 #define FS_SLOT_SECTORS    9      /* 1 header + 8 data sectors per slot */
 #define FS_DATA_SECTORS    8
 #define FS_MAX_FILE_BYTES  (FS_DATA_SECTORS * 512)  /* 4096 bytes, don't write a novel */

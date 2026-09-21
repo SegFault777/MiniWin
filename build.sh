@@ -5,8 +5,46 @@ cd "$(dirname "$0")"
 BUILD=build
 mkdir -p $BUILD
 
-echo "[1/5] Assembling bootloader..."
-nasm -f bin boot/boot.asm -o $BUILD/boot.bin
+echo "[1/5] Assembling bootloader (2 stages)..."
+# STAGE2_SECTORS is defined exactly once, here, and threaded into both
+# assembler invocations via -D -- boot.asm needs it to know how many
+# sectors to read stage 2 into, stage2.asm needs it to know where the
+# kernel starts (LBA 1 + STAGE2_SECTORS). One number, one place to
+# change it, instead of three hand-synchronized copies drifting apart
+# the next time either file's size budget needs to move.
+STAGE2_SECTORS=4   # 2KB -- stage2.asm currently assembles to well under
+                   # one sector; this leaves 3 sectors of headroom for
+                   # whatever grows there next (another VBE fallback
+                   # path, say) without needing to touch this number.
+nasm -f bin -DSTAGE2_SECTORS=$STAGE2_SECTORS boot/boot.asm -o $BUILD/boot.bin
+nasm -f bin -DSTAGE2_SECTORS=$STAGE2_SECTORS boot/stage2.asm -o $BUILD/stage2_raw.bin
+
+STAGE2_ACTUAL_BYTES=$(stat -c%s "$BUILD/stage2_raw.bin")
+STAGE2_MAX_BYTES=$((STAGE2_SECTORS * 512))
+if [ "$STAGE2_ACTUAL_BYTES" -gt "$STAGE2_MAX_BYTES" ]; then
+    echo "ERROR: stage2.bin is $STAGE2_ACTUAL_BYTES bytes, exceeds the" \
+         "$STAGE2_MAX_BYTES-byte ($STAGE2_SECTORS-sector) budget stage 1" \
+         "reads it into (boot/boot.asm's disk read, sized by build.sh's" \
+         "STAGE2_SECTORS). Bump STAGE2_SECTORS in build.sh if stage2.asm" \
+         "needs to grow further."
+    exit 1
+fi
+# Pad stage2 out to a whole number of sectors -- boot.asm's disk read
+# always pulls exactly STAGE2_SECTORS sectors regardless of how much of
+# the last one stage2.asm's own code actually fills, so the image needs
+# that much real data there (zeros are fine; nothing ever executes past
+# stage2's own final instruction).
+python3 -c "
+import sys
+with open('$BUILD/stage2_raw.bin', 'rb') as f:
+    data = f.read()
+target = $STAGE2_MAX_BYTES
+data = data + b'\x00' * (target - len(data))
+with open('$BUILD/stage2.bin', 'wb') as f:
+    f.write(data)
+"
+echo "  stage2: $STAGE2_ACTUAL_BYTES / $STAGE2_MAX_BYTES bytes" \
+     "($STAGE2_SECTORS-sector budget)"
 
 echo "[2/5] Assembling kernel entry stub..."
 nasm -f elf32 kernel/kentry.asm -o $BUILD/kentry.o
@@ -41,7 +79,7 @@ objcopy -O binary $BUILD/kernel.elf $BUILD/kernel.bin
 # visible reason" bug this check exists to catch before it ships instead
 # of during a late-night debugging session.
 echo "[4.5/5] Checking .bss doesn't collide with the stack..."
-STACK_BASE=$(grep -oP 'mov\s+esp,\s*\K0x[0-9A-Fa-f]+' boot/boot.asm | head -1)
+STACK_BASE=$(grep -oP 'mov\s+esp,\s*\K0x[0-9A-Fa-f]+' boot/stage2.asm | head -1)
 STACK_GUARD_BYTES=4096   # don't just barely avoid the collision -- leave the
                          # stack itself some breathing room to actually recurse
 BSS_VMA_HEX=$(objdump -h $BUILD/kernel.elf | awk '/\.bss/ { print "0x" $4 }')
@@ -84,22 +122,23 @@ echo "[5/5] Building final disk image..."
 # has to be hand-updated to match, since C headers can't ask the
 # assembler a question at compile time -- but this check at least
 # catches it immediately if that update is forgotten).
-KERNEL_CHUNKS=$(grep -oP 'KERNEL_CHUNKS\s+equ\s+\K[0-9]+' boot/boot.asm)
-SECTORS_PER_CHUNK=$(grep -oP 'KERNEL_SECTORS_PER_CHUNK\s+equ\s+\K[0-9]+' boot/boot.asm)
+KERNEL_CHUNKS=$(grep -oP 'KERNEL_CHUNKS\s+equ\s+\K[0-9]+' boot/stage2.asm)
+SECTORS_PER_CHUNK=$(grep -oP 'KERNEL_SECTORS_PER_CHUNK\s+equ\s+\K[0-9]+' boot/stage2.asm)
 KERNEL_BUDGET_SECTORS=$((KERNEL_CHUNKS * SECTORS_PER_CHUNK))
 KERNEL_MAX_BYTES=$((KERNEL_BUDGET_SECTORS * 512))
 KERNEL_ACTUAL_BYTES=$(stat -c%s "$BUILD/kernel.bin")
 
-# Bootloader is exactly 1 sector (512 bytes); the kernel follows for
-# KERNEL_BUDGET_SECTORS sectors after that (LBA 1..KERNEL_BUDGET_SECTORS)
-# -- if kernel.bin is ever bigger than that budget, it would get
-# silently truncated on boot, so fail the build loudly instead of
-# shipping something broken.
+# Bootloader is now 2 stages: stage 1 is exactly 1 sector (512 bytes,
+# LBA 0), stage 2 occupies STAGE2_SECTORS sectors right after it
+# (LBA 1..STAGE2_SECTORS), and the kernel follows for
+# KERNEL_BUDGET_SECTORS sectors after THAT -- if kernel.bin is ever
+# bigger than that budget, it would get silently truncated on boot, so
+# fail the build loudly instead of shipping something broken.
 if [ "$KERNEL_ACTUAL_BYTES" -gt "$KERNEL_MAX_BYTES" ]; then
     echo "ERROR: kernel.bin is $KERNEL_ACTUAL_BYTES bytes, exceeds the" \
          "$KERNEL_MAX_BYTES-byte ($KERNEL_BUDGET_SECTORS-sector) budget the" \
          "bootloader reads (KERNEL_CHUNKS=$KERNEL_CHUNKS x" \
-         "KERNEL_SECTORS_PER_CHUNK=$SECTORS_PER_CHUNK in boot/boot.asm)." \
+         "KERNEL_SECTORS_PER_CHUNK=$SECTORS_PER_CHUNK in boot/stage2.asm)." \
          "Increase KERNEL_CHUNKS there -- and update FS_BASE_LBA in" \
          "kernel/fs.h to start immediately after the new budget -- if the" \
          "kernel needs to grow further."
@@ -113,16 +152,20 @@ FS_SLOT_SECTORS=$(grep -oP '#define\s+FS_SLOT_SECTORS\s+\K[0-9]+' kernel/fs.h)
 FS_MAX_FILES=$(grep -oP '#define\s+FS_MAX_FILES\s+\K[0-9]+' kernel/fs.h)
 
 # The file-storage area is meant to start on the sector right after the
-# kernel's own budget ends -- no gap, nothing wasted. If a future edit
-# grows the kernel budget without moving FS_BASE_LBA to match, this is
-# the check that notices before it ships as a silently-corrupt layout
-# (the kernel spilling into what fs.h thinks is empty file-slot space).
-EXPECTED_FS_BASE_LBA=$((1 + KERNEL_BUDGET_SECTORS))
+# kernel's own budget ends (kernel itself starting right after stage 2)
+# -- no gap, nothing wasted. If a future edit grows the kernel budget
+# without moving FS_BASE_LBA to match, this is the check that notices
+# before it ships as a silently-corrupt layout (the kernel spilling
+# into what fs.h thinks is empty file-slot space).
+KERNEL_START_LBA=$((1 + STAGE2_SECTORS))
+EXPECTED_FS_BASE_LBA=$((KERNEL_START_LBA + KERNEL_BUDGET_SECTORS))
 if [ "$FS_BASE_LBA" -lt "$EXPECTED_FS_BASE_LBA" ]; then
     echo "ERROR: kernel/fs.h's FS_BASE_LBA ($FS_BASE_LBA) starts before the" \
-         "kernel's own budget ends (LBA $EXPECTED_FS_BASE_LBA) -- the kernel" \
-         "would silently overwrite file-slot data on disk. Update" \
-         "FS_BASE_LBA in kernel/fs.h to $EXPECTED_FS_BASE_LBA or higher."
+         "kernel's own budget ends (LBA $EXPECTED_FS_BASE_LBA, i.e. stage 1" \
+         "+ $STAGE2_SECTORS stage-2 sectors + $KERNEL_BUDGET_SECTORS kernel" \
+         "sectors) -- the kernel would silently overwrite file-slot data on" \
+         "disk. Update FS_BASE_LBA in kernel/fs.h to $EXPECTED_FS_BASE_LBA" \
+         "or higher."
     exit 1
 fi
 
@@ -135,6 +178,7 @@ echo "  minimum sectors needed: $MIN_IMAGE_SECTORS" \
      "($(( MIN_IMAGE_SECTORS * 512 / 1024 ))KB)"
 
 cp $BUILD/boot.bin $BUILD/os-image.img
+cat $BUILD/stage2.bin >> $BUILD/os-image.img
 cat $BUILD/kernel.bin >> $BUILD/os-image.img
 
 # Final image size: a round 256KB (512 sectors), not whatever number
