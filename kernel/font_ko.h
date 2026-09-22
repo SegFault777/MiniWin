@@ -25,7 +25,7 @@ static inline int ko_compose_codepoint(int initial, int medial, int final_) {
     return KO_SYLLABLE_BASE + (initial * 21 + medial) * 28 + final_;
 }
 
-static inline const u8 *ko_glyph_for_codepoint(int cp) {
+static inline const u16 *ko_glyph_for_codepoint(int cp) {
     if (cp >= KO_SYLLABLE_BASE && cp < KO_SYLLABLE_BASE + KO_SYLLABLE_COUNT) {
         return font8x8_ko[cp - KO_SYLLABLE_BASE];
     }
@@ -35,19 +35,19 @@ static inline const u8 *ko_glyph_for_codepoint(int cp) {
     return 0;
 }
 
-static inline void ko_font_draw_glyph(int x, int y, const u8 *glyph, u32 color) {
+static inline void ko_font_draw_glyph(int x, int y, const u16 *glyph, u32 color) {
     if (!glyph) {
         /* We got asked to draw a codepoint we've never heard of. Rather
          * than silently drawing nothing (which just looks like a bug
          * someone will spend an hour chasing), slap down an obvious
          * little hollow box so it screams "something's missing here." */
-        bb_rect(x, y, 7, 7, color);
+        bb_rect(x, y, FONT_CELL - 1, FONT_CELL - 1, color);
         return;
     }
-    for (int row = 0; row < 8; row++) {
-        u8 bits = glyph[row];
-        for (int col = 0; col < 8; col++) {
-            if (bits & (0x80 >> col)) {
+    for (int row = 0; row < FONT_CELL; row++) {
+        u16 bits = glyph[row];
+        for (int col = 0; col < FONT_CELL; col++) {
+            if (bits & (0x8000 >> col)) {
                 bb_putpixel(x + col, y + row, color);
             }
         }
@@ -114,24 +114,24 @@ static inline void ko_draw_mixed_string(int x, int y, const char *s, u32 color) 
     while (s[len]) len++; /* freestanding kernel, no strlen() lying around */
     u32 i = 0;
     while (i < len) {
-        if (s[i] == '\n') { cx = x; y += 9; i++; continue; }
+        if (s[i] == '\n') { cx = x; y += FONT_CELL + 1; i++; continue; }
         int clen = ko_utf8_char_len((unsigned char)s[i]);
         if (clen == 3 && i + 3 <= len) {
             ko_font_draw_codepoint(cx, y, ko_utf8_decode3(&s[i]), color);
-            cx += 8;
+            cx += FONT_CELL;
             i += 3;
         } else {
             font_draw_char(cx, y, s[i], color);
-            cx += 8;
+            cx += FONT_CELL;
             i += 1;
         }
     }
 }
 
 /* Pixel width ko_draw_mixed_string() would take up -- every character,
- * English or Hangul, is one 8px cell, so this is just a cell count times
- * 8. Handy for centering a label (Yes/No buttons, say) without caring
- * which language is currently active. */
+ * English or Hangul, is one FONT_CELL-wide cell, so this is just a cell
+ * count times FONT_CELL. Handy for centering a label (Yes/No buttons,
+ * say) without caring which language is currently active. */
 static inline int ko_string_width(const char *s) {
     u32 len = 0;
     while (s[len]) len++;
@@ -139,7 +139,7 @@ static inline int ko_string_width(const char *s) {
     int w = 0;
     while (i < len) {
         int clen = ko_utf8_char_len((unsigned char)s[i]);
-        w += 8;
+        w += FONT_CELL;
         i += (clen == 3 && i + 3 <= len) ? 3 : 1;
     }
     return w;

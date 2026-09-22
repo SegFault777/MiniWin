@@ -181,17 +181,21 @@ cp $BUILD/boot.bin $BUILD/os-image.img
 cat $BUILD/stage2.bin >> $BUILD/os-image.img
 cat $BUILD/kernel.bin >> $BUILD/os-image.img
 
-# Final image size: a round 256KB (512 sectors), not whatever number
+# Final image size: a round 512KB (1024 sectors), not whatever number
 # happened to be left over after the last feature was added. Rounding
 # up to a clean power-of-two-ish size (256KB/512KB/1024KB, the same
 # handful of sizes disk tools, flashers, and humans all expect) instead
 # of an arbitrary "1200 sectors, for headroom" is worth the trade even
 # though it means picking a target instead of just measuring one -- an
-# odd size like 614400 bytes signals nothing about intent, while 256KB
-# reads immediately as "yes, this was chosen." The check below still
-# fails loudly if the real minimum ever grows past whichever round
+# odd size like 614400 bytes signals nothing about intent, while a round
+# number reads immediately as "yes, this was chosen." Bumped up from
+# 256KB to 512KB once the kernel's 11x11 Galmuri11 bitmap fonts (see
+# kernel/font_latin_data.h, kernel/font_ko_data.h) pushed the kernel
+# itself past the old budget -- see boot/stage2.asm's KERNEL_CHUNKS and
+# kernel/fs.h's layout comment for the matching numbers. The check below
+# still fails loudly if the real minimum ever grows past whichever round
 # number is targeted, instead of silently truncating something.
-TARGET_TOTAL_BYTES=$((256 * 1024))
+TARGET_TOTAL_BYTES=$((512 * 1024))
 TARGET_TOTAL_SECTORS=$((TARGET_TOTAL_BYTES / 512))
 if [ "$MIN_IMAGE_SECTORS" -gt "$TARGET_TOTAL_SECTORS" ]; then
     echo "ERROR: the kernel + file-slot layout now needs" \

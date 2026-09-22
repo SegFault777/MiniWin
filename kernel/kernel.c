@@ -234,88 +234,96 @@ static inline const char *t(ui_str_id id) {
  * ============================================================ */
 /* Both desktop icons sit in equal-width "slots" -- the icon glyph and
  * each line of its label are centered within the slot independently,
- * so a wide label (like "NOTEPAD", wider than the 16px icon above it)
+ * so a wide label (like "NOTEPAD", wider than the 22px icon above it)
  * overflows the same amount on both sides instead of trailing off to
- * one side the way raw left-aligned coordinates used to. */
-#define ICON_SLOT_W 60
-#define ICON_GLYPH_W 16
+ * one side the way raw left-aligned coordinates used to.
+ *
+ * ICON_SLOT_W is sized off the widest label line this UI actually
+ * draws in a slot: "NOTEPAD" and "SETTING" are both 7 characters, and
+ * at FONT_CELL=11 that's 77px. 88px gives that a comfortable ~11px of
+ * breathing room on each side without wasting desktop space -- this
+ * used to be a tighter 60px back when the font was 8px wide (7*8=56,
+ * so the old slot barely fit its own label either; it never had real
+ * headroom, it just happened to be small enough that nobody noticed). */
+#define ICON_SLOT_W 88
+#define ICON_GLYPH_W 22
 
-#define ICON_X   4
-#define ICON_Y   6
+#define ICON_X   6
+#define ICON_Y   8
 #define ICON_W   ICON_SLOT_W
-#define ICON_H   26   /* box + label combined hit area */
+#define ICON_H   36   /* box + label combined hit area */
 
 static void draw_desktop_icon(void) {
     int gx = ICON_X + (ICON_SLOT_W - ICON_GLYPH_W) / 2;
-    bb_fillrect(gx, ICON_Y, ICON_GLYPH_W, 12, COL_WHITE);
-    bb_rect(gx, ICON_Y, ICON_GLYPH_W, 12, COL_BLACK);
+    bb_fillrect(gx, ICON_Y, ICON_GLYPH_W, 16, COL_WHITE);
+    bb_rect(gx, ICON_Y, ICON_GLYPH_W, 16, COL_BLACK);
     /* little folded-corner notch to look like a document/app icon */
-    bb_fillrect(gx + 11, ICON_Y, 5, 4, DESKTOP_COLOR_ICON_BG);
-    bb_rect(gx + 11, ICON_Y, 5, 4, COL_BLACK);
+    bb_fillrect(gx + 15, ICON_Y, 7, 5, DESKTOP_COLOR_ICON_BG);
+    bb_rect(gx + 15, ICON_Y, 7, 5, COL_BLACK);
 
     const char *line1 = "NOTEPAD", *line2 = ".EXE";
-    font_draw_string(ICON_X + (ICON_SLOT_W - 8 * 7) / 2, ICON_Y + 14, line1, COL_BLACK);
-    font_draw_string(ICON_X + (ICON_SLOT_W - 8 * 4) / 2, ICON_Y + 22, line2, COL_BLACK);
+    font_draw_string(ICON_X + (ICON_SLOT_W - FONT_CELL * 7) / 2, ICON_Y + 19, line1, COL_BLACK);
+    font_draw_string(ICON_X + (ICON_SLOT_W - FONT_CELL * 4) / 2, ICON_Y + 30, line2, COL_BLACK);
 }
 
 /* SETTING.EXE -- sits next to NOTEPAD.EXE in the same top row.
  * Double-clicking opens the real SYSTEM settings window (Language, IME)
  * defined further down, right alongside Notepad's own window code. */
-#define ICON2_X  (ICON_X + ICON_SLOT_W + 8)
-#define ICON2_Y  6
+#define ICON2_X  (ICON_X + ICON_SLOT_W + 10)
+#define ICON2_Y  8
 #define ICON2_W  ICON_SLOT_W
-#define ICON2_H  26
+#define ICON2_H  36
 
 static void draw_desktop_icon2(void) {
     /* simple gear-ish glyph so it reads as a distinct app, not another
      * document -- a filled circle-ish square with a few notches */
     int gx = ICON2_X + (ICON_SLOT_W - ICON_GLYPH_W) / 2;
-    bb_fillrect(gx, ICON2_Y, ICON_GLYPH_W, 12, COL_LGRAY);
-    bb_rect(gx, ICON2_Y, ICON_GLYPH_W, 12, COL_BLACK);
-    bb_fillrect(gx + 4, ICON2_Y + 3, 8, 6, COL_WHITE);
-    bb_rect(gx + 4, ICON2_Y + 3, 8, 6, COL_BLACK);
-    bb_putpixel(gx + 2, ICON2_Y + 1, COL_BLACK);
-    bb_putpixel(gx + 13, ICON2_Y + 1, COL_BLACK);
-    bb_putpixel(gx + 2, ICON2_Y + 10, COL_BLACK);
-    bb_putpixel(gx + 13, ICON2_Y + 10, COL_BLACK);
+    bb_fillrect(gx, ICON2_Y, ICON_GLYPH_W, 16, COL_LGRAY);
+    bb_rect(gx, ICON2_Y, ICON_GLYPH_W, 16, COL_BLACK);
+    bb_fillrect(gx + 5, ICON2_Y + 4, 11, 8, COL_WHITE);
+    bb_rect(gx + 5, ICON2_Y + 4, 11, 8, COL_BLACK);
+    bb_putpixel(gx + 3, ICON2_Y + 1, COL_BLACK);
+    bb_putpixel(gx + 18, ICON2_Y + 1, COL_BLACK);
+    bb_putpixel(gx + 3, ICON2_Y + 14, COL_BLACK);
+    bb_putpixel(gx + 18, ICON2_Y + 14, COL_BLACK);
 
     const char *line1 = "SETTING", *line2 = ".EXE";
-    font_draw_string(ICON2_X + (ICON_SLOT_W - 8 * 7) / 2, ICON2_Y + 14, line1, COL_BLACK);
-    font_draw_string(ICON2_X + (ICON_SLOT_W - 8 * 4) / 2, ICON2_Y + 22, line2, COL_BLACK);
+    font_draw_string(ICON2_X + (ICON_SLOT_W - FONT_CELL * 7) / 2, ICON2_Y + 19, line1, COL_BLACK);
+    font_draw_string(ICON2_X + (ICON_SLOT_W - FONT_CELL * 4) / 2, ICON2_Y + 30, line2, COL_BLACK);
 }
 
 /* WEB.EXE -- third icon in the same top row. Double-clicking opens
  * MiniWeb, the small HTTP client browser built on kernel/http.h and
  * kernel/tcp.h -- this OS's actual "layer above the network stack,"
  * not just a diagnostic harness proving the stack works. */
-#define ICON3_X  (ICON2_X + ICON_SLOT_W + 8)
-#define ICON3_Y  6
+#define ICON3_X  (ICON2_X + ICON_SLOT_W + 10)
+#define ICON3_Y  8
 #define ICON3_W  ICON_SLOT_W
-#define ICON3_H  26
+#define ICON3_H  36
 
 static void draw_desktop_icon3(void) {
     /* a little globe: circle outline plus one horizontal and one
      * vertical meridian line through the middle -- instantly reads as
      * "network/internet" at icon scale without needing a real bitmap */
     int gx = ICON3_X + (ICON_SLOT_W - ICON_GLYPH_W) / 2;
-    bb_fillrect(gx, ICON3_Y, ICON_GLYPH_W, 12, COL_WHITE);
-    bb_rect(gx, ICON3_Y, ICON_GLYPH_W, 12, COL_BLACK);
+    bb_fillrect(gx, ICON3_Y, ICON_GLYPH_W, 16, COL_WHITE);
+    bb_rect(gx, ICON3_Y, ICON_GLYPH_W, 16, COL_BLACK);
     /* equator */
-    for (int i = 2; i < ICON_GLYPH_W - 2; i++) bb_putpixel(gx + i, ICON3_Y + 6, COL_BLACK);
+    for (int i = 3; i < ICON_GLYPH_W - 3; i++) bb_putpixel(gx + i, ICON3_Y + 8, COL_BLACK);
     /* prime meridian (just the visible half of it, an ellipse-ish curve
      * approximated with a few pixels -- this is an icon, not a globe) */
-    for (int j = 1; j < 11; j++) {
-        int inset = (j <= 5) ? (5 - j) : (j - 6);
-        bb_putpixel(gx + 3 + inset / 2, ICON3_Y + j, COL_BLACK);
-        bb_putpixel(gx + 12 - inset / 2, ICON3_Y + j, COL_BLACK);
+    for (int j = 1; j < 15; j++) {
+        int inset = (j <= 7) ? (7 - j) : (j - 8);
+        bb_putpixel(gx + 4 + inset / 2, ICON3_Y + j, COL_BLACK);
+        bb_putpixel(gx + 17 - inset / 2, ICON3_Y + j, COL_BLACK);
     }
 
     const char *line1 = "WEB", *line2 = ".EXE";
-    font_draw_string(ICON3_X + (ICON_SLOT_W - 8 * 3) / 2, ICON3_Y + 14, line1, COL_BLACK);
-    font_draw_string(ICON3_X + (ICON_SLOT_W - 8 * 4) / 2, ICON3_Y + 22, line2, COL_BLACK);
+    font_draw_string(ICON3_X + (ICON_SLOT_W - FONT_CELL * 3) / 2, ICON3_Y + 19, line1, COL_BLACK);
+    font_draw_string(ICON3_X + (ICON_SLOT_W - FONT_CELL * 4) / 2, ICON3_Y + 30, line2, COL_BLACK);
 }
 
-#define TASKBAR_H     14
+#define TASKBAR_H     18
 #define TASKBAR_Y     (VGA_HEIGHT - TASKBAR_H)
 
 /* ============================================================
@@ -413,16 +421,16 @@ static void build_tz_label(char *out, u32 outsz) {
     append_uint(out, &len, outsz, tz_offset_hours < 0 ? -tz_offset_hours : tz_offset_hours);
 }
 
-#define CLOCK_W  66
-#define CLOCK_H  10
-#define CLOCK_X  (VGA_WIDTH - CLOCK_W - 2)
+#define CLOCK_W  90
+#define CLOCK_H  14
+#define CLOCK_X  (VGA_WIDTH - CLOCK_W - 3)
 #define CLOCK_Y  (TASKBAR_Y + 2)
 
 static int clock_hit(int px, int py) {
     return in_rect(px, py, CLOCK_X, CLOCK_Y, CLOCK_W, CLOCK_H);
 }
 
-#define DATE_POPUP_H 24
+#define DATE_POPUP_H 32
 
 static void draw_date_popup(void) {
     rtc_time_t now;
@@ -431,15 +439,15 @@ static void draw_date_popup(void) {
     char date_str[40];
     format_full_date(&local, date_str, sizeof(date_str));
 
-    int w = ko_string_width(date_str) + 12;
+    int w = ko_string_width(date_str) + 16;
     int x = CLOCK_X + CLOCK_W - w;
     if (x < 2) x = 2;
     int y = TASKBAR_Y - DATE_POPUP_H;
 
-    bb_fillrect(x + 2, y + 2, w, DATE_POPUP_H, COL_DGRAY);
+    bb_fillrect(x + 3, y + 3, w, DATE_POPUP_H, COL_DGRAY);
     bb_fillrect(x, y, w, DATE_POPUP_H, COL_LGRAY);
     bb_rect(x, y, w, DATE_POPUP_H, COL_BLACK);
-    ko_draw_mixed_string(x + 6, y + 8, date_str, COL_BLACK);
+    ko_draw_mixed_string(x + 8, y + 11, date_str, COL_BLACK);
 }
 
 /* ============================================================
@@ -449,18 +457,18 @@ static void draw_date_popup(void) {
 /* The Start button -- bottom-left corner, obviously. Every desktop OS
  * since 1995 has agreed on this location without ever holding a
  * meeting about it. Sized to fit "AM" plus a proper raised bevel. */
-#define STARTBTN_X    2
+#define STARTBTN_X    3
 #define STARTBTN_Y    (TASKBAR_Y + 2)
-#define STARTBTN_W    24
-#define STARTBTN_H    10
+#define STARTBTN_W    34
+#define STARTBTN_H    14
 
 /* The minimized-window pill used to hug the taskbar's left edge; now
  * it scoots over to make room for the Start button. Height is still a
  * fixed constant (TASKBTN_H); pill WIDTH is now computed dynamically by
  * taskbar_layout() below since it has to shrink as more windows pile up. */
-#define TASKBTN_X     (STARTBTN_X + STARTBTN_W + 4)
+#define TASKBTN_X     (STARTBTN_X + STARTBTN_W + 5)
 #define TASKBTN_Y     (TASKBAR_Y + 2)
-#define TASKBTN_H     10
+#define TASKBTN_H     14
 
 /* ============================================================
  * Window state + layout
@@ -470,13 +478,13 @@ static void draw_date_popup(void) {
  * drawing and hit-testing below reads from `notepad.x/y/w/h` rather than
  * fixed macros.
  * ============================================================ */
-#define WIN_DEFAULT_X   20
-#define WIN_DEFAULT_Y   10
-#define WIN_DEFAULT_W   250
-#define WIN_DEFAULT_H   130
-#define TITLEBAR_H      10
-#define MIN_WIN_H       (TITLEBAR_H + 12 + 20) /* title + menu + a little edit area */
-#define MIN_WIN_W       120                     /* enough for the 3 title bar buttons + a sliver of title text */
+#define WIN_DEFAULT_X   24
+#define WIN_DEFAULT_Y   14
+#define WIN_DEFAULT_W   320
+#define WIN_DEFAULT_H   170
+#define TITLEBAR_H      15
+#define MIN_WIN_H       (TITLEBAR_H + FONT_CELL + 6 + 30) /* title + menu + a little edit area */
+#define MIN_WIN_W       170                     /* enough for the 3 title bar buttons + a sliver of title text */
 
 /* Maximized geometry: fill the screen above the taskbar entirely. */
 #define MAXIMIZED_X 0
@@ -484,10 +492,13 @@ static void draw_date_popup(void) {
 #define MAXIMIZED_W VGA_WIDTH
 #define MAXIMIZED_H (VGA_HEIGHT - TASKBAR_H)
 
-/* title bar control buttons: _  []  X, right-aligned, 9x8 each */
-#define BTN_W 9
-#define BTN_H 8
-#define BTN_GAP 1
+/* title bar control buttons: _  []  X, right-aligned, sized to stay
+ * comfortably clickable now that everything else on screen grew with
+ * the 11px font -- a fat-fingered click target matters more than ever
+ * once the whole UI isn't hugging 8px-grid coordinates anymore. */
+#define BTN_W 13
+#define BTN_H 12
+#define BTN_GAP 2
 
 typedef struct {
     int open;         /* window exists at all (opened from desktop icon) */
@@ -508,10 +519,10 @@ typedef struct {
  * know every window's minimized state) can see it without forward-
  * declaration games. The geometry constants, hit-tests, and drawing code
  * stay grouped with the rest of SETTING.EXE further down. */
-#define SETTING_DEFAULT_X   80
-#define SETTING_DEFAULT_Y   30
-#define SETTING_DEFAULT_W   200
-#define SETTING_DEFAULT_H   124
+#define SETTING_DEFAULT_X   100
+#define SETTING_DEFAULT_Y   40
+#define SETTING_DEFAULT_W   260
+#define SETTING_DEFAULT_H   160
 
 static window_t setting = {
     .open = 0, .minimized = 0, .maximized = 0,
@@ -524,11 +535,12 @@ static window_t setting = {
 /* WEB.EXE's window state, same treatment as setting's above -- a
  * single-instance window_t living here so the taskbar/z-order/generic
  * resize machinery can see it, with the app-specific drawing and hit-
- * testing code grouped further down near draw_web_window(). */
-#define WEB_DEFAULT_X   140
-#define WEB_DEFAULT_Y   50
-#define WEB_DEFAULT_W   260
-#define WEB_DEFAULT_H   160
+ * testing code grouped further down near draw_web_window(). Tall enough
+ * to comfortably fit the URL bar row above the response viewport. */
+#define WEB_DEFAULT_X   170
+#define WEB_DEFAULT_Y   60
+#define WEB_DEFAULT_W   340
+#define WEB_DEFAULT_H   210
 
 static window_t web_win = {
     .open = 0, .minimized = 0, .maximized = 0,
@@ -728,16 +740,20 @@ static u32 desktop_file_len[FS_MAX_FILES];
 static const char *status = "MINIWIN 1.0 - DOUBLE-CLICK NOTEPAD.EXE TO OPEN";
 static char status_buf[48]; /* scratch space for status messages that embed a filename */
 
-#define MENU_FILE_LABEL_W 34   /* clickable width for the "File" label */
-#define FILE_MENU_ITEM_H  10
-#define FILE_MENU_W       94  /* wide enough for "다른 이름으로 저장" (Save As, Korean) */
+#define MENU_FILE_LABEL_W 46   /* clickable width for the "File" label */
+#define MENU_ITEM_SPACING 54   /* x-step between File/Edit/Help labels -- a bit
+                                 * wider than MENU_FILE_LABEL_W so consecutive
+                                 * labels get visible breathing room instead of
+                                 * touching edge-to-edge */
+#define FILE_MENU_ITEM_H  15
+#define FILE_MENU_W       128 /* wide enough for "다른 이름으로 저장" (Save As, Korean, 9 glyphs @ FONT_CELL) */
 
 static inline int menu_y_pos(void) { return active_np->win.y + TITLEBAR_H + 1; }
 static inline int file_menu_x(void) { return active_np->win.x + 4; }
-static inline int file_menu_top_y(void) { return menu_y_pos() + 9; }
+static inline int file_menu_top_y(void) { return menu_y_pos() + FONT_CELL + 3; }
 
 static int file_label_hit(int px, int py) {
-    return in_rect(px, py, active_np->win.x + 4, menu_y_pos(), MENU_FILE_LABEL_W, 9);
+    return in_rect(px, py, active_np->win.x + 4, menu_y_pos(), MENU_FILE_LABEL_W, FONT_CELL + 3);
 }
 
 static int file_menu_item_hit(int px, int py, int idx) {
@@ -751,17 +767,17 @@ static int file_menu_item_hit(int px, int py, int idx) {
  * minimize/maximize, same restrained chrome as SETTING.EXE) sitting on
  * top of the message + Yes/No area. Widened a touch to leave room for
  * the warning icon next to the first line of text. */
-#define CONFIRM_W 160
-#define CONFIRM_H 66
-#define CONFIRM_BTN_W 34
-#define CONFIRM_BTN_H 12
+#define CONFIRM_W 210
+#define CONFIRM_H 90
+#define CONFIRM_BTN_W 46
+#define CONFIRM_BTN_H 17
 
 static inline int confirm_x(void) { return active_np->win.x + (active_np->win.w - CONFIRM_W) / 2; }
 static inline int confirm_y(void) { return active_np->win.y + (active_np->win.h - CONFIRM_H) / 2; }
-static inline int confirm_btn_y(void) { return confirm_y() + CONFIRM_H - CONFIRM_BTN_H - 8; }
-static inline int confirm_yes_x(void) { return confirm_x() + 16; }
-static inline int confirm_no_x(void)  { return confirm_x() + CONFIRM_W - 16 - CONFIRM_BTN_W; }
-static inline int confirm_close_x(void) { return confirm_x() + CONFIRM_W - 2 - BTN_W; }
+static inline int confirm_btn_y(void) { return confirm_y() + CONFIRM_H - CONFIRM_BTN_H - 11; }
+static inline int confirm_yes_x(void) { return confirm_x() + 22; }
+static inline int confirm_no_x(void)  { return confirm_x() + CONFIRM_W - 22 - CONFIRM_BTN_W; }
+static inline int confirm_close_x(void) { return confirm_x() + CONFIRM_W - 3 - BTN_W; }
 static inline int confirm_close_y(void) { return confirm_y() + 1; }
 
 static int confirm_yes_hit(int px, int py) {
@@ -877,10 +893,10 @@ static inline int btn_max_x(void)   { return btn_close_x() - BTN_W - BTN_GAP; }
 static inline int btn_min_x(void)   { return btn_max_x() - BTN_W - BTN_GAP; }
 static inline int btn_y(void)       { return active_np->win.y + 1; }
 
-static inline int edit_x(void) { return active_np->win.x + 4; }
-static inline int edit_y(void) { return active_np->win.y + TITLEBAR_H + 12; }
-static inline int edit_w(void) { return active_np->win.w - 8; }
-static inline int edit_h(void) { return active_np->win.h - TITLEBAR_H - 16; }
+static inline int edit_x(void) { return active_np->win.x + 5; }
+static inline int edit_y(void) { return active_np->win.y + TITLEBAR_H + FONT_CELL + 6; }
+static inline int edit_w(void) { return active_np->win.w - 10; }
+static inline int edit_h(void) { return active_np->win.h - TITLEBAR_H - FONT_CELL - 10; }
 
 /* ============================================================
  * Taskbar drawing + hit-testing
@@ -891,9 +907,9 @@ static inline int edit_h(void) { return active_np->win.h - TITLEBAR_H - 16; }
  * order the taskbar filled up in. Pills shrink to fit as more windows
  * pile up, the same way real taskbars do, instead of overflowing the
  * screen. */
-#define TASKBTN_GAP    4
-#define TASKBTN_MAXW   70
-#define TASKBTN_MINW   34
+#define TASKBTN_GAP    5
+#define TASKBTN_MAXW   96
+#define TASKBTN_MINW   48
 
 /* Single source of truth for pill layout, shared by draw_taskbar() and
  * every taskbar hit-test below -- computing it twice with two different
@@ -960,7 +976,7 @@ static void draw_taskbar(void) {
     /* nudge the label a pixel down-right while "pressed", like it's
      * physically sinking into the taskbar under the weight of your click */
     int press = start_menu_open ? 1 : 0;
-    font_draw_string(STARTBTN_X + 3 + press, STARTBTN_Y + 1 + press, "AM", COL_BLACK);
+    font_draw_string(STARTBTN_X + 5 + press, STARTBTN_Y + 2 + press, "AM", COL_BLACK);
 
     int ids[WIN_ID_COUNT], count, pill_w;
     taskbar_layout(ids, &count, &pill_w);
@@ -973,19 +989,19 @@ static void draw_taskbar(void) {
         bb_rect(px, py, pill_w, TASKBTN_H, COL_DGRAY);
         char label[8];
         taskbar_pill_label(id, label, sizeof(label));
-        font_draw_string(px + 2, py + 1, label, COL_BLACK);
+        font_draw_string(px + 3, py + 2, label, COL_BLACK);
 
         /* restore glyph: two overlapping squares */
-        int rx = px + pill_w - 20, ry = py + 1;
-        bb_rect(rx + 2, ry, 6, 6, COL_BLACK);
-        bb_rect(rx, ry + 2, 6, 6, COL_BLACK);
-        bb_fillrect(rx + 1, ry + 3, 4, 4, COL_WHITE);
+        int rx = px + pill_w - 26, ry = py + 2;
+        bb_rect(rx + 3, ry, 8, 8, COL_BLACK);
+        bb_rect(rx, ry + 3, 8, 8, COL_BLACK);
+        bb_fillrect(rx + 1, ry + 4, 6, 6, COL_WHITE);
 
         /* close glyph: X */
-        int cx = px + pill_w - 9, cy = py + 1;
-        for (int k = 0; k < 7; k++) {
+        int cx = px + pill_w - 13, cy = py + 2;
+        for (int k = 0; k < 10; k++) {
             bb_putpixel(cx + k, cy + k, COL_BLACK);
-            bb_putpixel(cx + k, cy + 6 - k, COL_BLACK);
+            bb_putpixel(cx + k, cy + 9 - k, COL_BLACK);
         }
     }
 
@@ -1021,9 +1037,9 @@ static int taskbar_glyph_hit(int px, int py, int kind) {
     taskbar_layout(ids, &count, &pill_w);
     for (int i = 0; i < count; i++) {
         int bx = TASKBTN_X + i * (pill_w + TASKBTN_GAP);
-        int gx = (kind == 0) ? (bx + pill_w - 20) : (bx + pill_w - 9);
-        int gy = TASKBTN_Y + 1;
-        if (in_rect(px, py, gx, gy, 8, 8)) return ids[i];
+        int gx = (kind == 0) ? (bx + pill_w - 26) : (bx + pill_w - 13);
+        int gy = TASKBTN_Y + 2;
+        if (in_rect(px, py, gx, gy, 11, 11)) return ids[i];
     }
     return -1;
 }
@@ -1036,10 +1052,10 @@ static int taskbar_glyph_hit(int px, int py, int kind) {
  * doing anything on its own -- because even a two-app OS deserves a
  * proper "are you sure" ceremony before it turns itself off.
  * ============================================================ */
-#define STARTMENU_BANNER_W  14
-#define STARTMENU_W         120
-#define STARTMENU_H         74
-#define STARTMENU_ITEM_H    12
+#define STARTMENU_BANNER_W  18
+#define STARTMENU_W         168   /* fits "NOTEPAD.EXE" (11 glyphs @ FONT_CELL) plus banner + margin */
+#define STARTMENU_H         104
+#define STARTMENU_ITEM_H    17
 #define STARTMENU_ITEMS     4   /* 0=Notepad.exe, 1=Setting.exe, 2=Web.exe, 3=power */
 #define STARTMENU_POWER_IDX (STARTMENU_ITEMS - 1)
 
@@ -1052,29 +1068,34 @@ static inline int start_menu_y(void) { return TASKBAR_Y - STARTMENU_H; }
  * moves. */
 static inline int start_menu_item_y(int idx) {
     if (idx == STARTMENU_ITEMS - 1)
-        return start_menu_y() + STARTMENU_H - STARTMENU_ITEM_H - 3;
-    return start_menu_y() + 4 + idx * STARTMENU_ITEM_H;
+        return start_menu_y() + STARTMENU_H - STARTMENU_ITEM_H - 4;
+    return start_menu_y() + 6 + idx * STARTMENU_ITEM_H;
 }
 
 static int start_menu_item_hit(int px, int py, int idx) {
-    int x = start_menu_x() + STARTMENU_BANNER_W + 2;
-    int w = STARTMENU_W - STARTMENU_BANNER_W - 4;
+    int x = start_menu_x() + STARTMENU_BANNER_W + 3;
+    int w = STARTMENU_W - STARTMENU_BANNER_W - 6;
     return in_rect(px, py, x, start_menu_item_y(idx), w, STARTMENU_ITEM_H);
 }
 
-/* An 8x8 hand-drawn "power" glyph -- a ring with a vertical stroke
+/* An 11x11 hand-drawn "power" glyph -- a ring with a vertical stroke
  * poking through the gap at the top, same silhouette as the standard
  * IEC power symbol. Drawn the same way font glyphs are (row-by-row
  * bitmask), it just isn't in the text font, so it gets its own
- * function instead of a character code. */
-static const u8 power_icon_bits[8] = {
-    0x18, 0x18, 0x42, 0x81, 0x81, 0x42, 0x3C, 0x00
+ * function instead of a character code. Scaled up from the original
+ * 8x8 version by hand (not auto-generated the way the text font is --
+ * this one little glyph didn't justify its own BDF/tool pipeline) to
+ * match FONT_CELL so it doesn't look like a shrunken afterthought next
+ * to the 11px text sitting right beside it in the Start Menu. */
+static const u16 power_icon_bits[11] = {
+    0x0C00, 0x1E00, 0x1E00, 0x3300, 0x6180, 0x6180,
+    0x6180, 0x3300, 0x1E00, 0x0000, 0x0000
 };
 static void draw_power_icon(int x, int y, u32 color) {
-    for (int row = 0; row < 8; row++) {
-        u8 bits = power_icon_bits[row];
-        for (int col = 0; col < 8; col++) {
-            if (bits & (0x80 >> col)) bb_putpixel(x + col, y + row, color);
+    for (int row = 0; row < FONT_CELL; row++) {
+        u16 bits = power_icon_bits[row];
+        for (int col = 0; col < FONT_CELL; col++) {
+            if (bits & (0x8000 >> col)) bb_putpixel(x + col, y + row, color);
         }
     }
 }
@@ -1084,10 +1105,10 @@ static void draw_power_icon(int x, int y, u32 color) {
  * Menu, not a thing that can exist on its own. */
 static int power_menu_open = 0;
 
-#define POWERMENU_W       80
-#define POWERMENU_ITEM_H  12
+#define POWERMENU_W       116  /* fits "SHUT DOWN" (9 glyphs @ FONT_CELL) plus margin */
+#define POWERMENU_ITEM_H  17
 #define POWERMENU_ITEMS   2   /* 0=Shut Down, 1=Restart */
-#define POWERMENU_H       (POWERMENU_ITEMS * POWERMENU_ITEM_H + 6)
+#define POWERMENU_H       (POWERMENU_ITEMS * POWERMENU_ITEM_H + 8)
 
 /* Cascades off the right edge of the Start Menu, biased toward the
  * bottom (flush with the taskbar) rather than centered -- it's growing
@@ -1216,19 +1237,19 @@ static void draw_window(void) {
 
     /* menu bar */
     int menu_y = wy + TITLEBAR_H + 1;
-    bb_fillrect(wx + 1, menu_y, ww - 2, 9, COL_LGRAY);
+    bb_fillrect(wx + 1, menu_y, ww - 2, FONT_CELL + 3, COL_LGRAY);
     if (active_np->file_menu_open) {
         /* highlight the File label while its dropdown is open, like a
          * pressed menu button */
-        bb_fillrect(wx + 3, menu_y, MENU_FILE_LABEL_W - 2, 9, COL_BLUE);
-        ko_draw_mixed_string(wx + 4,  menu_y, t(STR_FILE), COL_WHITE);
+        bb_fillrect(wx + 3, menu_y, MENU_FILE_LABEL_W - 2, FONT_CELL + 3, COL_BLUE);
+        ko_draw_mixed_string(wx + 5,  menu_y + 2, t(STR_FILE), COL_WHITE);
     } else {
-        ko_draw_mixed_string(wx + 4,  menu_y, t(STR_FILE), COL_BLACK);
+        ko_draw_mixed_string(wx + 5,  menu_y + 2, t(STR_FILE), COL_BLACK);
     }
-    ko_draw_mixed_string(wx + 40, menu_y, t(STR_EDIT), COL_BLACK);
-    ko_draw_mixed_string(wx + 76, menu_y, t(STR_HELP), COL_BLACK);
+    ko_draw_mixed_string(wx + 5 + MENU_ITEM_SPACING,     menu_y + 2, t(STR_EDIT), COL_BLACK);
+    ko_draw_mixed_string(wx + 5 + MENU_ITEM_SPACING * 2, menu_y + 2, t(STR_HELP), COL_BLACK);
     for (int i = 0; i < ww - 2; i++)
-        bb_putpixel(wx + 1 + i, menu_y + 9, COL_DGRAY);
+        bb_putpixel(wx + 1 + i, menu_y + FONT_CELL + 3, COL_DGRAY);
 
     /* text edit area (white, sunken border) */
     int ex = edit_x(), ey = edit_y(), ew = edit_w(), eh = edit_h();
@@ -1238,29 +1259,29 @@ static void draw_window(void) {
     /* text content -- UTF-8 aware: most bytes are 1 ASCII char, but a
      * 3-byte sequence (0xE0 lead byte) is one Hangul syllable/jamo drawn
      * via the Korean font instead of the Latin one. Both render at the
-     * same 8px advance since the Hangul glyphs were extracted at 8x8 to
-     * match. */
+     * same FONT_CELL advance since Latin and Hangul glyphs both come out
+     * of the same Galmuri11 font at the same 11x11 cell size now. */
     int cx = ex + 2, cy = ey + 2;
     for (u32 i = 0; i < active_np->text_len; ) {
         int clen = ko_utf8_char_len((unsigned char)active_np->text_buf[i]);
         if (clen == 3 && i + 3 <= active_np->text_len) {
-            if (cx > ex + ew - 10) { cx = ex + 2; cy += 9; }
-            if (cy > ey + eh - 8) break;
+            if (cx > ex + ew - FONT_CELL - 2) { cx = ex + 2; cy += FONT_CELL + 1; }
+            if (cy > ey + eh - FONT_CELL) break;
             int cp = ko_utf8_decode3(&active_np->text_buf[i]);
             ko_font_draw_codepoint(cx, cy, cp, COL_BLACK);
-            cx += 8;
+            cx += FONT_CELL;
             i += 3;
             continue;
         }
         char c = active_np->text_buf[i];
-        if (c == '\n' || cx > ex + ew - 10) {
+        if (c == '\n' || cx > ex + ew - FONT_CELL - 2) {
             cx = ex + 2;
-            cy += 9;
+            cy += FONT_CELL + 1;
             if (c == '\n') { i++; continue; }
         }
-        if (cy > ey + eh - 8) break;
+        if (cy > ey + eh - FONT_CELL) break;
         font_draw_char(cx, cy, c, COL_BLACK);
-        cx += 8;
+        cx += FONT_CELL;
         i++;
     }
 
@@ -1268,16 +1289,16 @@ static void draw_window(void) {
      * mode is on and something's mid-composition), shown right at the
      * cursor position before it's actually committed to active_np->text_buf. */
     if (current_ime == IME_KOREAN && ko_ime_is_composing()) {
-        if (cx > ex + ew - 10) { cx = ex + 2; cy += 9; }
+        if (cx > ex + ew - FONT_CELL - 2) { cx = ex + 2; cy += FONT_CELL + 1; }
         int preview_cp = ko_ime_preview_codepoint();
-        if (preview_cp >= 0 && cy <= ey + eh - 8) {
+        if (preview_cp >= 0 && cy <= ey + eh - FONT_CELL) {
             ko_font_draw_codepoint(cx, cy, preview_cp, COL_BLACK);
-            cx += 8; /* advance past the preview glyph so the cursor bar
+            cx += FONT_CELL; /* advance past the preview glyph so the cursor bar
                       * below is drawn after it, not overlapping it */
         }
     }
 
-    bb_fillrect(cx, cy, 2, 8, COL_BLACK); /* text cursor */
+    bb_fillrect(cx, cy, 2, FONT_CELL, COL_BLACK); /* text cursor */
 }
 
 /* Is (px,py) over the draggable part of the title bar -- i.e. the title
@@ -1325,11 +1346,11 @@ static void unmaximize_window(window_t *w) {
  * itself, and its default-geometry constants, live up near notepad's
  * declaration -- see the comment there for why.)
  * ============================================================ */
-#define SETTING_SIDEBAR_W   74
-#define SETTING_NAV_ITEM_H  11
-#define SETTING_ROW_W       112
-#define SETTING_ROW_H       11
-#define SETTING_ROW_GAP     14
+#define SETTING_SIDEBAR_W   100  /* fits "TIMEZONE" (8 glyphs @ FONT_CELL) plus margin */
+#define SETTING_NAV_ITEM_H  16
+#define SETTING_ROW_W       150
+#define SETTING_ROW_H       16
+#define SETTING_ROW_GAP     20
 
 #define SETTING_NAV_LANGUAGE 0
 #define SETTING_NAV_IME      1
@@ -1340,10 +1361,10 @@ static void unmaximize_window(window_t *w) {
  * tab -- nobody wants to re-navigate to Language every single time. */
 static int setting_page = SETTING_NAV_LANGUAGE;
 
-static inline int setting_btn_close_x(void) { return setting.x + setting.w - 2 - BTN_W; }
+static inline int setting_btn_close_x(void) { return setting.x + setting.w - 3 - BTN_W; }
 static inline int setting_btn_max_x(void)   { return setting_btn_close_x() - BTN_W - BTN_GAP; }
 static inline int setting_btn_min_x(void)   { return setting_btn_max_x() - BTN_W - BTN_GAP; }
-static inline int setting_btn_y(void) { return setting.y + 1; }
+static inline int setting_btn_y(void) { return setting.y + 2; }
 
 static int setting_close_hit(int px, int py) {
     return in_rect(px, py, setting_btn_close_x(), setting_btn_y(), BTN_W, BTN_H);
@@ -1365,14 +1386,14 @@ static int setting_titlebar_drag_hit(int px, int py) {
     return 1;
 }
 
-static inline int setting_header_y(void) { return setting.y + TITLEBAR_H + 3; }
-static inline int setting_nav_y(int idx) { return setting_header_y() + 10 + idx * SETTING_NAV_ITEM_H; }
+static inline int setting_header_y(void) { return setting.y + TITLEBAR_H + 4; }
+static inline int setting_nav_y(int idx) { return setting_header_y() + 14 + idx * SETTING_NAV_ITEM_H; }
 
 static int setting_nav_hit(int px, int py, int idx) {
-    return in_rect(px, py, setting.x + 2, setting_nav_y(idx), SETTING_SIDEBAR_W - 3, SETTING_NAV_ITEM_H);
+    return in_rect(px, py, setting.x + 3, setting_nav_y(idx), SETTING_SIDEBAR_W - 4, SETTING_NAV_ITEM_H);
 }
 
-static inline int setting_content_x(void) { return setting.x + SETTING_SIDEBAR_W + 4; }
+static inline int setting_content_x(void) { return setting.x + SETTING_SIDEBAR_W + 5; }
 static inline int setting_row_y(int idx) { return setting_header_y() + idx * SETTING_ROW_GAP; }
 
 static int setting_row_hit(int px, int py, int idx) {
@@ -1383,10 +1404,10 @@ static int setting_row_hit(int px, int py, int idx) {
  * current offset, rather than a text field this kernel has no widget
  * for. Bounded to a plausible +/-14 range (the real-world extremes,
  * roughly) when clicked. */
-#define TZ_BTN_W 12
-#define TZ_BTN_H 11
-static inline int tz_minus_x(void) { return setting_content_x() + 52; }
-static inline int tz_plus_x(void)  { return setting_content_x() + 68; }
+#define TZ_BTN_W 17
+#define TZ_BTN_H 16
+static inline int tz_minus_x(void) { return setting_content_x() + 72; }
+static inline int tz_plus_x(void)  { return setting_content_x() + 94; }
 static inline int tz_btn_y(void)   { return setting_row_y(0) - 1; }
 static int tz_minus_hit(int px, int py) { return in_rect(px, py, tz_minus_x(), tz_btn_y(), TZ_BTN_W, TZ_BTN_H); }
 static int tz_plus_hit(int px, int py)  { return in_rect(px, py, tz_plus_x(),  tz_btn_y(), TZ_BTN_W, TZ_BTN_H); }
@@ -1400,12 +1421,14 @@ static int tz_plus_hit(int px, int py)  { return in_rect(px, py, tz_plus_x(),  t
  * currently active. */
 static void build_option_label(char *out, u32 outsz, int is_radio, int selected, const char *name) {
     u32 len = 0;
-    /* Angle brackets, not square ones -- the bitmap font only covers
-     * ASCII 0x20-0x5A (space through 'Z'), and '[' / ']' fall just
-     * outside that range, so they'd silently draw as blank gaps. "<x>"
-     * also has the nice side effect of looking visually distinct from
-     * the radio buttons' "(*)", which is the whole point of using
-     * different bracket styles for single- vs multi-select. */
+    /* Angle brackets, not square ones -- purely a style choice now that
+     * the font covers full printable ASCII (including '[' / ']') again;
+     * this used to be a functional necessity back when the old 8x8 font
+     * only covered up through 'Z' and square brackets would've silently
+     * drawn as blank gaps. Kept as angle brackets anyway because "<x>"
+     * still reads as visually distinct from the radio buttons' "(*)",
+     * which is the whole point of using different bracket styles for
+     * single- vs multi-select. */
     const char *pre = is_radio ? (selected ? "(*) " : "( ) ")
                                 : (selected ? "<x> " : "< > ");
     while (*pre) kstrcpy_append(out, &len, outsz, *pre++);
@@ -1512,7 +1535,7 @@ static void draw_setting_window(void) {
  * than a shared abstraction that has to know about both windows'
  * slightly different constant names.
  * ============================================================ */
-#define WEB_SITE_ROW_H   11
+#define WEB_SITE_ROW_H   16
 #define WEB_SITE_COUNT   2
 #define WEB_SITE_PYPI    0
 #define WEB_SITE_GATEWAY 1
@@ -1680,27 +1703,26 @@ static void web_poll(void) {
  * ones to see at a glance anyway. */
 static void draw_web_response_text(int x, int y, int w, int h, const u8 *data, u16 len) {
     int cx = x, cy = y;
-    int max_x = x + w - 8;
-    int max_y = y + h - 8;
+    int max_x = x + w - FONT_CELL;
+    int max_y = y + h - FONT_CELL;
     for (u16 i = 0; i < len; i++) {
         char c = (char)data[i];
         if (c == '\r') continue; /* CRLF line endings -- skip the \r, act on the \n */
         if (c == '\n' || cx > max_x) {
             cx = x;
-            cy += 9;
+            cy += FONT_CELL + 1;
             if (c == '\n') continue;
         }
         if (cy > max_y) break;
-        /* font_draw_char() already upper-cases lowercase letters itself
-         * (see font.h's to_upper()) and covers the full 0x20-0x5A range
-         * that results from that -- so the only bytes actually worth
-         * blanking out here are the genuine non-printable ones (raw
-         * control bytes, high-bit-set bytes) that show up occasionally
-         * in real HTTP traffic; letters, digits, and punctuation all
-         * pass through untouched and let font_draw_char do its own
-         * case-folding. */
+        /* font_draw_char() now renders real upper AND lower case glyphs
+         * (Galmuri11 actually has both -- see font.h), and covers the
+         * full printable-ASCII range on its own, so the only bytes
+         * actually worth blanking out here are the genuine
+         * non-printable ones (raw control bytes, high-bit-set bytes)
+         * that show up occasionally in real HTTP traffic; everything
+         * else passes through untouched. */
         font_draw_char(cx, cy, (c >= 0x20 && c < 0x7F) ? c : ' ', COL_BLACK);
-        cx += 8;
+        cx += FONT_CELL;
     }
 }
 
@@ -1903,8 +1925,8 @@ static void draw_confirm_dialog(int mx, int my) {
  * still the proper one on disk and in status messages, this is just a
  * compact on-screen label.
  * ============================================================ */
-#define FILEICON_ROW_Y      (ICON_Y + ICON_H + 6)
-#define FILEICON_SPACING_X  34
+#define FILEICON_ROW_Y      (ICON_Y + ICON_H + 8)
+#define FILEICON_SPACING_X  56  /* fits "DOC4" (4 glyphs @ FONT_CELL) plus margin */
 
 static const char *fileicon_labels[FS_MAX_FILES] = {"DOC", "DOC2", "DOC3", "DOC4"};
 
@@ -2059,7 +2081,7 @@ static void draw_cursor(int x, int y) {
  * Frame composition
  * ============================================================ */
 static void draw_status_line(const char *msg) {
-    ko_draw_mixed_string(4, VGA_HEIGHT - TASKBAR_H - 9, msg, COL_BLACK);
+    ko_draw_mixed_string(5, VGA_HEIGHT - TASKBAR_H - FONT_CELL - 2, msg, COL_BLACK);
 }
 
 static void render_frame(int mouse_x, int mouse_y, const char *status_msg) {

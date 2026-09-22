@@ -13,8 +13,12 @@
  * polite "sorry, full" if you try for a 5th.
  *
  * Disk layout (LBA = sector number, 512 bytes a pop) -- the whole image
- * is exactly 256KB (512 sectors), a round number chosen on purpose (see
- * build.sh) instead of padding out to whatever happened to be left over:
+ * is exactly 512KB (1024 sectors), a round number chosen on purpose (see
+ * build.sh) instead of padding out to whatever happened to be left over.
+ * Bumped up from 256KB once the UI's bitmap fonts moved to 11x11
+ * Galmuri11 glyphs (see kernel/font_latin_data.h, kernel/font_ko_data.h)
+ * -- 11172 Hangul syllables at 11 rows of u16 apiece takes real space,
+ * no way around that for a kernel with no font-compression scheme:
  *   LBA 0        - boot sector (stage 1: just enough real-mode code to
  *                  load stage 2 and jump to it -- see boot/boot.asm)
  *   LBA 1-4      - stage 2 (kernel loading, VBE truecolor mode search,
@@ -23,26 +27,25 @@
  *                  real 640x480x32bpp VBE mode by actually walking the
  *                  BIOS's own mode list, instead of just requesting a
  *                  fixed mode number, stopped fitting in a 512-byte MBR)
- *   LBA 5-324    - the kernel (160KB budget -- real usage sits around
- *                  118KB with -Os and --gc-sections doing their job;
- *                  see boot/stage2.asm's KERNEL_CHUNKS for the loader
- *                  side of this same number)
- *   LBA 325+     - the four file slots, 9 sectors each (1 header + 8 data):
- *                    slot 0: LBA 325-333 -> "NEWDOC.TXT"
- *                    slot 1: LBA 334-342 -> "NEWDOC_2.TXT"
- *                    slot 2: LBA 343-351 -> "NEWDOC_3.TXT"
- *                    slot 3: LBA 352-360 -> "NEWDOC_4.TXT"
- *   LBA 361-511  - unused headroom (75.5KB) -- room for the kernel or
+ *   LBA 5-900    - the kernel (448KB budget; see boot/stage2.asm's
+ *                  KERNEL_CHUNKS for the loader side of this same
+ *                  number)
+ *   LBA 901+     - the four file slots, 9 sectors each (1 header + 8 data):
+ *                    slot 0: LBA 901-909 -> "NEWDOC.TXT"
+ *                    slot 1: LBA 910-918 -> "NEWDOC_2.TXT"
+ *                    slot 2: LBA 919-927 -> "NEWDOC_3.TXT"
+ *                    slot 3: LBA 928-936 -> "NEWDOC_4.TXT"
+ *   LBA 937-1023 - unused headroom (~43.5KB) -- room for the kernel or
  *                  the file area to grow without immediately forcing
- *                  the image past the 256KB line; see build.sh's size
+ *                  the image past the 512KB line; see build.sh's size
  *                  check, which fails loudly if either one ever does.
  * (File slots start the sector immediately after the kernel budget ends
- * -- no gap between them. Every sector between LBA 1 and LBA 360 is now
+ * -- no gap between them. Every sector between LBA 1 and LBA 936 is now
  * spoken for on purpose.)
  */
 
 #define FS_MAGIC           0x31573154u
-#define FS_BASE_LBA        325
+#define FS_BASE_LBA        901
 #define FS_SLOT_SECTORS    9      /* 1 header + 8 data sectors per slot */
 #define FS_DATA_SECTORS    8
 #define FS_MAX_FILE_BYTES  (FS_DATA_SECTORS * 512)  /* 4096 bytes, don't write a novel */
