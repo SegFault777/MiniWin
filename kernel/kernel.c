@@ -39,6 +39,19 @@ static void kstrcpy_append(char *buf, u32 *len, u32 maxlen, char c) {
     }
 }
 
+/* Plain "copy src into dst, truncating at dst_sz - 1, always
+ * NUL-terminated" -- the freestanding equivalent of strlcpy(), which
+ * this kernel doesn't have because it has no libc at all. Used wherever
+ * a fixed-size buffer needs to hold a whole string at once rather than
+ * being built up character-by-character via kstrcpy_append() (which
+ * wants a running length counter the caller has to keep alive; this
+ * doesn't). */
+static void kstrcpy(char *dst, const char *src, u32 dst_sz) {
+    u32 i = 0;
+    while (src[i] && i < dst_sz - 1) { dst[i] = src[i]; i++; }
+    dst[i] = 0;
+}
+
 /* simple busy-wait delay, calibrated roughly for typical QEMU/CPU speed */
 static void delay(volatile u32 loops) {
     while (loops--) { __asm__ volatile ("nop"); }
@@ -653,6 +666,10 @@ static void win_z_raise(int id) {
 #define BTN_MAX           2
 #define BTN_CLOSE         3
 #define BTN_CONFIRM_CLOSE 4  /* the Warning dialog's X -- tied to a notepad id like BTN_CLOSE is */
+#define BTN_WEB_GO        5  /* the URL bar's GO button -- always WIN_ID_WEB,
+                              * but tracked the same press-hold-release
+                              * way as every other button here so a drag-
+                              * off cancels it instead of firing early */
 
 static int pressed_btn_kind = BTN_NONE;
 static int pressed_btn_win = -1;   /* which window id this press belongs to (WIN_ID_SETTING or a notepad index) */
@@ -1543,8 +1560,10 @@ static void draw_setting_window(void) {
 /* Which site row (if any) is the source of whatever's currently in
  * http_client -- purely so the content area can show "Loading
  * PYPI.ORG..." instead of a generic "Loading..." that doesn't say what
- * it's loading. -1 means nothing has been requested yet this boot. */
+ * it's loading. -1 means nothing has been requested yet this boot, -2
+ * means the URL bar (not a bookmark row) drove the current fetch. */
 static int web_current_site = -1;
+#define WEB_SOURCE_URLBAR -2
 /* Set while PYPI.ORG's DNS lookup is outstanding -- see web_go()/
  * web_poll() below. Kept separate from http_client.state (rather than
  * overloading it) because a DNS failure and an HTTP failure are
@@ -1553,6 +1572,32 @@ static int web_current_site = -1;
  * even HTTP yet. */
 static int web_resolving = 0;
 static int web_dns_failed = 0;
+
+/* ------------------------------------------------------------
+ * URL bar -- a real single-line text field (this kernel's first one;
+ * Notepad's edit area is multi-line and SETTING.EXE has no typing at
+ * all), sitting above the bookmark rows. Deliberately its own tiny
+ * text-editing state rather than reusing notepad_t: a URL bar is a
+ * different shape of problem (one line, no newlines, Enter submits
+ * instead of inserting, no save/IME-composition ceremony worth
+ * borrowing) and bolting it onto notepad_t would mean carrying a whole
+ * document buffer + file-slot binding for a field that only ever holds
+ * one hostname's worth of text.
+ * ------------------------------------------------------------ */
+#define WEB_URLBAR_MAXLEN 96
+static char web_urlbar_buf[WEB_URLBAR_MAXLEN + 1];
+static u32  web_urlbar_len = 0;
+static int  web_urlbar_focused = 0;
+
+/* What the URL bar actually asked for, kept around so the status line /
+ * "Loading ___..." text can name it instead of just saying "Loading" --
+ * same reason web_current_site exists for the two bookmark rows. Also
+ * doubles as the Host header string handed to http_get()/https_get(),
+ * so it has to outlive the single-line web_urlbar_buf edit field (which
+ * the person can keep typing into, or clear, while a fetch from an
+ * EARLIER submission is still in flight). */
+static char web_last_host[WEB_URLBAR_MAXLEN + 1];
+static char web_last_path[64];
 
 static inline int web_btn_close_x(void) { return web_win.x + web_win.w - 2 - BTN_W; }
 static inline int web_btn_max_x(void)   { return web_btn_close_x() - BTN_W - BTN_GAP; }
@@ -1572,7 +1617,29 @@ static int web_titlebar_drag_hit(int px, int py) {
 }
 
 static inline int web_header_y(void) { return web_win.y + TITLEBAR_H + 3; }
-static inline int web_site_row_y(int idx) { return web_header_y() + idx * WEB_SITE_ROW_H; }
+
+/* URL bar row: a sunken text field spanning most of the window's width,
+ * with a small "GO" button glued to its right edge -- same sunken/
+ * raised bevel language as everywhere else in this UI (white/dark-gray
+ * border = sunken, i.e. "you type into this", vs the raised look of the
+ * GO button and title bar controls). */
+#define WEB_URLBAR_H     18
+#define WEB_GO_BTN_W     30
+static inline int web_urlbar_x(void) { return web_win.x + 3; }
+static inline int web_urlbar_y(void) { return web_header_y(); }
+static inline int web_urlbar_w(void) { return web_win.w - 6 - WEB_GO_BTN_W - 3; }
+static inline int web_go_btn_x(void) { return web_urlbar_x() + web_urlbar_w() + 3; }
+static int web_urlbar_hit(int px, int py) {
+    return in_rect(px, py, web_urlbar_x(), web_urlbar_y(), web_urlbar_w(), WEB_URLBAR_H);
+}
+static int web_go_btn_hit(int px, int py) {
+    return in_rect(px, py, web_go_btn_x(), web_urlbar_y(), WEB_GO_BTN_W, WEB_URLBAR_H);
+}
+
+/* Bookmark rows now sit below the URL bar instead of right under the
+ * title bar -- same WEB_SITE_ROW_H each, just offset by the bar's
+ * height plus a divider's worth of breathing room. */
+static inline int web_site_row_y(int idx) { return web_urlbar_y() + WEB_URLBAR_H + 4 + idx * WEB_SITE_ROW_H; }
 static int web_site_row_hit(int px, int py, int idx) {
     return in_rect(px, py, web_win.x + 3, web_site_row_y(idx), web_win.w - 6, WEB_SITE_ROW_H);
 }
@@ -1642,6 +1709,8 @@ static void web_go(int site) {
          * https_get() with a garbage address. */
         web_use_https = 1;
         web_resolving = 1;
+        kstrcpy(web_last_host, "pypi.org", sizeof(web_last_host));
+        kstrcpy(web_last_path, "/", sizeof(web_last_path));
         dns_resolve("pypi.org");
     } else {
         /* The gateway has no hostname worth resolving -- it's not a
@@ -1649,7 +1718,184 @@ static void web_go(int site) {
          * so this path skips DNS entirely and connects by the address
          * DHCP already told us was the gateway. */
         web_use_https = 0;
+        kstrcpy(web_last_host, "10.0.2.2 (gateway)", sizeof(web_last_host));
+        kstrcpy(web_last_path, "/", sizeof(web_last_path));
         http_get(net_cfg.gateway_ip, "10.0.2.2 (gateway)", "/");
+    }
+}
+
+/* Is `s` a bare IPv4 address ("10.0.2.2")? A handful of digits and dots
+ * is worth checking for on its own, separately from
+ * web_looks_like_url() below, because an IP address should skip DNS
+ * entirely and go straight to http_get() with that address -- exactly
+ * like the GATEWAY bookmark already does -- rather than getting run
+ * through dns_resolve() (which only knows how to look up names, not
+ * parse an address someone already handed us) or, worse, getting
+ * treated as a search query because it doesn't contain a letter. */
+static int web_parse_ipv4(const char *s, u32 *out_ip) {
+    u32 octets[4] = {0, 0, 0, 0};
+    int oi = 0, digits_in_octet = 0;
+    for (int i = 0; s[i]; i++) {
+        char c = s[i];
+        if (c >= '0' && c <= '9') {
+            octets[oi] = octets[oi] * 10 + (u32)(c - '0');
+            digits_in_octet++;
+            if (octets[oi] > 255 || digits_in_octet > 3) return 0;
+        } else if (c == '.') {
+            if (digits_in_octet == 0) return 0; /* ".." or leading dot */
+            oi++;
+            digits_in_octet = 0;
+            if (oi > 3) return 0; /* more than 4 octets */
+        } else {
+            return 0; /* any letter, colon, slash, space, etc -- not a bare IPv4 literal */
+        }
+    }
+    if (oi != 3 || digits_in_octet == 0) return 0; /* need exactly 4 octets, last one non-empty */
+    *out_ip = (octets[0] << 24) | (octets[1] << 16) | (octets[2] << 8) | octets[3];
+    return 1;
+}
+
+/* Decides whether what the person typed reads as a URL/hostname (goes
+ * straight to that site) or as a search query (gets handed to DuckDuckGo
+ * Lite instead) -- the same call every real browser's address bar makes,
+ * just with a much smaller bag of tricks: no whitespace, and it either
+ * contains a '.' (a dot with something on both sides -- "pypi.org",
+ * "10.0.2.2") or starts with a scheme this kernel's client could plausibly
+ * handle ("http://", "https://"). Anything else -- multiple words, a bare
+ * word with no dot ("news"), a trailing-only or leading-only dot -- reads
+ * as a search. This deliberately isn't a real URL grammar (no port
+ * numbers, no userinfo, no percent-decoding of what's already in the
+ * field): MiniWeb only ever calls http_get()/https_get() with a bare
+ * host + "/" anyway, so anything this parser can't confidently call a
+ * hostname is safer routed to search than guessed at. */
+static int web_looks_like_url(const char *s) {
+    int len = 0, dot_at = -1;
+    for (int i = 0; s[i]; i++) {
+        char c = s[i];
+        if (c == ' ' || c == '\t') return 0; /* any whitespace at all -> definitely a search query */
+        if (c == '.' && dot_at < 0 && i > 0 && s[i + 1] != 0) dot_at = i;
+        len++;
+    }
+    if (len == 0) return 0;
+    if (len >= 7 && s[0]=='h' && s[1]=='t' && s[2]=='t' && s[3]=='p') return 1; /* http:// or https:// */
+    return dot_at >= 0;
+}
+
+/* Splits "host/path" (as typed in the URL bar, scheme already stripped)
+ * into separate host and path buffers -- host gets truncated at the
+ * first '/', path gets everything from that '/' onward, or just "/" if
+ * there wasn't one. Doesn't decode percent-escapes or validate
+ * anything; this is purely string-splitting, same "trust the network
+ * stack to reject what it can't handle" philosophy as the rest of
+ * MiniWeb's URL handling. */
+static void web_split_host_path(const char *s, char *host, u32 host_sz, char *path, u32 path_sz) {
+    u32 hi = 0, i = 0;
+    while (s[i] && s[i] != '/' && hi < host_sz - 1) host[hi++] = s[i++];
+    host[hi] = 0;
+    if (s[i] == '/') {
+        u32 pi = 0;
+        while (s[i] && pi < path_sz - 1) path[pi++] = s[i++];
+        path[pi] = 0;
+    } else {
+        path[0] = '/'; path[1] = 0;
+    }
+}
+
+/* Percent-encodes `src` into `out` the minimal amount an HTTP request
+ * line actually needs: space -> '+' (the traditional query-string
+ * convention, and what DuckDuckGo's own search box sends), and any
+ * byte outside the safe printable-ASCII set -> %XX. Everything else
+ * (letters, digits, and the handful of punctuation marks that are
+ * always safe unescaped in a query value) passes through untouched, so
+ * an ordinary search phrase stays readable in status text and server
+ * logs instead of turning into a wall of %20-style noise. */
+static void web_urlencode(const char *src, char *out, u32 out_sz) {
+    static const char hex[] = "0123456789ABCDEF";
+    u32 oi = 0;
+    for (u32 i = 0; src[i] && oi + 1 < out_sz; i++) {
+        unsigned char c = (unsigned char)src[i];
+        int safe = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                   (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~';
+        if (c == ' ') {
+            out[oi++] = '+';
+        } else if (safe) {
+            out[oi++] = (char)c;
+        } else if (oi + 3 < out_sz) {
+            out[oi++] = '%';
+            out[oi++] = hex[c >> 4];
+            out[oi++] = hex[c & 0xF];
+        } else {
+            break; /* not enough room left for a full %XX escape -- stop
+                     * cleanly rather than emit a truncated one */
+        }
+    }
+    out[oi] = 0;
+}
+
+/* Fires off whatever's currently typed in the URL bar: a URL/hostname
+ * goes straight to that site over HTTPS (the sensible default for a
+ * typed-in address in 2026, and this kernel's TLS stack can already
+ * handle it -- see PYPI.ORG's bookmark for proof); anything else gets
+ * handed to DuckDuckGo Lite as a search query instead. Either way this
+ * is "web_go(), but the destination came from a text field the person
+ * typed into instead of a fixed bookmark index" -- same
+ * IDLE-state-clearing, same web_resolving/web_dns_failed bookkeeping,
+ * just computing the host/path/transport from web_urlbar_buf first. */
+static void web_go_url(void) {
+    if (web_urlbar_len == 0) return; /* nothing typed, nothing to do */
+
+    web_current_site = WEB_SOURCE_URLBAR;
+    web_dns_failed = 0;
+    web_resolving = 0;
+    http_client.state = HTTP_IDLE;
+    https_client.state = HTTPS_IDLE;
+
+    if (web_looks_like_url(web_urlbar_buf)) {
+        /* Strip a leading "https://" or "http://" if the person typed
+         * one -- MiniWeb always decides the transport itself (HTTPS
+         * unless it's a bare IP literal, matching the PYPI.ORG/GATEWAY
+         * bookmarks' own split) rather than trusting a scheme prefix,
+         * since this kernel's http_get()/https_get() calls are chosen
+         * by web_use_https, not parsed out of the URL string. */
+        const char *rest = web_urlbar_buf;
+        if (rest[0]=='h'&&rest[1]=='t'&&rest[2]=='t'&&rest[3]=='p'&&rest[4]=='s'&&rest[5]==':'&&rest[6]=='/'&&rest[7]=='/') rest += 8;
+        else if (rest[0]=='h'&&rest[1]=='t'&&rest[2]=='t'&&rest[3]=='p'&&rest[4]==':'&&rest[5]=='/'&&rest[6]=='/') rest += 7;
+
+        char host[WEB_URLBAR_MAXLEN + 1], path[64];
+        web_split_host_path(rest, host, sizeof(host), path, sizeof(path));
+        kstrcpy(web_last_host, host, sizeof(web_last_host));
+        kstrcpy(web_last_path, path, sizeof(web_last_path));
+
+        u32 ip;
+        if (web_parse_ipv4(host, &ip)) {
+            /* a bare IP literal has nothing to resolve -- connect
+             * directly over plain HTTP, same as the GATEWAY bookmark */
+            web_use_https = 0;
+            http_get(ip, host, path);
+        } else {
+            web_use_https = 1;
+            web_resolving = 1;
+            dns_resolve(host);
+        }
+    } else {
+        /* Not URL-shaped -- treat the whole field as a DuckDuckGo Lite
+         * search query instead. lite.duckduckgo.com is itself just
+         * another HTTPS hostname as far as this kernel's client is
+         * concerned, so this is really the exact same DNS-then-HTTPS
+         * path as any typed-in URL, just with a server-and-path this
+         * function picked instead of the person. */
+        char encoded[160];
+        web_urlencode(web_urlbar_buf, encoded, sizeof(encoded));
+        kstrcpy(web_last_host, "lite.duckduckgo.com", sizeof(web_last_host));
+        kstrcpy(web_last_path, "/lite/?q=", sizeof(web_last_path));
+        u32 path_len = 9; /* strlen("/lite/?q=") -- append_str() needs a
+                            * running length, not just a NUL-terminated
+                            * buffer, so it's tracked explicitly here
+                            * rather than re-scanning web_last_path */
+        append_str(web_last_path, &path_len, sizeof(web_last_path), encoded);
+        web_use_https = 1;
+        web_resolving = 1;
+        dns_resolve("lite.duckduckgo.com");
     }
 }
 
@@ -1668,9 +1914,9 @@ static void web_poll(void) {
             if (web_use_https) {
                 u8 seed[16];
                 web_make_entropy_seed(seed);
-                https_get(dns_client.result_ip, dns_client.hostname, "/", seed);
+                https_get(dns_client.result_ip, dns_client.hostname, web_last_path, seed);
             } else {
-                http_get(dns_client.result_ip, dns_client.hostname, "/");
+                http_get(dns_client.result_ip, dns_client.hostname, web_last_path);
             }
         } else if (dns_client.state == DNS_FAILED) {
             web_resolving = 0;
@@ -1761,8 +2007,36 @@ static void draw_web_window(void) {
         bb_putpixel(clx + (BTN_W - 1 - i) + o, by + 2 + (i - 2) + o, COL_BLACK);
     }
 
+    /* URL bar: a sunken text field with a GO button, sitting above the
+     * bookmark rows -- see web_urlbar_* geometry helpers above. Sunken
+     * bevel (dark-gray top/left, white bottom/right) reads as "typeable"
+     * the same way Notepad's edit area does; focused state gets a blue
+     * outline instead of the default black one so it's obvious which
+     * window element keystrokes are about to land in. */
+    {
+        int ux = web_urlbar_x(), uy = web_urlbar_y(), uw = web_urlbar_w();
+        bb_fillrect(ux, uy, uw, WEB_URLBAR_H, COL_WHITE);
+        u32 border = web_urlbar_focused ? COL_BLUE : COL_DGRAY;
+        for (int i = 0; i < uw; i++) bb_putpixel(ux + i, uy, border);
+        for (int j = 0; j < WEB_URLBAR_H; j++) bb_putpixel(ux, uy + j, border);
+        for (int i = 0; i < uw; i++) bb_putpixel(ux + i, uy + WEB_URLBAR_H - 1, COL_LGRAY);
+        for (int j = 0; j < WEB_URLBAR_H; j++) bb_putpixel(ux + uw - 1, uy + j, COL_LGRAY);
+        font_draw_string(ux + 3, uy + 3, web_urlbar_buf, COL_BLACK);
+        /* text cursor: only while focused, so it doesn't look like the
+         * field is mid-edit when nobody's clicked into it */
+        if (web_urlbar_focused) {
+            bb_fillrect(ux + 3 + web_urlbar_len * FONT_CELL, uy + 3, 2, FONT_CELL, COL_BLACK);
+        }
+
+        int gx = web_go_btn_x();
+        int go_pressed = (pressed_btn_kind == BTN_WEB_GO);
+        draw_bevel_button(gx, uy, WEB_GO_BTN_W, WEB_URLBAR_H, go_pressed);
+        int go_o = go_pressed ? 1 : 0;
+        font_draw_string(gx + 4 + go_o, uy + 3 + go_o, "GO", COL_BLACK);
+    }
+
     /* two clickable site rows -- the closest thing this browser has to
-     * bookmarks, since there's no address bar to type into */
+     * bookmarks, now that there's also a real address bar to type into */
     const char *site_labels[WEB_SITE_COUNT] = { "> PYPI.ORG (HTTPS)", "> GATEWAY (10.0.2.2)" };
     for (int i = 0; i < WEB_SITE_COUNT; i++) {
         int ry = web_site_row_y(i);
@@ -1779,12 +2053,24 @@ static void draw_web_window(void) {
 
     /* status line: what's currently happening, in plain language rather
      * than exposing the raw http_state_t/https_state_t/tls_fail_reason_t
-     * enums to whoever's looking */
+     * enums to whoever's looking. Names whatever's actually being
+     * fetched (web_last_host) instead of a hardcoded "pypi.org" now that
+     * a fetch might have come from the URL bar or a search instead of
+     * either bookmark. */
     const char *status_text;
-    if (web_current_site < 0) {
-        status_text = "Click a site above to fetch it.";
+    if (web_current_site == -1) {
+        /* -1: nothing requested yet this boot (the initial value).
+         * WEB_SOURCE_URLBAR (-2) and the two WEB_SITE_* bookmark
+         * indices (0, 1) all mean "something's been requested" and
+         * fall through to the resolving/connecting states below. */
+        status_text = "Type a URL or search, then GO.";
     } else if (web_resolving) {
-        status_text = "Resolving pypi.org...";
+        char buf[128]; u32 blen = 0;
+        append_str(buf, &blen, sizeof(buf), "Resolving ");
+        append_str(buf, &blen, sizeof(buf), web_last_host);
+        append_str(buf, &blen, sizeof(buf), "...");
+        ko_draw_mixed_string(wx + 4, web_content_y(), buf, COL_BLACK);
+        status_text = 0;
     } else if (web_dns_failed) {
         status_text = "DNS lookup failed.";
     } else if (web_use_https) {
@@ -1806,11 +2092,11 @@ static void draw_web_window(void) {
             default:                     status_text = ""; break;
         }
     }
-    font_draw_string(wx + 3, web_content_y(), status_text, COL_BLUE);
+    if (status_text) font_draw_string(wx + 3, web_content_y(), status_text, COL_BLUE);
 
     /* response body (or nothing yet, or the failure already explained
      * by the status line above) */
-    int body_y = web_content_y() + 10;
+    int body_y = web_content_y() + FONT_CELL + 3;
     int body_h = wy + wh - body_y - 3;
     if (web_use_https) {
         if (https_client.state == HTTPS_DONE || https_client.state == HTTPS_AWAITING_RESPONSE) {
@@ -2519,14 +2805,25 @@ void kmain(void) {
                         } else if (web_close_hit(mx, my)) {
                             pressed_btn_kind = BTN_CLOSE;
                             pressed_btn_win = WIN_ID_WEB;
+                        } else if (web_urlbar_hit(mx, my)) {
+                            web_urlbar_focused = 1;
+                        } else if (web_go_btn_hit(mx, my)) {
+                            pressed_btn_kind = BTN_WEB_GO;
+                            pressed_btn_win = WIN_ID_WEB;
+                            web_urlbar_focused = 0;
                         } else if (web_site_row_hit(mx, my, WEB_SITE_PYPI)) {
+                            web_urlbar_focused = 0;
                             web_go(WEB_SITE_PYPI);
                         } else if (web_site_row_hit(mx, my, WEB_SITE_GATEWAY)) {
+                            web_urlbar_focused = 0;
                             web_go(WEB_SITE_GATEWAY);
                         } else if (web_titlebar_drag_hit(mx, my) && !web_win.maximized) {
+                            web_urlbar_focused = 0;
                             dragging_id = WIN_ID_WEB;
                             drag_offset_x = mx - web_win.x;
                             drag_offset_y = my - web_win.y;
+                        } else {
+                            web_urlbar_focused = 0;
                         }
                     } else if (hit_id >= 0) {
                         active_np = &notepads[hit_id];
@@ -2685,6 +2982,7 @@ void kmain(void) {
                     if (kind == BTN_MIN) still_over = web_min_hit(mx, my);
                     else if (kind == BTN_MAX) still_over = web_max_hit(mx, my);
                     else if (kind == BTN_CLOSE) still_over = web_close_hit(mx, my);
+                    else if (kind == BTN_WEB_GO) still_over = web_go_btn_hit(mx, my);
                 } else if (win >= 0 && win < NOTEPAD_MAX) {
                     active_np = &notepads[win];
                     if (kind == BTN_MIN) still_over = in_rect(mx, my, btn_min_x(), btn_y(), BTN_W, BTN_H);
@@ -2729,6 +3027,8 @@ void kmain(void) {
                              * Settings' own close button. */
                             web_win.open = 0;
                             win_z_remove(WIN_ID_WEB);
+                        } else if (kind == BTN_WEB_GO) {
+                            web_go_url();
                         }
                     } else {
                         if (kind == BTN_MIN) {
@@ -2826,6 +3126,30 @@ void kmain(void) {
                 kstrcpy_append(active_np->text_buf, &active_np->text_len, sizeof(active_np->text_buf), c);
             }
         }
+        } else if (focused_id == WIN_ID_WEB && web_urlbar_focused && k > 0) {
+            /* URL bar text entry -- deliberately NOT run through the
+             * Hangul IME the way Notepad's text is: a URL or search
+             * query is typed as plain ASCII here (DuckDuckGo Lite gets
+             * UTF-8 Hangul search terms just fine over the wire if
+             * someone really wants that, but composing them a jamo at a
+             * time into an address bar most people type ASCII hostnames
+             * into isn't worth the complexity -- see ko_ime_feed_key()'s
+             * use in the Notepad branch above for what that would even
+             * involve). Enter submits, exactly like every browser's
+             * address bar; Backspace deletes one byte (always safe
+             * here since nothing above ever pushes non-ASCII into this
+             * particular buffer). */
+            char c = (char)k;
+            if (c == '\n') {
+                web_go_url();
+            } else if (c == '\b') {
+                if (web_urlbar_len > 0) {
+                    web_urlbar_len--;
+                    web_urlbar_buf[web_urlbar_len] = 0;
+                }
+            } else if (c >= 32 && c < 127) {
+                kstrcpy_append(web_urlbar_buf, &web_urlbar_len, sizeof(web_urlbar_buf), c);
+            }
         }
 
         net_stack_poll(); /* drains and dispatches any received frames: ARP, IP/ICMP/UDP/TCP, DHCP */
