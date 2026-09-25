@@ -50,30 +50,60 @@ system with no libc, no bootloader framework, and no borrowed kernel code.
   (English) or "오후 3:45" (Korean, meridiem-first as is conventional);
   click it for a small popup with the full date ("Monday, September 14,
   2026" / "2026년 9월 14일 월요일"). Timezone is a manual UTC offset set
-  in SETTING.EXE > SYSTEM > Time Zone -- there's deliberately no
+  in SETTING.MWP > SYSTEM > Time Zone -- there's deliberately no
   "automatic by location" here yet, since that would need a DNS
   resolver (to find a geolocation service by name) this kernel doesn't
   have, on top of the HTTP client it now does (see Networking below).
   Honest manual setting now, real automatic detection once DNS exists
   to ask a service by hostname instead of a hardcoded IP.
-- **Apps**: NOTEPAD.EXE (supports opening several documents at once, each
+- **Apps**: NOTEPAD.MWP (supports opening several documents at once, each
   in its own window, saving to real persistent disk storage),
-  SETTING.EXE (System language switch between English/한국어 -- actually
+  SETTING.MWP (System language switch between English/한국어 -- actually
   retranslates the whole UI live -- and a multi-select IME picker that
-  controls what Right Alt cycles through while typing), and WEB.EXE
-  ("MiniWeb" -- a tiny browser built on kernel/tcp.h, kernel/http.h,
-  kernel/tls.h, kernel/https.h, and kernel/dns.h: click PYPI.ORG and
-  watch a real DNS lookup, a real TLS 1.2 handshake with full
-  certificate chain validation, and an HTTP/1.1 GET all happen for
-  real, then the decrypted response -- headers and all, as raw text, no
-  HTML rendering -- appear in the window. GATEWAY stays on plain HTTP,
-  deliberately, as a fast demonstration of TCP's connection-refused
-  handling. Still no address bar to type an arbitrary hostname into --
-  the two site rows are hardcoded -- but everything each one does is
-  real, not simulated).
+  controls what Right Alt cycles through while typing), and WEB.MWP
+  ("MiniWeb" -- a small browser built on kernel/tcp.h, kernel/http.h,
+  kernel/tls.h, kernel/https.h, and kernel/dns.h, with a real address
+  bar: type a hostname (or a bare IP literal) and it resolves/connects
+  for real, or type anything else and it's URL-encoded and handed to
+  DuckDuckGo Lite as a search query -- same DNS-then-HTTPS path either
+  way. PYPI.ORG and GATEWAY remain as one-click bookmarks alongside the
+  address bar. Click PYPI.ORG and watch a real DNS lookup, a real TLS
+  1.2 handshake with full certificate chain validation, and an
+  HTTP/1.1 GET all happen for real, then the decrypted response --
+  headers and all, as raw text, no HTML rendering -- appear in the
+  window. GATEWAY stays on plain HTTP, deliberately, as a fast
+  demonstration of TCP's connection-refused handling).
+- **Loadable programs (.mwp)**: a from-scratch, no-paging, no-ELF
+  program loader (`kernel/mwp.h`) -- a `.mwp` is a small flat binary,
+  built completely separately from the kernel (`tools/build_mwp.sh`,
+  `programs/`), that the OS copies off disk into a fixed RAM address
+  and jumps straight into, the exact same maneuver `boot/stage2.asm`
+  already uses to start the kernel itself. Programs talk to the OS
+  through one fixed-address syscall table (`programs/mwp_api.h`) --
+  draw a pixel, a rect, a string (Latin or mixed Hangul), flip the
+  backbuffer, poll a key -- agreed on at a constant memory address
+  rather than by linking against kernel.c's real (and constantly
+  shifting) function addresses. There is no memory protection between
+  a running `.mwp` and the kernel -- this machine has no page tables to
+  enforce any, so running a `.mwp` is exactly as trusted as running
+  more kernel code, because mechanically, it is. `programs/greeter.c`
+  is the from-scratch proof this actually works end to end: compiled
+  independently, installed onto disk with `tools/install_mwp.py`,
+  loaded and run at boot with no build-time link to the kernel at all.
+- **Icon bundle**: a hand-made set of 16x16/32x32 RGBA icons
+  (`third_party/icon-bundle/`, `tools/install_icons.py`) -- Notepad,
+  Setting, Web, TrashCan, Folder, PC, FileManager, and a set of
+  per-language file-type icons for a future File Manager -- installed
+  into a disk-based icon catalog (`kernel/fs.h`'s `ICON_*` constants).
+  Storage and read-back only for now; the desktop/window chrome still
+  draws the older hand-coded vector glyphs until a later pass swaps
+  the rendering over to blit these bitmaps instead.
 - **Hangul**: a real IME (2-beolsik-style jamo composition) backed by a
   full modern-Hangul-syllable bitmap font (11,172 glyphs, generated from
-  the bundled Dalmoori TTF -- see `tools/gen_hangul_font.py`).
+  Galmuri11 -- see `tools/gen_hangul_font.py`). English text shares the
+  same Galmuri11-derived 11x11 bitmap font (`tools/gen_latin_font.py`),
+  so the whole UI is one consistent typeface instead of two unrelated
+  designs bolted together.
 
 ## Building
 
@@ -125,7 +155,7 @@ qemu-system-i386 -drive file=build/os-image.img,format=raw \
 
 - Mouse: click, drag title bars, click the `_`/`□`/`X` buttons.
 - **Right Alt**: cycle input method (only meaningful languages enabled in
-  SETTING.EXE > SYSTEM > IME get cycled through).
+  SETTING.MWP > SYSTEM > IME get cycled through).
 - **Ctrl+S / Ctrl+N / Ctrl+W** inside Notepad: Save / New / Close.
 
 ## Project layout
@@ -134,9 +164,13 @@ qemu-system-i386 -drive file=build/os-image.img,format=raw \
 boot/boot.asm       stage 1: 512-byte MBR, loads stage 2 and jumps to it
 boot/stage2.asm     stage 2: kernel load, VBE truecolor mode search, A20, GDT, protected mode
 kernel/kentry.asm   32-bit entry stub (BSS clear, calls kmain)
-kernel/kernel.c     the OS itself: GUI, window manager, Notepad, Settings
+kernel/kernel.c     the OS itself: GUI, window manager, Notepad, Settings, MiniWeb
 kernel/*.h          one subsystem per header (vga, keyboard, mouse, ata,
                     fs, font, font_ko, hangul_ime, speaker, serial, pci, io)
+kernel/mwp.h        loadable .mwp program loader + fixed-address syscall table
+kernel/mwp_link.ld  linker script for building a .mwp flat binary
+kernel/font_latin_data.h  generated 11x11 Latin glyph table (see tools/gen_latin_font.py)
+kernel/font_ko_data.h     generated 11x11 Hangul glyph table (see tools/gen_hangul_font.py)
 kernel/nic.h        common NIC driver interface (rtl8139.h, e1000.h implement it)
 kernel/net.h        shared endianness/checksum helpers for the network stack
 kernel/arp.h        ARP cache + request/reply
@@ -160,11 +194,28 @@ kernel/trusted_roots.h  embedded trust anchors (ISRG Root X1, DigiCert Global Ro
 kernel/tls.h        TLS 1.2 (ECDHE-RSA-AES128-GCM-SHA256 only)
 kernel/https.h      HTTP/1.1 GET client on top of tls.h
 kernel/net_stack.h  wires all of the above into one init()/poll() pair
-tools/gen_hangul_font.py   generates font_ko_data.h from the Dalmoori TTF
-third_party/        bundled font source + its own license/notice
+programs/           .mwp source, built independently of the kernel (see tools/build_mwp.sh)
+programs/mwp_api.h  the syscall-table contract a .mwp includes to talk to the OS
+programs/greeter.c  GREETER.MWP -- proves the .mwp loader end to end
+tools/gen_latin_font.py    generates font_latin_data.h from Galmuri11
+tools/gen_hangul_font.py   generates font_ko_data.h from Galmuri11
+tools/bdf_common.py        shared BDF-parsing logic both generators above use
+tools/build_mwp.sh         compiles one programs/*.c into a loadable build/*.mwp
+tools/install_mwp.py       writes a built .mwp into an os-image.img program slot
+tools/install_icons.py     writes the icon bundle into an os-image.img icon catalog
+third_party/        bundled font/icon source + each one's own license/notice
 build.sh            nasm + gcc + ld pipeline -> build/os-image.img
 screenshots/        yep
 ```
+
+## Project name: MWP
+
+Every app here is a `.mwp` file ("**M**ini**W**in **P**rogram") --
+NOTEPAD.MWP, SETTING.MWP, WEB.MWP are built into the kernel today
+(historical reasons: they predate the loadable-program loader), but
+share the same `.mwp` naming as genuinely loadable, separately-compiled
+programs like GREETER.MWP. See kernel/mwp.h for the loader and
+programs/ for what a real loadable one looks like.
 
 ## Roadmap / known limitations
 
@@ -281,7 +332,7 @@ asks:
   run standalone against a live server (a real X25519 exchange, a real
   3-certificate chain walked and signature-verified, a real AES-GCM
   decryption of the response). Separately, *inside this kernel, booted
-  in QEMU*, clicking WEB.EXE's PYPI.ORG row drives DNS, TCP, and a real
+  in QEMU*, clicking WEB.MWP's PYPI.ORG row drives DNS, TCP, and a real
   TLS handshake attempt against pypi.org, and correctly rejects the
   certificate chain the local development network happens to present
   (an intercepting proxy's certificate authority, not a publicly
@@ -296,7 +347,7 @@ asks:
 - **File Manager**: not built yet.
 - Full HTML4/5/XHTML rendering and "SSE3 support" are not realistic
   targets for a 640x480, truecolor, no-libc kernel like this one --
-  MiniWeb (WEB.EXE) is an honestly-scoped raw-response viewer, not a
+  MiniWeb (WEB.MWP) is an honestly-scoped raw-response viewer, not a
   general-purpose browser engine, and that's staying true even as it
   grows an address bar and (eventually) basic HTML rendering.
 - No dynamic program loading/execution exists (everything is compiled

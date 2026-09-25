@@ -26,6 +26,7 @@
 #include "http.h"
 #include "https.h"
 #include "net_stack.h"
+#include "mwp.h"
 
 #define DESKTOP_COLOR_BG      COL_LCYAN
 #define DESKTOP_COLOR_ICON_BG COL_LCYAN
@@ -68,7 +69,7 @@ static inline int clampi(int v, int lo, int hi) {
 }
 
 /* ============================================================
- * System language & IME (SETTING.EXE > SYSTEM)
+ * System language & IME (SETTING.MWP > SYSTEM)
  *
  * Two genuinely separate settings, even though today they both happen
  * to be a choice of exactly the same two languages:
@@ -94,7 +95,7 @@ static int ime_enabled[IME_COUNT] = { 1, 1 };
 static int current_ime = IME_ENGLISH;
 
 /* Right Alt cycles to the next ENABLED ime, in fixed order, wrapping
- * around. If only one box is checked in SETTING.EXE, the loop below
+ * around. If only one box is checked in SETTING.MWP, the loop below
  * walks all the way around back to the one we started on and quietly
  * changes nothing -- same as real Windows with a single input method
  * installed: the key is still there, it just has nowhere to go.
@@ -102,7 +103,7 @@ static int current_ime = IME_ENGLISH;
  * needs to flush a syllable into that buffer mid-switch.) */
 static void ime_cycle_next(void);
 
-/* Called right after SETTING.EXE flips one of the IME checkboxes. If
+/* Called right after SETTING.MWP flips one of the IME checkboxes. If
  * the IME you were actively using just got unchecked, bump over to
  * whichever one is still enabled instead of leaving current_ime
  * pointing at a now-disabled option nobody can reach. */
@@ -115,8 +116,8 @@ static void ime_ensure_current_enabled(void) {
 
 /* ------------------------------------------------------------
  * UI string table. Every bit of chrome text that isn't a literal
- * filename (NOTEPAD.EXE stays NOTEPAD.EXE in any language, same as it
- * would on real Windows) goes through here, so SETTING.EXE's Language
+ * filename (NOTEPAD.MWP stays NOTEPAD.MWP in any language, same as it
+ * would on real Windows) goes through here, so SETTING.MWP's Language
  * switch actually means something. Language *names* themselves
  * ("English", "한국어") are deliberately NOT in this table -- every
  * real language picker shows each language's own name in its own
@@ -165,19 +166,19 @@ static const char *ui_strings_en[STR_COUNT] = {
     [STR_SHUT_DOWN] = "Shut Down",
     [STR_RESTART] = "Restart",
     [STR_SAFE_TO_TURN_OFF] = "It's now safe to turn off your computer.",
-    [STR_DEFAULT_HINT] = "MINIWIN 1.0 - DOUBLE-CLICK NOTEPAD.EXE TO OPEN",
-    [STR_NOTEPAD_OPENED] = "NOTEPAD.EXE OPENED (RIGHT ALT: SWITCH IME)",
-    [STR_SETTING_OPENED] = "SETTING.EXE OPENED",
-    [STR_WEB_OPENED] = "WEB.EXE OPENED",
-    [STR_NOTEPAD_MINIMIZED] = "NOTEPAD.EXE MINIMIZED",
-    [STR_NOTEPAD_MAXIMIZED] = "NOTEPAD.EXE MAXIMIZED",
-    [STR_NOTEPAD_RESTORED] = "NOTEPAD.EXE RESTORED",
-    [STR_SETTING_MINIMIZED] = "SETTING.EXE MINIMIZED",
-    [STR_SETTING_MAXIMIZED] = "SETTING.EXE MAXIMIZED",
-    [STR_SETTING_RESTORED] = "SETTING.EXE RESTORED",
-    [STR_WEB_MINIMIZED] = "WEB.EXE MINIMIZED",
-    [STR_WEB_MAXIMIZED] = "WEB.EXE MAXIMIZED",
-    [STR_WEB_RESTORED] = "WEB.EXE RESTORED",
+    [STR_DEFAULT_HINT] = "MINIWIN 1.0 - DOUBLE-CLICK NOTEPAD.MWP TO OPEN",
+    [STR_NOTEPAD_OPENED] = "NOTEPAD.MWP OPENED (RIGHT ALT: SWITCH IME)",
+    [STR_SETTING_OPENED] = "SETTING.MWP OPENED",
+    [STR_WEB_OPENED] = "WEB.MWP OPENED",
+    [STR_NOTEPAD_MINIMIZED] = "NOTEPAD.MWP MINIMIZED",
+    [STR_NOTEPAD_MAXIMIZED] = "NOTEPAD.MWP MAXIMIZED",
+    [STR_NOTEPAD_RESTORED] = "NOTEPAD.MWP RESTORED",
+    [STR_SETTING_MINIMIZED] = "SETTING.MWP MINIMIZED",
+    [STR_SETTING_MAXIMIZED] = "SETTING.MWP MAXIMIZED",
+    [STR_SETTING_RESTORED] = "SETTING.MWP RESTORED",
+    [STR_WEB_MINIMIZED] = "WEB.MWP MINIMIZED",
+    [STR_WEB_MAXIMIZED] = "WEB.MWP MAXIMIZED",
+    [STR_WEB_RESTORED] = "WEB.MWP RESTORED",
     [STR_SAVE_AS_COMING_SOON] = "SAVE AS - COMING SOON",
     [STR_STORAGE_FULL_NOT_SAVED] = "STORAGE FULL - NOT SAVED",
     [STR_SAVED_PREFIX] = "SAVED: ",
@@ -210,19 +211,19 @@ static const char *ui_strings_ko[STR_COUNT] = {
     [STR_SHUT_DOWN] = "\xec\x8b\x9c\xec\x8a\xa4\xed\x85\x9c \xec\xa2\x85\xeb\xa3\x8c",
     [STR_RESTART] = "\xeb\x8b\xa4\xec\x8b\x9c \xec\x8b\x9c\xec\x9e\x91",
     [STR_SAFE_TO_TURN_OFF] = "\xec\x9d\xb4\xec\xa0\x9c \xec\xbb\xb4\xed\x93\xa8\xed\x84\xb0\xeb\xa5\xbc \xea\xba\xbc\xeb\x8f\x84 \xeb\x90\xa9\xeb\x8b\x88\xeb\x8b\xa4.",
-    [STR_DEFAULT_HINT] = "MINIWIN 1.0 - NOTEPAD.EXE \xeb\x8d\x94\xeb\xb8\x94\xed\x81\xb4\xeb\xa6\xad\xec\x9c\xbc\xeb\xa1\x9c \xec\x8b\xa4\xed\x96\x89",
-    [STR_NOTEPAD_OPENED] = "NOTEPAD.EXE \xec\x8b\xa4\xed\x96\x89\xeb\x90\xa8 (RIGHT ALT: \xec\x9e\x85\xeb\xa0\xa5\xea\xb8\xb0 \xec\xa0\x84\xed\x99\x98)",
-    [STR_SETTING_OPENED] = "SETTING.EXE \xec\x8b\xa4\xed\x96\x89\xeb\x90\xa8",
-    [STR_WEB_OPENED] = "WEB.EXE \xec\x8b\xa4\xed\x96\x89\xeb\x90\xa8",
-    [STR_NOTEPAD_MINIMIZED] = "NOTEPAD.EXE \xec\xb5\x9c\xec\x86\x8c\xed\x99\x94\xeb\x90\xa8",
-    [STR_NOTEPAD_MAXIMIZED] = "NOTEPAD.EXE \xec\xb5\x9c\xeb\x8c\x80\xed\x99\x94\xeb\x90\xa8",
-    [STR_NOTEPAD_RESTORED] = "NOTEPAD.EXE \xeb\xb3\xb5\xec\x9b\x90\xeb\x90\xa8",
-    [STR_SETTING_MINIMIZED] = "SETTING.EXE \xec\xb5\x9c\xec\x86\x8c\xed\x99\x94\xeb\x90\xa8",
-    [STR_SETTING_MAXIMIZED] = "SETTING.EXE \xec\xb5\x9c\xeb\x8c\x80\xed\x99\x94\xeb\x90\xa8",
-    [STR_SETTING_RESTORED] = "SETTING.EXE \xeb\xb3\xb5\xec\x9b\x90\xeb\x90\xa8",
-    [STR_WEB_MINIMIZED] = "WEB.EXE \xec\xb5\x9c\xec\x86\x8c\xed\x99\x94\xeb\x90\xa8",
-    [STR_WEB_MAXIMIZED] = "WEB.EXE \xec\xb5\x9c\xeb\x8c\x80\xed\x99\x94\xeb\x90\xa8",
-    [STR_WEB_RESTORED] = "WEB.EXE \xeb\xb3\xb5\xec\x9b\x90\xeb\x90\xa8",
+    [STR_DEFAULT_HINT] = "MINIWIN 1.0 - NOTEPAD.MWP \xeb\x8d\x94\xeb\xb8\x94\xed\x81\xb4\xeb\xa6\xad\xec\x9c\xbc\xeb\xa1\x9c \xec\x8b\xa4\xed\x96\x89",
+    [STR_NOTEPAD_OPENED] = "NOTEPAD.MWP \xec\x8b\xa4\xed\x96\x89\xeb\x90\xa8 (RIGHT ALT: \xec\x9e\x85\xeb\xa0\xa5\xea\xb8\xb0 \xec\xa0\x84\xed\x99\x98)",
+    [STR_SETTING_OPENED] = "SETTING.MWP \xec\x8b\xa4\xed\x96\x89\xeb\x90\xa8",
+    [STR_WEB_OPENED] = "WEB.MWP \xec\x8b\xa4\xed\x96\x89\xeb\x90\xa8",
+    [STR_NOTEPAD_MINIMIZED] = "NOTEPAD.MWP \xec\xb5\x9c\xec\x86\x8c\xed\x99\x94\xeb\x90\xa8",
+    [STR_NOTEPAD_MAXIMIZED] = "NOTEPAD.MWP \xec\xb5\x9c\xeb\x8c\x80\xed\x99\x94\xeb\x90\xa8",
+    [STR_NOTEPAD_RESTORED] = "NOTEPAD.MWP \xeb\xb3\xb5\xec\x9b\x90\xeb\x90\xa8",
+    [STR_SETTING_MINIMIZED] = "SETTING.MWP \xec\xb5\x9c\xec\x86\x8c\xed\x99\x94\xeb\x90\xa8",
+    [STR_SETTING_MAXIMIZED] = "SETTING.MWP \xec\xb5\x9c\xeb\x8c\x80\xed\x99\x94\xeb\x90\xa8",
+    [STR_SETTING_RESTORED] = "SETTING.MWP \xeb\xb3\xb5\xec\x9b\x90\xeb\x90\xa8",
+    [STR_WEB_MINIMIZED] = "WEB.MWP \xec\xb5\x9c\xec\x86\x8c\xed\x99\x94\xeb\x90\xa8",
+    [STR_WEB_MAXIMIZED] = "WEB.MWP \xec\xb5\x9c\xeb\x8c\x80\xed\x99\x94\xeb\x90\xa8",
+    [STR_WEB_RESTORED] = "WEB.MWP \xeb\xb3\xb5\xec\x9b\x90\xeb\x90\xa8",
     [STR_SAVE_AS_COMING_SOON] = "\xeb\x8b\xa4\xeb\xa5\xb8 \xec\x9d\xb4\xeb\xa6\x84\xec\x9c\xbc\xeb\xa1\x9c \xec\xa0\x80\xec\x9e\xa5 - \xec\xa4\x80\xeb\xb9\x84 \xec\xa4\x91",
     [STR_STORAGE_FULL_NOT_SAVED] = "\xec\xa0\x80\xec\x9e\xa5 \xea\xb3\xb5\xea\xb0\x84 \xeb\xb6\x80\xec\xa1\xb1 - \xec\xa0\x80\xec\x9e\xa5 \xec\x95\x88 \xeb\x90\xa8",
     [STR_SAVED_PREFIX] = "\xec\xa0\x80\xec\x9e\xa5\xeb\x90\xa8: ",
@@ -274,12 +275,12 @@ static void draw_desktop_icon(void) {
     bb_fillrect(gx + 15, ICON_Y, 7, 5, DESKTOP_COLOR_ICON_BG);
     bb_rect(gx + 15, ICON_Y, 7, 5, COL_BLACK);
 
-    const char *line1 = "NOTEPAD", *line2 = ".EXE";
+    const char *line1 = "NOTEPAD", *line2 = ".MWP";
     font_draw_string(ICON_X + (ICON_SLOT_W - FONT_CELL * 7) / 2, ICON_Y + 19, line1, COL_BLACK);
     font_draw_string(ICON_X + (ICON_SLOT_W - FONT_CELL * 4) / 2, ICON_Y + 30, line2, COL_BLACK);
 }
 
-/* SETTING.EXE -- sits next to NOTEPAD.EXE in the same top row.
+/* SETTING.MWP -- sits next to NOTEPAD.MWP in the same top row.
  * Double-clicking opens the real SYSTEM settings window (Language, IME)
  * defined further down, right alongside Notepad's own window code. */
 #define ICON2_X  (ICON_X + ICON_SLOT_W + 10)
@@ -300,12 +301,12 @@ static void draw_desktop_icon2(void) {
     bb_putpixel(gx + 3, ICON2_Y + 14, COL_BLACK);
     bb_putpixel(gx + 18, ICON2_Y + 14, COL_BLACK);
 
-    const char *line1 = "SETTING", *line2 = ".EXE";
+    const char *line1 = "SETTING", *line2 = ".MWP";
     font_draw_string(ICON2_X + (ICON_SLOT_W - FONT_CELL * 7) / 2, ICON2_Y + 19, line1, COL_BLACK);
     font_draw_string(ICON2_X + (ICON_SLOT_W - FONT_CELL * 4) / 2, ICON2_Y + 30, line2, COL_BLACK);
 }
 
-/* WEB.EXE -- third icon in the same top row. Double-clicking opens
+/* WEB.MWP -- third icon in the same top row. Double-clicking opens
  * MiniWeb, the small HTTP client browser built on kernel/http.h and
  * kernel/tcp.h -- this OS's actual "layer above the network stack,"
  * not just a diagnostic harness proving the stack works. */
@@ -331,7 +332,7 @@ static void draw_desktop_icon3(void) {
         bb_putpixel(gx + 17 - inset / 2, ICON3_Y + j, COL_BLACK);
     }
 
-    const char *line1 = "WEB", *line2 = ".EXE";
+    const char *line1 = "WEB", *line2 = ".MWP";
     font_draw_string(ICON3_X + (ICON_SLOT_W - FONT_CELL * 3) / 2, ICON3_Y + 19, line1, COL_BLACK);
     font_draw_string(ICON3_X + (ICON_SLOT_W - FONT_CELL * 4) / 2, ICON3_Y + 30, line2, COL_BLACK);
 }
@@ -347,7 +348,7 @@ static void draw_desktop_icon3(void) {
  * machine is, and this kernel's network stack (see kernel/net_stack.h)
  * goes up through ARP/IP/ICMP/UDP/DHCP but doesn't speak TCP or HTTP
  * yet. So instead, the timezone is a plain manual UTC offset, set in
- * SETTING.EXE > SYSTEM > Time Zone, and applied to the CMOS reading via
+ * SETTING.MWP > SYSTEM > Time Zone, and applied to the CMOS reading via
  * rtc_apply_offset(). Honest > fake.
  * ============================================================ */
 static int tz_offset_hours = 9;  /* default UTC+9 (KST) -- arbitrary starting point, adjustable in Settings */
@@ -426,7 +427,7 @@ static void format_full_date(rtc_time_t *t, char *out, u32 outsz) {
     }
 }
 
-/* "UTC+9" / "UTC-5" -- shown in SETTING.EXE's Time Zone page. */
+/* "UTC+9" / "UTC-5" -- shown in SETTING.MWP's Time Zone page. */
 static void build_tz_label(char *out, u32 outsz) {
     u32 len = 0;
     append_str(out, &len, outsz, "UTC");
@@ -528,10 +529,10 @@ typedef struct {
     int restore_x, restore_y, restore_w, restore_h;
 } window_t;
 
-/* SETTING.EXE's window state lives here so the taskbar (which needs to
+/* SETTING.MWP's window state lives here so the taskbar (which needs to
  * know every window's minimized state) can see it without forward-
  * declaration games. The geometry constants, hit-tests, and drawing code
- * stay grouped with the rest of SETTING.EXE further down. */
+ * stay grouped with the rest of SETTING.MWP further down. */
 #define SETTING_DEFAULT_X   100
 #define SETTING_DEFAULT_Y   40
 #define SETTING_DEFAULT_W   260
@@ -545,7 +546,7 @@ static window_t setting = {
     .restore_w = SETTING_DEFAULT_W, .restore_h = SETTING_DEFAULT_H,
 };
 
-/* WEB.EXE's window state, same treatment as setting's above -- a
+/* WEB.MWP's window state, same treatment as setting's above -- a
  * single-instance window_t living here so the taskbar/z-order/generic
  * resize machinery can see it, with the app-specific drawing and hit-
  * testing code grouped further down near draw_web_window(). Tall enough
@@ -754,7 +755,7 @@ static u32 desktop_file_len[FS_MAX_FILES];
 
 /* Shared status-line message, file scope so helper functions below (save
  * logic, confirm dialog actions) can set it directly. */
-static const char *status = "MINIWIN 1.0 - DOUBLE-CLICK NOTEPAD.EXE TO OPEN";
+static const char *status = "MINIWIN 1.0 - DOUBLE-CLICK NOTEPAD.MWP TO OPEN";
 static char status_buf[48]; /* scratch space for status messages that embed a filename */
 
 #define MENU_FILE_LABEL_W 46   /* clickable width for the "File" label */
@@ -781,7 +782,7 @@ static int file_menu_item_hit(int px, int py, int idx) {
 }
 
 /* Warning dialog: a real title bar now (blue, "Warning!", X only -- no
- * minimize/maximize, same restrained chrome as SETTING.EXE) sitting on
+ * minimize/maximize, same restrained chrome as SETTING.MWP) sitting on
  * top of the message + Yes/No area. Widened a touch to leave room for
  * the warning icon next to the first line of text. */
 #define CONFIRM_W 210
@@ -1070,10 +1071,10 @@ static int taskbar_glyph_hit(int px, int py, int kind) {
  * proper "are you sure" ceremony before it turns itself off.
  * ============================================================ */
 #define STARTMENU_BANNER_W  18
-#define STARTMENU_W         168   /* fits "NOTEPAD.EXE" (11 glyphs @ FONT_CELL) plus banner + margin */
+#define STARTMENU_W         168   /* fits "NOTEPAD.MWP" (11 glyphs @ FONT_CELL) plus banner + margin */
 #define STARTMENU_H         104
 #define STARTMENU_ITEM_H    17
-#define STARTMENU_ITEMS     4   /* 0=Notepad.exe, 1=Setting.exe, 2=Web.exe, 3=power */
+#define STARTMENU_ITEMS     4   /* 0=Notepad.mwp, 1=Setting.mwp, 2=Web.mwp, 3=power */
 #define STARTMENU_POWER_IDX (STARTMENU_ITEMS - 1)
 
 static inline int start_menu_x(void) { return STARTBTN_X; }
@@ -1174,7 +1175,7 @@ static void draw_start_menu(int mx, int my) {
     bb_fillrect(x + 1, y + 1, STARTMENU_BANNER_W - 1, h - 2, COL_BLUE);
     font_draw_string_vertical(x + 3, y + h - 9, "MINIWIN", COL_WHITE);
 
-    const char *labels[3] = {"Notepad.exe", "Setting.exe", "Web.exe"};
+    const char *labels[3] = {"Notepad.mwp", "Setting.mwp", "Web.mwp"};
     int ix = x + STARTMENU_BANNER_W + 2;
     int iw = w - STARTMENU_BANNER_W - 4;
     for (int i = 0; i < STARTMENU_ITEMS; i++) {
@@ -1248,7 +1249,7 @@ static void draw_window(void) {
 
     /* title bar */
     bb_fillrect(wx + 1, wy + 1, ww - 2, TITLEBAR_H, COL_BLUE);
-    font_draw_string(wx + 3, wy + 1, "NOTEPAD.EXE", COL_WHITE);
+    font_draw_string(wx + 3, wy + 1, "NOTEPAD.MWP", COL_WHITE);
 
     draw_titlebar_buttons();
 
@@ -1329,7 +1330,7 @@ static int titlebar_drag_hit(int px, int py) {
 }
 
 /* Generic maximize/restore -- works on any window_t, so both Notepad and
- * SETTING.EXE's window can share one implementation instead of two
+ * SETTING.MWP's window can share one implementation instead of two
  * copies of the same four assignments. */
 static void maximize_window(window_t *w) {
     if (w->maximized) return;
@@ -1354,7 +1355,7 @@ static void unmaximize_window(window_t *w) {
 }
 
 /* ============================================================
- * SETTING.EXE window -- SYSTEM > Language / IME.
+ * SETTING.MWP window -- SYSTEM > Language / IME.
  *
  * Reuses window_t, and now (per popular demand) supports minimize and
  * maximize exactly like Notepad's window does -- same three-button
@@ -1462,7 +1463,7 @@ static void draw_setting_window(void) {
     bb_rect(wx, wy, ww, wh, COL_BLACK);
 
     bb_fillrect(wx + 1, wy + 1, ww - 2, TITLEBAR_H, COL_BLUE);
-    font_draw_string(wx + 3, wy + 1, "SETTING.EXE", COL_WHITE);
+    font_draw_string(wx + 3, wy + 1, "SETTING.MWP", COL_WHITE);
 
     /* three title bar buttons, same glyphs and layout as Notepad's
      * draw_titlebar_buttons() -- kept as its own copy since it draws
@@ -1534,7 +1535,7 @@ static void draw_setting_window(void) {
 }
 
 /* ============================================================
- * WEB.EXE -- MiniWeb, a tiny HTTP client browser.
+ * WEB.MWP -- MiniWeb, a tiny HTTP client browser.
  *
  * This is the actual "layer above TCP/HTTP" -- an application a person
  * clicks on, not a headless bring-up probe. Two hardcoded target rows
@@ -1544,7 +1545,7 @@ static void draw_setting_window(void) {
  * when clicked, and the response -- or a plain-English reason it
  * failed -- gets drawn as wrapped plain text in the content area below.
  *
- * Reuses the exact same window chrome pattern as SETTING.EXE (own
+ * Reuses the exact same window chrome pattern as SETTING.MWP (own
  * btn_*_x()/hit-test helpers against web_win instead of setting, same
  * draw_bevel_button() calls for the three title bar buttons) rather
  * than trying to generalize that chrome into a shared helper -- two
@@ -1575,7 +1576,7 @@ static int web_dns_failed = 0;
 
 /* ------------------------------------------------------------
  * URL bar -- a real single-line text field (this kernel's first one;
- * Notepad's edit area is multi-line and SETTING.EXE has no typing at
+ * Notepad's edit area is multi-line and SETTING.MWP has no typing at
  * all), sitting above the bookmark rows. Deliberately its own tiny
  * text-editing state rather than reusing notepad_t: a URL bar is a
  * different shape of problem (one line, no newlines, Enter submits
@@ -1982,7 +1983,7 @@ static void draw_web_window(void) {
     bb_rect(wx, wy, ww, wh, COL_BLACK);
 
     bb_fillrect(wx + 1, wy + 1, ww - 2, TITLEBAR_H, COL_BLUE);
-    font_draw_string(wx + 3, wy + 1, "WEB.EXE", COL_WHITE);
+    font_draw_string(wx + 3, wy + 1, "WEB.MWP", COL_WHITE);
 
     int by = web_btn_y();
     int p_min = (pressed_btn_kind == BTN_MIN && pressed_btn_win == WIN_ID_WEB);
@@ -2479,6 +2480,15 @@ void kmain(void) {
         for (;;) { __asm__ volatile ("hlt"); }
     }
 
+    /* Fills in the fixed-address syscall table loadable .mwp programs
+     * call into -- see kernel/mwp.h's own top-of-file comment for why
+     * this has to happen before anything could possibly `run` one. Must
+     * come after vga_init_display() (the table's draw_ and present
+     * entries point at framebuffer-touching functions), but otherwise has no
+     * ordering dependency on anything else in this init sequence. */
+    mwp_init();
+    mwp_syscalls.key_poll = keyboard_poll_key;
+
     mouse_init();
 
     /* Diagnostic-only for now: dumps every PCI device found (including
@@ -2530,9 +2540,9 @@ void kmain(void) {
     int mx = VGA_WIDTH / 2, my = VGA_HEIGHT / 2;
     int awaiting_second_click = 0;   /* 1 = one icon click seen, waiting for a 2nd within the window */
     u32 last_icon_click_tick = 0;
-    int awaiting_second_click_setting = 0;   /* same idea, but for the SETTING.EXE icon */
+    int awaiting_second_click_setting = 0;   /* same idea, but for the SETTING.MWP icon */
     u32 last_setting_click_tick = 0;
-    int awaiting_second_click_web = 0;   /* same idea, but for the WEB.EXE icon */
+    int awaiting_second_click_web = 0;   /* same idea, but for the WEB.MWP icon */
     u32 last_web_click_tick = 0;
     int awaiting_second_click_file_slot = -1;   /* which file icon (if any) saw a first click */
     u32 last_file_icon_click_tick = 0;
@@ -3082,7 +3092,7 @@ void kmain(void) {
             }
         } else if (k == KEY_RALT && active_np->win.open && !active_np->win.minimized && !active_np->file_menu_open) {
             /* Right Alt cycles to the next ENABLED input method (see
-             * SETTING.EXE > SYSTEM > IME) -- matches the 한/영 key
+             * SETTING.MWP > SYSTEM > IME) -- matches the 한/영 key
              * position on real Korean keyboards. F7 used to do this too,
              * but that's gone now that IME selection lives in Settings. */
             ime_cycle_next();
@@ -3154,7 +3164,7 @@ void kmain(void) {
 
         net_stack_poll(); /* drains and dispatches any received frames: ARP, IP/ICMP/UDP/TCP, DHCP */
 
-        /* Advances whatever MiniWeb (WEB.EXE) currently has outstanding
+        /* Advances whatever MiniWeb (WEB.MWP) currently has outstanding
          * -- a DNS lookup, an HTTP fetch, or nothing at all. The app
          * itself is the network stack's real verification now (see
          * draw_web_window()/web_go() above): it drove a real DNS

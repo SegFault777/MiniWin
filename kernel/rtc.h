@@ -102,7 +102,7 @@ static int rtc_days_in_month(int y, int m) {
  * year boundaries too) when the offset pushes the hour out of 0-23.
  * There's no automatic geolocation-based timezone here -- this kernel
  * has no IP/DNS/HTTP stack yet to ask anyone where it is -- so
- * offset_hours comes from a manual setting (SETTING.EXE > SYSTEM >
+ * offset_hours comes from a manual setting (SETTING.MWP > SYSTEM >
  * Time Zone) instead. */
 static rtc_time_t rtc_apply_offset(rtc_time_t t, int offset_hours) {
     int h = t.hour + offset_hours;

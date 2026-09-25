@@ -171,9 +171,52 @@ fi
 
 FS_TOTAL_SECTORS=$((FS_SLOT_SECTORS * FS_MAX_FILES))
 LAST_USED_LBA=$((FS_BASE_LBA + FS_TOTAL_SECTORS - 1))
-MIN_IMAGE_SECTORS=$((LAST_USED_LBA + 1))
 echo "  file slots: LBA $FS_BASE_LBA-$LAST_USED_LBA" \
      "($FS_MAX_FILES slots x $FS_SLOT_SECTORS sectors)"
+
+PROG_BASE_LBA=$(grep -oP '#define\s+PROG_BASE_LBA\s+\K[0-9]+' kernel/fs.h)
+PROG_SLOT_SECTORS=$(grep -oP '#define\s+PROG_SLOT_SECTORS\s+\K[0-9]+' kernel/fs.h)
+PROG_MAX_SLOTS=$(grep -oP '#define\s+PROG_MAX_SLOTS\s+\K[0-9]+' kernel/fs.h)
+
+# Same "starts immediately after the previous area, no gap" contract as
+# FS_BASE_LBA's own check above, just one area further along: the
+# loadable-.mwp-program slots (see kernel/mwp.h) are meant to start
+# right where the document slots end.
+EXPECTED_PROG_BASE_LBA=$((FS_BASE_LBA + FS_TOTAL_SECTORS))
+if [ "$PROG_BASE_LBA" -lt "$EXPECTED_PROG_BASE_LBA" ]; then
+    echo "ERROR: kernel/fs.h's PROG_BASE_LBA ($PROG_BASE_LBA) starts before" \
+         "the document file slots end (LBA $EXPECTED_PROG_BASE_LBA) -- the" \
+         "two areas would overlap on disk. Update PROG_BASE_LBA in" \
+         "kernel/fs.h to $EXPECTED_PROG_BASE_LBA or higher."
+    exit 1
+fi
+
+PROG_TOTAL_SECTORS=$((PROG_SLOT_SECTORS * PROG_MAX_SLOTS))
+LAST_USED_LBA=$((PROG_BASE_LBA + PROG_TOTAL_SECTORS - 1))
+echo "  program slots: LBA $PROG_BASE_LBA-$LAST_USED_LBA" \
+     "($PROG_MAX_SLOTS slots x $PROG_SLOT_SECTORS sectors)"
+
+ICON_BASE_LBA=$(grep -oP '#define\s+ICON_BASE_LBA\s+\K[0-9]+' kernel/fs.h)
+ICON_SLOT_SECTORS=$(grep -oP '#define\s+ICON_SLOT_SECTORS\s+\K[0-9]+' kernel/fs.h)
+ICON_MAX_SLOTS=$(grep -oP '#define\s+ICON_MAX_SLOTS\s+\K[0-9]+' kernel/fs.h)
+
+# Same "starts immediately after the previous area, no gap" contract,
+# one area further along still: the icon catalog (see kernel/fs.h) is
+# meant to start right where the program slots end.
+EXPECTED_ICON_BASE_LBA=$((PROG_BASE_LBA + PROG_TOTAL_SECTORS))
+if [ "$ICON_BASE_LBA" -lt "$EXPECTED_ICON_BASE_LBA" ]; then
+    echo "ERROR: kernel/fs.h's ICON_BASE_LBA ($ICON_BASE_LBA) starts before" \
+         "the program slots end (LBA $EXPECTED_ICON_BASE_LBA) -- the two" \
+         "areas would overlap on disk. Update ICON_BASE_LBA in" \
+         "kernel/fs.h to $EXPECTED_ICON_BASE_LBA or higher."
+    exit 1
+fi
+
+ICON_TOTAL_SECTORS=$((ICON_SLOT_SECTORS * ICON_MAX_SLOTS))
+LAST_USED_LBA=$((ICON_BASE_LBA + ICON_TOTAL_SECTORS - 1))
+MIN_IMAGE_SECTORS=$((LAST_USED_LBA + 1))
+echo "  icon catalog: LBA $ICON_BASE_LBA-$LAST_USED_LBA" \
+     "($ICON_MAX_SLOTS slots x $ICON_SLOT_SECTORS sectors)"
 echo "  minimum sectors needed: $MIN_IMAGE_SECTORS" \
      "($(( MIN_IMAGE_SECTORS * 512 / 1024 ))KB)"
 
@@ -181,21 +224,25 @@ cp $BUILD/boot.bin $BUILD/os-image.img
 cat $BUILD/stage2.bin >> $BUILD/os-image.img
 cat $BUILD/kernel.bin >> $BUILD/os-image.img
 
-# Final image size: a round 512KB (1024 sectors), not whatever number
-# happened to be left over after the last feature was added. Rounding
-# up to a clean power-of-two-ish size (256KB/512KB/1024KB, the same
-# handful of sizes disk tools, flashers, and humans all expect) instead
-# of an arbitrary "1200 sectors, for headroom" is worth the trade even
-# though it means picking a target instead of just measuring one -- an
-# odd size like 614400 bytes signals nothing about intent, while a round
-# number reads immediately as "yes, this was chosen." Bumped up from
-# 256KB to 512KB once the kernel's 11x11 Galmuri11 bitmap fonts (see
-# kernel/font_latin_data.h, kernel/font_ko_data.h) pushed the kernel
-# itself past the old budget -- see boot/stage2.asm's KERNEL_CHUNKS and
-# kernel/fs.h's layout comment for the matching numbers. The check below
-# still fails loudly if the real minimum ever grows past whichever round
-# number is targeted, instead of silently truncating something.
-TARGET_TOTAL_BYTES=$((512 * 1024))
+# Final image size: a round 1024KB / 1MB (2048 sectors), not whatever
+# number happened to be left over after the last feature was added.
+# Rounding up to a clean, human-friendly size (256KB/512KB/768KB/1024KB,
+# the same handful of sizes disk tools, flashers, and humans all expect)
+# instead of an arbitrary "1700 sectors, for headroom" is worth the
+# trade even though it means picking a target instead of just measuring
+# one -- an odd size like 833536 bytes signals nothing about intent,
+# while a round number reads immediately as "yes, this was chosen."
+# Bumped 256KB->512KB once the kernel's 11x11 Galmuri11 bitmap fonts
+# (see kernel/font_latin_data.h, kernel/font_ko_data.h) pushed the
+# kernel itself past its old budget, 512KB->768KB once
+# kernel/mwp.h's loadable-program slots needed a home of their own, and
+# 768KB->1024KB once a real (non-hand-drawn) icon bitmap catalog (see
+# kernel/fs.h's icon-catalog section) needed one too -- see
+# boot/stage2.asm's KERNEL_CHUNKS and kernel/fs.h's layout comment for
+# the matching numbers. The check below still fails loudly if the real
+# minimum ever grows past whichever round number is targeted, instead of
+# silently truncating something.
+TARGET_TOTAL_BYTES=$((1024 * 1024))
 TARGET_TOTAL_SECTORS=$((TARGET_TOTAL_BYTES / 512))
 if [ "$MIN_IMAGE_SECTORS" -gt "$TARGET_TOTAL_SECTORS" ]; then
     echo "ERROR: the kernel + file-slot layout now needs" \

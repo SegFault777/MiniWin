@@ -1,0 +1,14 @@
+Yellow - e7d000
+Cyan - 55ffff
+Blue - 002fff
+White - ffffff
+Black - 000000
+Brown - b16000
+Purple - 6000ff
+Red - ff0000
+Orange - e78600
+Vermillion - ff4030
+Green - 00ff00
+Light Gray - dddddd
+Sky - 70b0ff
+Navy - 003980

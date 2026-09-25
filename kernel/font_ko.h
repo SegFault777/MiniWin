@@ -100,7 +100,7 @@ static inline int ko_utf8_last_char_len(const char *buf, u32 len) {
 /* ============================================================
  * Mixed-string drawing -- for any UI text that's plain ASCII except for
  * our 3-byte-UTF-8 Hangul syllables/jamo sprinkled in (which is exactly
- * what SETTING.EXE's language switch produces: the same status bar,
+ * what SETTING.MWP's language switch produces: the same status bar,
  * menus, and dialogs, just occasionally speaking Korean instead of
  * English). This is the identical byte-sniffing loop the Notepad text
  * area already runs over whatever the user typed, just factored out so

@@ -172,7 +172,7 @@ static inline int ko_split_final_for_handback(int final_idx, int *out_new_initia
  *
  * Whether Hangul composition is ACTIVE right now (as opposed to just
  * available) is a separate question, decided by kernel.c's IME system
- * (current_ime / ime_enabled[], driven by Right Alt and SETTING.EXE's
+ * (current_ime / ime_enabled[], driven by Right Alt and SETTING.MWP's
  * IME picker) -- this file doesn't know or care which language is
  * "selected," it just knows how to build a syllable once asked to. */
 static int ko_cur_initial = -1;
