@@ -122,8 +122,24 @@ static inline int fs_save_slot(int slot, const char *data, u32 len) {
     return 1;
 }
 
-/* Peeks at `slot` and tells you if there's a real file there (checks for
- * our magic number so we don't mistake random disk garbage for a save).
+/* Erases a slot by zeroing its header sector -- specifically, zeroing
+ * out FS_MAGIC, which is all fs_check_slot() actually looks at to
+ * decide a slot is occupied. Doesn't bother touching the FS_DATA_SECTORS
+ * data sectors themselves (there's no need: nothing ever reads them
+ * without fs_check_slot() passing first, and leaving old bytes sitting
+ * there costs nothing since the next fs_save_slot() to that slot
+ * overwrites every data sector unconditionally anyway). Used by
+ * Terminal.mwp's `del` command -- there's no in-OS delete UI elsewhere
+ * (Notepad's own File menu only ever saves, never deletes), so this is
+ * currently `del`'s only caller. */
+static inline int fs_delete_slot(int slot) {
+    if (slot < 0 || slot >= FS_MAX_FILES) return 0;
+    u8 header[512];
+    fs_zero(header, 512);
+    return ata_write_sector(fs_slot_header_lba(slot), header);
+}
+/* Returns 1 if this slot has a valid saved file: reads back the header and checks
+ * our magic number so we don't mistake random disk garbage for a save.
  * Fills *out_len if so. */
 static inline int fs_check_slot(int slot, u32 *out_len) {
     if (slot < 0 || slot >= FS_MAX_FILES) return 0;
