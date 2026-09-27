@@ -11,7 +11,7 @@ system with no libc, no bootloader framework, and no borrowed kernel code.
 
 - **Boot**: a 512-byte MBR bootloader (`boot/boot.asm`) that sets a real
   VBE (VESA) video mode via a genuine BIOS call, switches to protected
-  mode, and loads the kernel via BIOS INT13h extended (LBA) reads, 160KB
+  mode, and loads the kernel via BIOS INT13h extended (LBA) reads, 448KB
   budget, all real addressing under 1MB so it works with no A20
   shenanigans during load. Split into two stages (`boot/boot.asm`, an
   exactly-512-byte MBR, and `boot/stage2.asm`, everything else) once
@@ -114,8 +114,8 @@ you're on a 64-bit host), and `ld`.
 ./build.sh
 ```
 
-Produces `build/os-image.img`, a raw disk image -- exactly 256KB
-(262,144 bytes), a deliberately round size rather than arbitrary
+Produces `build/os-image.img`, a raw disk image -- exactly 1MB
+(1,048,576 bytes), a deliberately round size rather than arbitrary
 padding. `build.sh` derives the kernel's boot budget and the
 file-storage layout from the same constants `boot/boot.asm` and
 `kernel/fs.h` use (instead of duplicating them as separate magic
