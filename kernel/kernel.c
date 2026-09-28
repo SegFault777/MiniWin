@@ -292,9 +292,10 @@ static inline const char *t(ui_str_id id) {
 #define ICONC_SETTING 1
 #define ICONC_WEB     2
 #define ICONC_DOC     3
-#define ICONC_COUNT   4
+#define ICONC_TERM    4
+#define ICONC_COUNT   5
 
-static const char *const icon_cache_names[ICONC_COUNT] = { "NOTEPAD", "SETTING", "WEB", "DOCX" };
+static const char *const icon_cache_names[ICONC_COUNT] = { "NOTEPAD", "SETTING", "WEB", "DOCX", "TERMINAL" };
 static u32 icon_cache[ICONC_COUNT][32 * 32];
 static u8  icon_cache_ok[ICONC_COUNT];
 
@@ -379,6 +380,18 @@ static void draw_desktop_icon2(void) {
 
 static void draw_desktop_icon3(void) {
     draw_icon_with_label(ICON3_X, ICON3_Y, ICONC_WEB, "WEB", 3, ".MWP", 4);
+}
+
+/* TERMINAL.MWP -- fourth icon in the same top row (it used to be
+ * reachable from the Start Menu only, because Terminal.png hadn't been
+ * supplied yet). Double-click opens the command-line window. */
+#define ICON4_X  (ICON3_X + ICON_SLOT_W + 10)
+#define ICON4_Y  8
+#define ICON4_W  ICON_SLOT_W
+#define ICON4_H  ICON_H
+
+static void draw_desktop_icon4(void) {
+    draw_icon_with_label(ICON4_X, ICON4_Y, ICONC_TERM, "TERMINAL", 8, ".MWP", 4);
 }
 
 #define TASKBAR_H     18
@@ -2880,6 +2893,7 @@ static void render_frame(int mouse_x, int mouse_y, const char *status_msg) {
     draw_desktop_icon();
     draw_desktop_icon2();
     draw_desktop_icon3();
+    draw_desktop_icon4();
     draw_desktop_file_icons();
 
     if (status_msg) draw_status_line(status_msg);
@@ -3050,6 +3064,8 @@ void kmain(void) {
     u32 last_setting_click_tick = 0;
     int awaiting_second_click_web = 0;   /* same idea, but for the WEB.MWP icon */
     u32 last_web_click_tick = 0;
+    int awaiting_second_click_term = 0;  /* ...and for the TERMINAL.MWP icon */
+    u32 last_term_click_tick = 0;
     int awaiting_second_click_file_slot = -1;   /* which file icon (if any) saw a first click */
     u32 last_file_icon_click_tick = 0;
     u32 tick = 0;
@@ -3466,6 +3482,16 @@ void kmain(void) {
                         } else {
                             awaiting_second_click_web = 1;
                             last_web_click_tick = tick;
+                        }
+                    } else if (in_rect(mx, my, ICON4_X, ICON4_Y, ICON4_W, ICON4_H)) {
+                        if (awaiting_second_click_term && (tick - last_term_click_tick) < double_click_window) {
+                            term_win.open = 1;
+                            win_z_raise(WIN_ID_TERMINAL);
+                            status = t(STR_TERMINAL_OPENED);
+                            awaiting_second_click_term = 0;
+                        } else {
+                            awaiting_second_click_term = 1;
+                            last_term_click_tick = tick;
                         }
                     } else {
                         /* Check desktop file icons last (any slot). */
