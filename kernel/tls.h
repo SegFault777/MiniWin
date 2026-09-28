@@ -11,6 +11,7 @@
 #include "pkcs1.h"
 #include "trusted_roots.h"
 #include "tcp.h"
+#include "serial.h"
 
 /* ============================================================
  * tls.h -- TLS 1.2, one cipher suite only:
@@ -508,6 +509,29 @@ static inline u64 tls_pack_datetime(u32 year, u32 month, u32 day, u32 hour, u32 
          + (u64)hour * 10000ull + (u64)minute * 100ull + (u64)second;
 }
 
+/* Serial diagnostics for a rejected chain. TLS_FAIL_CERT_UNTRUSTED on
+ * its own only says "the top of the chain isn't any root we carry" --
+ * useless for figuring out WHICH root is missing. This pulls the first
+ * commonName (OID 2.5.4.3) out of a raw DER Name and prints it, so the
+ * serial log names exactly the issuer we'd need to add to
+ * trusted_roots.h. Diagnostic only: never affects the verdict. */
+static inline void tls_dbg_print_cn(const char *label, const u8 *name, u32 len) {
+    serial_puts(label);
+    for (u32 i = 0; i + 5 < len; i++) {
+        if (name[i] == 0x55 && name[i + 1] == 0x04 && name[i + 2] == 0x03) {
+            u32 n = name[i + 4];           /* tag at i+3, short-form length at i+4 */
+            if (n > len - (i + 5)) n = len - (i + 5);
+            for (u32 j = 0; j < n; j++) {
+                u8 c = name[i + 5 + j];
+                serial_putc((c >= 32 && c < 127) ? (char)c : '?');
+            }
+            serial_puts("\n");
+            return;
+        }
+    }
+    serial_puts("(no CN)\n");
+}
+
 /* Walks tls_conn.chain[] (as parsed by tls_parse_certificate_message())
  * and checks: each certificate's issuer matches the next one's subject,
  * each certificate's signature verifies against the next one's public
@@ -573,6 +597,13 @@ static inline int tls_verify_certificate_chain(u64 now_packed) {
         }
     }
 
+    serial_puts("[TLS] chain rejected as untrusted; host=");
+    serial_puts(tls_conn.hostname);
+    serial_puts(" certs=");
+    serial_put_dec((u32)tls_conn.chain_len);
+    serial_puts("\n");
+    tls_dbg_print_cn("[TLS]   top cert subject CN: ", last->subject, last->subject_len);
+    tls_dbg_print_cn("[TLS]   top cert issuer  CN: ", last->issuer, last->issuer_len);
     tls_conn.fail_reason = TLS_FAIL_CERT_UNTRUSTED;
     return 0;
 }
