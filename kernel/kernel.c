@@ -269,24 +269,91 @@ static inline const char *t(ui_str_id id) {
  * so the old slot barely fit its own label either; it never had real
  * headroom, it just happened to be small enough that nobody noticed). */
 #define ICON_SLOT_W 88
-#define ICON_GLYPH_W 22
+#define ICON_GLYPH_W 32   /* real 32x32 bitmap icons now (see icon cache below) */
+#define ICON_GLYPH_H 32
 
 #define ICON_X   6
 #define ICON_Y   8
 #define ICON_W   ICON_SLOT_W
-#define ICON_H   36   /* box + label combined hit area */
+#define ICON_H   (ICON_GLYPH_H + 4 + 11 + 1 + 11)   /* glyph + gap + two label lines */
+
+/* ------------------------------------------------------------
+ * Icon cache: the 32x32 bitmap icons installed on disk by
+ * tools/install_icons.py (kernel/fs.h's icon catalog), decoded once at
+ * boot into 0xAARRGGBB words so drawing one is a plain memory blit
+ * instead of eight ATA sector reads per frame. The on-disk bytes are
+ * R,G,B,A; the backbuffer wants 0x00RRGGBB, so the decode step is the
+ * one place that byte-order mismatch fs.h warned about gets settled.
+ * A missing icon (say, an os-image.img built without running
+ * install_icons.py) just draws a gray placeholder box instead of
+ * crashing -- the desktop stays usable, merely uglier.
+ * ------------------------------------------------------------ */
+#define ICONC_NOTEPAD 0
+#define ICONC_SETTING 1
+#define ICONC_WEB     2
+#define ICONC_DOC     3
+#define ICONC_COUNT   4
+
+static const char *const icon_cache_names[ICONC_COUNT] = { "NOTEPAD", "SETTING", "WEB", "DOCX" };
+static u32 icon_cache[ICONC_COUNT][32 * 32];
+static u8  icon_cache_ok[ICONC_COUNT];
+
+static void icon_cache_init(void) {
+    static u8 raw[ICON_32_BYTES];
+    for (int i = 0; i < ICONC_COUNT; i++) {
+        icon_cache_ok[i] = 0;
+        int slot = icon_find_by_name(icon_cache_names[i]);
+        if (slot < 0) continue;
+        if (!icon_load_slot(slot, 1, raw)) continue;
+        for (int k = 0; k < 32 * 32; k++) {
+            u32 r = raw[k * 4 + 0], g = raw[k * 4 + 1], b = raw[k * 4 + 2], a = raw[k * 4 + 3];
+            icon_cache[i][k] = (a << 24) | (r << 16) | (g << 8) | b;
+        }
+        icon_cache_ok[i] = 1;
+    }
+}
+
+/* Alpha-blends one cached icon onto the backbuffer at (x,y), clipped to
+ * the screen. Alpha 0 skips the pixel, 255 overwrites it, anything in
+ * between mixes with whatever's already there (the icons have soft
+ * antialiased edges, so this matters). */
+static void blit_icon32(int x, int y, int idx) {
+    if (idx < 0 || idx >= ICONC_COUNT || !icon_cache_ok[idx]) {
+        bb_fillrect(x, y, 32, 32, COL_LGRAY);
+        bb_rect(x, y, 32, 32, COL_BLACK);
+        return;
+    }
+    const u32 *src = icon_cache[idx];
+    for (int j = 0; j < 32; j++) {
+        int py = y + j;
+        if (py < 0 || py >= VGA_HEIGHT) continue;
+        for (int i = 0; i < 32; i++) {
+            int px = x + i;
+            if (px < 0 || px >= VGA_WIDTH) continue;
+            u32 p = src[j * 32 + i];
+            u32 a = p >> 24;
+            if (a == 0) continue;
+            u32 *dst = &backbuf[py * VGA_WIDTH + px];
+            if (a == 255) { *dst = p & 0x00FFFFFFu; continue; }
+            u32 d = *dst;
+            u32 r = (((p >> 16) & 0xFF) * a + ((d >> 16) & 0xFF) * (255 - a)) / 255;
+            u32 g = (((p >> 8) & 0xFF) * a + ((d >> 8) & 0xFF) * (255 - a)) / 255;
+            u32 b = ((p & 0xFF) * a + (d & 0xFF) * (255 - a)) / 255;
+            *dst = (r << 16) | (g << 8) | b;
+        }
+    }
+}
+
+/* One desktop icon: bitmap glyph centered in its slot, two label lines
+ * (name, then extension) centered underneath. */
+static void draw_icon_with_label(int slot_x, int y, int idx, const char *line1, int n1, const char *line2, int n2) {
+    blit_icon32(slot_x + (ICON_SLOT_W - ICON_GLYPH_W) / 2, y, idx);
+    font_draw_string(slot_x + (ICON_SLOT_W - FONT_CELL * n1) / 2, y + ICON_GLYPH_H + 4, line1, COL_BLACK);
+    font_draw_string(slot_x + (ICON_SLOT_W - FONT_CELL * n2) / 2, y + ICON_GLYPH_H + 4 + FONT_CELL + 1, line2, COL_BLACK);
+}
 
 static void draw_desktop_icon(void) {
-    int gx = ICON_X + (ICON_SLOT_W - ICON_GLYPH_W) / 2;
-    bb_fillrect(gx, ICON_Y, ICON_GLYPH_W, 16, COL_WHITE);
-    bb_rect(gx, ICON_Y, ICON_GLYPH_W, 16, COL_BLACK);
-    /* little folded-corner notch to look like a document/app icon */
-    bb_fillrect(gx + 15, ICON_Y, 7, 5, DESKTOP_COLOR_ICON_BG);
-    bb_rect(gx + 15, ICON_Y, 7, 5, COL_BLACK);
-
-    const char *line1 = "NOTEPAD", *line2 = ".MWP";
-    font_draw_string(ICON_X + (ICON_SLOT_W - FONT_CELL * 7) / 2, ICON_Y + 19, line1, COL_BLACK);
-    font_draw_string(ICON_X + (ICON_SLOT_W - FONT_CELL * 4) / 2, ICON_Y + 30, line2, COL_BLACK);
+    draw_icon_with_label(ICON_X, ICON_Y, ICONC_NOTEPAD, "NOTEPAD", 7, ".MWP", 4);
 }
 
 /* SETTING.MWP -- sits next to NOTEPAD.MWP in the same top row.
@@ -295,24 +362,10 @@ static void draw_desktop_icon(void) {
 #define ICON2_X  (ICON_X + ICON_SLOT_W + 10)
 #define ICON2_Y  8
 #define ICON2_W  ICON_SLOT_W
-#define ICON2_H  36
+#define ICON2_H  ICON_H
 
 static void draw_desktop_icon2(void) {
-    /* simple gear-ish glyph so it reads as a distinct app, not another
-     * document -- a filled circle-ish square with a few notches */
-    int gx = ICON2_X + (ICON_SLOT_W - ICON_GLYPH_W) / 2;
-    bb_fillrect(gx, ICON2_Y, ICON_GLYPH_W, 16, COL_LGRAY);
-    bb_rect(gx, ICON2_Y, ICON_GLYPH_W, 16, COL_BLACK);
-    bb_fillrect(gx + 5, ICON2_Y + 4, 11, 8, COL_WHITE);
-    bb_rect(gx + 5, ICON2_Y + 4, 11, 8, COL_BLACK);
-    bb_putpixel(gx + 3, ICON2_Y + 1, COL_BLACK);
-    bb_putpixel(gx + 18, ICON2_Y + 1, COL_BLACK);
-    bb_putpixel(gx + 3, ICON2_Y + 14, COL_BLACK);
-    bb_putpixel(gx + 18, ICON2_Y + 14, COL_BLACK);
-
-    const char *line1 = "SETTING", *line2 = ".MWP";
-    font_draw_string(ICON2_X + (ICON_SLOT_W - FONT_CELL * 7) / 2, ICON2_Y + 19, line1, COL_BLACK);
-    font_draw_string(ICON2_X + (ICON_SLOT_W - FONT_CELL * 4) / 2, ICON2_Y + 30, line2, COL_BLACK);
+    draw_icon_with_label(ICON2_X, ICON2_Y, ICONC_SETTING, "SETTING", 7, ".MWP", 4);
 }
 
 /* WEB.MWP -- third icon in the same top row. Double-clicking opens
@@ -322,28 +375,10 @@ static void draw_desktop_icon2(void) {
 #define ICON3_X  (ICON2_X + ICON_SLOT_W + 10)
 #define ICON3_Y  8
 #define ICON3_W  ICON_SLOT_W
-#define ICON3_H  36
+#define ICON3_H  ICON_H
 
 static void draw_desktop_icon3(void) {
-    /* a little globe: circle outline plus one horizontal and one
-     * vertical meridian line through the middle -- instantly reads as
-     * "network/internet" at icon scale without needing a real bitmap */
-    int gx = ICON3_X + (ICON_SLOT_W - ICON_GLYPH_W) / 2;
-    bb_fillrect(gx, ICON3_Y, ICON_GLYPH_W, 16, COL_WHITE);
-    bb_rect(gx, ICON3_Y, ICON_GLYPH_W, 16, COL_BLACK);
-    /* equator */
-    for (int i = 3; i < ICON_GLYPH_W - 3; i++) bb_putpixel(gx + i, ICON3_Y + 8, COL_BLACK);
-    /* prime meridian (just the visible half of it, an ellipse-ish curve
-     * approximated with a few pixels -- this is an icon, not a globe) */
-    for (int j = 1; j < 15; j++) {
-        int inset = (j <= 7) ? (7 - j) : (j - 8);
-        bb_putpixel(gx + 4 + inset / 2, ICON3_Y + j, COL_BLACK);
-        bb_putpixel(gx + 17 - inset / 2, ICON3_Y + j, COL_BLACK);
-    }
-
-    const char *line1 = "WEB", *line2 = ".MWP";
-    font_draw_string(ICON3_X + (ICON_SLOT_W - FONT_CELL * 3) / 2, ICON3_Y + 19, line1, COL_BLACK);
-    font_draw_string(ICON3_X + (ICON_SLOT_W - FONT_CELL * 4) / 2, ICON3_Y + 30, line2, COL_BLACK);
+    draw_icon_with_label(ICON3_X, ICON3_Y, ICONC_WEB, "WEB", 3, ".MWP", 4);
 }
 
 #define TASKBAR_H     18
@@ -2699,15 +2734,8 @@ static void draw_desktop_file_icons(void) {
     for (int slot = 0; slot < FS_MAX_FILES; slot++) {
         if (!desktop_file_exists[slot]) continue;
         int x = fileicon_x(slot), y = fileicon_y(slot);
-        bb_fillrect(x + 4, y, 16, 12, COL_WHITE);
-        bb_rect(x + 4, y, 16, 12, COL_BLACK);
-        bb_fillrect(x + 4 + 11, y, 5, 4, DESKTOP_COLOR_ICON_BG);
-        bb_rect(x + 4 + 11, y, 5, 4, COL_BLACK);
-        /* a couple of horizontal "text lines" inside so it reads as a
-         * document icon, visually distinct from the app icon above it */
-        bb_fillrect(x + 7, y + 4, 8, 1, COL_LGRAY);
-        bb_fillrect(x + 7, y + 7, 8, 1, COL_LGRAY);
-        font_draw_string(x, y + 14, fileicon_labels[slot], COL_BLACK);
+        blit_icon32(x + 6, y, ICONC_DOC);
+        font_draw_string(x, y + ICON_GLYPH_H + 4, fileicon_labels[slot], COL_BLACK);
     }
 }
 
@@ -2963,6 +2991,7 @@ void kmain(void) {
      * come after vga_init_display() (the table's draw_ and present
      * entries point at framebuffer-touching functions), but otherwise has no
      * ordering dependency on anything else in this init sequence. */
+    icon_cache_init();
     mwp_init();
     mwp_syscalls.key_poll = keyboard_poll_key;
 
