@@ -190,7 +190,7 @@ kernel/x25519.h     Curve25519 Diffie-Hellman (RFC 7748)
 kernel/asn1.h       DER/ASN.1 reader
 kernel/x509.h       X.509 certificate parsing + chain/signature verification
 kernel/pkcs1.h      PKCS#1 v1.5 padding (encrypt + signature verify)
-kernel/trusted_roots.h  embedded trust anchors (ISRG Root X1, DigiCert Global Root G2)
+kernel/trusted_roots.h  embedded trust anchors (41 RSA roots from Mozilla's CA bundle)
 kernel/tls.h        TLS 1.2 (ECDHE-RSA-AES128-GCM-SHA256 only)
 kernel/https.h      HTTP/1.1 GET client on top of tls.h
 kernel/net_stack.h  wires all of the above into one init()/poll() pair
@@ -288,8 +288,10 @@ asks:
     chain, validity-date checking against the CMOS clock, hostname
     matching (SAN with wildcard support, falling back to CN only when
     no SAN extension exists), and a small embedded trust store
-    (`trusted_roots.h`: ISRG Root X1 and DigiCert Global Root G2, both
-    real, both extracted from Mozilla's own CA bundle) that a chain
+    (`trusted_roots.h`: 41 RSA roots -- Let's Encrypt, DigiCert, Amazon,
+    Google Trust Services, GlobalSign, Sectigo/USERTrust, Microsoft,
+    GoDaddy/Starfield and more -- all extracted from Mozilla's own CA
+    bundle) that a chain
     must actually reach -- a self-signed certificate, or one signed by
     an unrecognized CA, is correctly rejected, not waved through.
     **`kernel/https.h`** is HTTP/1.1 over this instead of raw TCP,
