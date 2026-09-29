@@ -3,12 +3,12 @@
 #include "io.h"
 
 /* ============================================================
- * aes.h -- AES-128, per FIPS-197. This kernel implements exactly the
- * 128-bit key variant (10 rounds, not AES-192's 12 or AES-256's 14) --
- * that's the only key size TLS_RSA_WITH_AES_128_CBC_SHA256 (the one
- * cipher suite kernel/tls.h speaks) ever needs, and a from-scratch
- * implementation earns its keep by not building three key schedules
- * when one is all that's used.
+ * aes.h -- AES-128 and AES-256, per FIPS-197 (no AES-192: nothing in
+ * TLS asks for it). The original client only ever needed the 128-bit
+ * key -- one cipher suite, one key size. The *_AES_256_GCM_SHA384 suites
+ * (0xC02C/0xC030) that a lot of real servers prefer need the 256-bit
+ * variant, whose only differences are 14 rounds instead of 10 and a
+ * slightly fussier key schedule.
  *
  * A straightforward, table-based implementation: the classic S-box and
  * its inverse as literal 256-byte lookup tables (the "byte substitution
@@ -66,10 +66,17 @@ static const u8 aes_rcon[11] = {
     0x00,0x01,0x02,0x04,0x08,0x10,0x20,0x40,0x80,0x1b,0x36
 };
 
+/* One context type for both key sizes. AES-128 runs 10 rounds and needs
+ * 11 round keys; AES-256 runs 14 rounds and needs 15. Sizing for the big
+ * one and remembering the round count costs the 128-bit path 64 spare
+ * bytes and nothing else. (The name aes128_ctx_t stays as an alias
+ * because half the kernel already spells it that way -- renaming it
+ * would touch files that have no business changing.) */
 typedef struct {
-    u8 round_key[11][16];   /* 11 round keys for AES-128: the original
-                             * key plus one derived per round */
-} aes128_ctx_t;
+    u8 round_key[15][16];
+    int rounds;             /* 10 for AES-128, 14 for AES-256 */
+} aes_ctx_t;
+typedef aes_ctx_t aes128_ctx_t;
 
 /* GF(2^8) multiplication by 2, reduced modulo the AES polynomial
  * (x^8+x^4+x^3+x+1, i.e. 0x11b) -- the one piece of finite-field
@@ -91,33 +98,43 @@ static inline u8 aes_mul(u8 a, u8 b) {
     return result;
 }
 
-/* Expands a 16-byte key into 11 round keys. Standard Rijndael key
- * schedule: each new 4-byte word is the previous word XORed with the
- * word 4 positions back, with every 4th word additionally going
- * through RotWord+SubWord+Rcon first. */
-static inline void aes128_set_key(aes128_ctx_t *ctx, const u8 key[16]) {
-    u8 w[44][4]; /* 44 words = 11 round keys x 4 words each */
-    for (int i = 0; i < 4; i++)
+/* Expands a key (16 or 32 bytes) into round keys. Standard Rijndael key
+ * schedule: each new 4-byte word is the word Nk positions back XORed
+ * with the previous word, where every Nk-th word first goes through
+ * RotWord+SubWord+Rcon. AES-256 adds one twist the 128-bit schedule
+ * doesn't have: halfway through each 8-word group (i % 8 == 4) the
+ * previous word gets a bare SubWord, no rotation, no Rcon. */
+static inline void aes_set_key(aes_ctx_t *ctx, const u8 *key, int key_len) {
+    int nk = key_len / 4;               /* 4 or 8 words of key */
+    int rounds = nk + 6;                /* 10 or 14 */
+    int total_words = 4 * (rounds + 1); /* 44 or 60 */
+    u8 w[60][4];
+    for (int i = 0; i < nk; i++)
         for (int j = 0; j < 4; j++) w[i][j] = key[i * 4 + j];
 
-    for (int i = 4; i < 44; i++) {
+    for (int i = nk; i < total_words; i++) {
         u8 temp[4] = { w[i-1][0], w[i-1][1], w[i-1][2], w[i-1][3] };
-        if (i % 4 == 0) {
+        if (i % nk == 0) {
             u8 t0 = temp[0];
             temp[0] = aes_sbox[temp[1]];
             temp[1] = aes_sbox[temp[2]];
             temp[2] = aes_sbox[temp[3]];
             temp[3] = aes_sbox[t0];
-            temp[0] = (u8)(temp[0] ^ aes_rcon[i / 4]);
+            temp[0] = (u8)(temp[0] ^ aes_rcon[i / nk]);
+        } else if (nk > 6 && i % nk == 4) {
+            for (int j = 0; j < 4; j++) temp[j] = aes_sbox[temp[j]];
         }
-        for (int j = 0; j < 4; j++) w[i][j] = (u8)(w[i-4][j] ^ temp[j]);
+        for (int j = 0; j < 4; j++) w[i][j] = (u8)(w[i-nk][j] ^ temp[j]);
     }
 
-    for (int r = 0; r < 11; r++)
+    ctx->rounds = rounds;
+    for (int r = 0; r <= rounds; r++)
         for (int c = 0; c < 4; c++)
             for (int j = 0; j < 4; j++)
                 ctx->round_key[r][c * 4 + j] = w[r * 4 + c][j];
 }
+static inline void aes128_set_key(aes_ctx_t *ctx, const u8 key[16]) { aes_set_key(ctx, key, 16); }
+static inline void aes256_set_key(aes_ctx_t *ctx, const u8 key[32]) { aes_set_key(ctx, key, 32); }
 
 static inline void aes_add_round_key(u8 state[16], const u8 rk[16]) {
     for (int i = 0; i < 16; i++) state[i] = (u8)(state[i] ^ rk[i]);
@@ -174,9 +191,9 @@ static inline void aes_inv_mix_columns(u8 s[16]) {
  * structure: an initial key whitening, 9 full rounds, then a final
  * round that skips MixColumns (per spec -- the last round is always
  * shaped slightly differently). */
-static inline void aes128_encrypt_block(const aes128_ctx_t *ctx, u8 block[16]) {
+static inline void aes128_encrypt_block(const aes_ctx_t *ctx, u8 block[16]) {
     aes_add_round_key(block, ctx->round_key[0]);
-    for (int round = 1; round <= 9; round++) {
+    for (int round = 1; round < ctx->rounds; round++) {
         aes_sub_bytes(block);
         aes_shift_rows(block);
         aes_mix_columns(block);
@@ -184,14 +201,14 @@ static inline void aes128_encrypt_block(const aes128_ctx_t *ctx, u8 block[16]) {
     }
     aes_sub_bytes(block);
     aes_shift_rows(block);
-    aes_add_round_key(block, ctx->round_key[10]);
+    aes_add_round_key(block, ctx->round_key[ctx->rounds]);
 }
 
-static inline void aes128_decrypt_block(const aes128_ctx_t *ctx, u8 block[16]) {
-    aes_add_round_key(block, ctx->round_key[10]);
+static inline void aes128_decrypt_block(const aes_ctx_t *ctx, u8 block[16]) {
+    aes_add_round_key(block, ctx->round_key[ctx->rounds]);
     aes_inv_shift_rows(block);
     aes_inv_sub_bytes(block);
-    for (int round = 9; round >= 1; round--) {
+    for (int round = ctx->rounds - 1; round >= 1; round--) {
         aes_add_round_key(block, ctx->round_key[round]);
         aes_inv_mix_columns(block);
         aes_inv_shift_rows(block);
