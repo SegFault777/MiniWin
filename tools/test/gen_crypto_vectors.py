@@ -7,7 +7,9 @@ Line formats (hex, "-" = empty):
   SHA384 <msg> <digest>          SHA512 <msg> <digest>
   HMAC384 <key> <msg> <mac>
   GCM <key> <iv> <aad> <plaintext> <ciphertext> <tag>
-  (ECC / ECDSA lines are appended by later steps of the TLS overhaul)
+  ECDSA <bits> <pub> <digest> <sigDER> <1|0>     expected verify result
+  ECDH  <bits> <rand> <peer_pub> <our_pub> <shared>   (our priv = rand | topbit, reduced mod n)
+  ECBAD <bits> <peer_pub>                         a point ecdh_shared() must REJECT
 """
 import hashlib, hmac, random, sys
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -33,5 +35,42 @@ for keylen in (16, 32):
             sealed = AESGCM(key).encrypt(iv, pt, aad or None)
             ct, tag = sealed[:-16], sealed[-16:]
             out.append("GCM %s %s %s %s %s %s" % (h(key), h(iv), h(aad), h(pt), h(ct), tag.hex()))
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives import hashes, serialization
+CURVES = {256: (ec.SECP256R1(), 32, 0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551),
+          384: (ec.SECP384R1(), 48, 0xffffffffffffffffffffffffffffffffffffffffffffffffc7634d81f4372ddf581a0db248b0a77aecec196accc52973)}
+def pub_bytes(k): return k.public_key().public_bytes(serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)
+for bits, (curve, nb, order) in CURVES.items():
+    for i in range(6):
+        key = ec.generate_private_key(curve)
+        pub = pub_bytes(key)
+        for halg, hname in ((hashes.SHA256(), "sha256"), (hashes.SHA384(), "sha384"), (hashes.SHA512(), "sha512"), (hashes.SHA1(), "sha1")):
+            msg = rb(rnd.randrange(1, 300))
+            dig = hashlib.new(hname, msg).digest()
+            sig = key.sign(msg, ec.ECDSA(halg))
+            out.append("ECDSA %d %s %s %s 1" % (bits, pub.hex(), dig.hex(), sig.hex()))
+            # only flip inside the part of the digest ECDSA actually uses: a hash longer than
+            # the curve's order is truncated to its leftmost bytes (SEC1 4.1.4), so a flip out
+            # in the discarded tail correctly does NOT change the verdict
+            bad = bytearray(dig); bad[rnd.randrange(min(len(bad), nb))] ^= 1 << rnd.randrange(8)
+            out.append("ECDSA %d %s %s %s 0" % (bits, pub.hex(), bytes(bad).hex(), sig.hex()))
+            sb = bytearray(sig); sb[-1 - rnd.randrange(8)] ^= 1 << rnd.randrange(8)
+            out.append("ECDSA %d %s %s %s 0" % (bits, pub.hex(), dig.hex(), bytes(sb).hex()))
+        other = pub_bytes(ec.generate_private_key(curve))   # a valid key that did NOT sign this
+        out.append("ECDSA %d %s %s %s 0" % (bits, other.hex(), dig.hex(), sig.hex()))
+    for i in range(8):
+        r = rb(nb)
+        d = int.from_bytes(r, "big") | (1 << (nb * 8 - 1))
+        if d >= order: d -= order
+        mine = ec.derive_private_key(d, curve)
+        peer = ec.generate_private_key(curve)
+        shared = mine.exchange(ec.ECDH(), peer.public_key())
+        out.append("ECDH %d %s %s %s %s" % (bits, r.hex(), pub_bytes(peer).hex(), pub_bytes(mine).hex(), shared.hex()))
+    good = pub_bytes(ec.generate_private_key(curve))
+    y_bad = bytearray(good); y_bad[-1] ^= 1                       # off the curve
+    out.append("ECBAD %d %s" % (bits, bytes(y_bad).hex()))
+    out.append("ECBAD %d %s" % (bits, (b"\x04" + b"\x00" * (2 * nb)).hex()))     # (0,0)
+    out.append("ECBAD %d %s" % (bits, (b"\x02" + good[1:1 + nb]).hex()))          # compressed: unsupported
+    out.append("ECBAD %d %s" % (bits, good[:-1].hex()))            # truncated
 open(sys.argv[1] if len(sys.argv) > 1 else "/tmp/crypto_vectors.txt", "w").write("\n".join(out) + "\n")
 print("wrote", len(out), "vectors")

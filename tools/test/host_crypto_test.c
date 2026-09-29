@@ -13,9 +13,6 @@
 #include "../../kernel/hmac_sha384.h"
 #include "../../kernel/aes.h"
 #include "../../kernel/gcm.h"
-#ifdef HAVE_ECC_TESTS
-#include "ecc_tests.h"
-#endif
 
 static int hexval(char c) { return c <= '9' ? c - '0' : (c | 32) - 'a' + 10; }
 static u32 unhex(const char *s, u8 *out) {
@@ -24,6 +21,10 @@ static u32 unhex(const char *s, u8 *out) {
     for (u32 i = 0; i < n; i++) out[i] = (u8)(hexval(s[2*i]) << 4 | hexval(s[2*i+1]));
     return n;
 }
+
+#ifdef HAVE_ECC_TESTS
+#include "ecc_tests.h"
+#endif
 
 static int failures = 0, checks = 0;
 #define CHECK(cond, ...) do { checks++; if (!(cond)) { failures++; printf("FAIL: "); printf(__VA_ARGS__); printf("\n"); } } while (0)
