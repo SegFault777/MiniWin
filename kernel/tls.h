@@ -10,6 +10,9 @@
 #include "x509.h"
 #include "pkcs1.h"
 #include "trusted_roots.h"
+#ifdef MW_TLS_TEST_ROOTS
+#include MW_TLS_TEST_ROOTS   /* defines MW_TEST_ROOT_COUNT, mw_test_roots[], mw_test_root_lens[] */
+#endif
 #include "tcp.h"
 #include "serial.h"
 
@@ -154,6 +157,14 @@ typedef enum {
                                           * than this client's fixed buffers --
                                           * refuses to overrun them rather
                                           * than silently truncate */
+    TLS_FAIL_PEER_ALERT,                 /* the server sent a fatal alert;
+                                          * tls_conn.alert_desc says which
+                                          * (40 = handshake_failure, 70 =
+                                          * protocol_version, 71 =
+                                          * insufficient_security, ...) --
+                                          * appended at the END of this enum
+                                          * so every older reason code keeps
+                                          * its number */
 } tls_fail_reason_t;
 
 typedef struct {
@@ -161,6 +172,10 @@ typedef struct {
     tls_fail_reason_t fail_reason;
 
     char hostname[128];
+
+    u8 alert_level, alert_desc;   /* the last alert record the peer sent (0/0 = none yet) */
+    int peer_close_notify;        /* the peer sent close_notify: it will send no more application data,
+                                   * whether or not its TCP FIN has arrived yet (some servers dawdle) */
 
     u8 client_random[32];
     u8 server_random[32];
@@ -307,6 +322,13 @@ static inline void tls_transcript_update(const u8 *msg, u32 msg_len) {
 static inline int tls_write_record(u8 content_type, const u8 *plaintext, u32 len) {
     u8 record[5 + TLS_MAX_RECORD_PLAINTEXT + 8 + 16];
     u32 payload_len;
+
+    /* Check the TCP send queue has room BEFORE touching anything. The
+     * encrypt path below bumps client_seq, and a sequence number that
+     * advanced for a record that never left the building desynchronizes
+     * the whole connection (every later record would fail its GCM tag
+     * on the server). All or nothing. */
+    if (5 + len + (tls_conn.write_cipher_active ? 8 + 16 : 0) > tcp_send_space()) return 0;
 
     if (tls_conn.write_cipher_active) {
         u8 nonce[12];
@@ -459,6 +481,11 @@ static inline int tls_parse_server_hello(const u8 *body, u32 len) {
     (void)pos;
 
     if (cipher_suite != TLS_CIPHER_SUITE) {
+        serial_puts("[TLS] server picked unsupported cipher suite 0x");
+        serial_put_hex16(cipher_suite);
+        serial_puts(" (version bytes 0x");
+        serial_put_hex16((u16)((body[0] << 8) | body[1]));
+        serial_puts(")\n");
         tls_conn.fail_reason = TLS_FAIL_UNSUPPORTED_CIPHER_SUITE;
         return 0;
     }
@@ -532,6 +559,17 @@ static inline void tls_dbg_print_cn(const char *label, const u8 *name, u32 len) 
     serial_puts("(no CN)\n");
 }
 
+/* Does the trust anchor at `der` (a DER certificate) vouch for `cert`?
+ * True when the anchor's subject is cert's issuer AND its key really
+ * verifies cert's signature. An anchor's OWN signature is never checked
+ * (it's trusted because it's in the list, not because it says so). */
+static inline int tls_anchored_by(const x509_cert_t *cert, const u8 *der, u32 der_len) {
+    x509_cert_t root;
+    if (!x509_parse(der, der_len, &root)) return 0;
+    return x509_issuer_matches_subject(cert, &root) &&
+           x509_verify_signature(cert, &root.pubkey_modulus, root.pubkey_exponent);
+}
+
 /* Walks tls_conn.chain[] (as parsed by tls_parse_certificate_message())
  * and checks: each certificate's issuer matches the next one's subject,
  * each certificate's signature verifies against the next one's public
@@ -589,13 +627,19 @@ static inline int tls_verify_certificate_chain(u64 now_packed) {
 
     x509_cert_t *last = &tls_conn.chain[tls_conn.chain_len - 1];
     for (int r = 0; r < TRUSTED_ROOT_COUNT; r++) {
-        x509_cert_t root;
-        if (!x509_parse(trusted_roots[r], trusted_root_lens[r], &root)) continue;
-        if (x509_issuer_matches_subject(last, &root) &&
-            x509_verify_signature(last, &root.pubkey_modulus, root.pubkey_exponent)) {
-            return 1;
-        }
+        if (tls_anchored_by(last, trusted_roots[r], trusted_root_lens[r])) return 1;
     }
+#ifdef MW_TLS_TEST_ROOTS
+    /* TEST BUILDS ONLY (compiled in with -DMW_TLS_TEST_ROOTS=\"file.h\",
+     * never in a committed build): extra trust anchors for a throwaway
+     * local CA, so the handshake can be exercised end to end against an
+     * `openssl s_server` on the host -- this sandbox's own network
+     * re-signs every real site's TLS with a private CA, so the real
+     * internet can't be used to test certificate paths here. */
+    for (int r = 0; r < MW_TEST_ROOT_COUNT; r++) {
+        if (tls_anchored_by(last, mw_test_roots[r], mw_test_root_lens[r])) return 1;
+    }
+#endif
 
     serial_puts("[TLS] chain rejected as untrusted; host=");
     serial_puts(tls_conn.hostname);
@@ -936,8 +980,25 @@ static inline void tls_process_raw_buffer(u64 now_packed) {
                     return;
                 }
             }
+            if (plain_len >= 2) {
+                tls_conn.alert_level = plain[0];
+                tls_conn.alert_desc = plain[1];
+                /* Say what the server said. An alert's description code is
+                 * the single most useful clue when a handshake dies: 40 =
+                 * handshake_failure (no cipher/curve/sig-alg in common),
+                 * 70 = protocol_version (wants TLS 1.3), 71 = insufficient
+                 * security, 80 = internal_error, 112 = unrecognized_name
+                 * (SNI). Before this, a fatal alert was filed as a bland
+                 * "unexpected message" and the code was thrown away. */
+                if (plain[0] == 1 && plain[1] == 0) tls_conn.peer_close_notify = 1;
+                serial_puts("[TLS] peer alert: level=");
+                serial_put_dec(plain[0]);
+                serial_puts(" desc=");
+                serial_put_dec(plain[1]);
+                serial_putc('\n');
+            }
             if (plain_len >= 2 && plain[0] == 2 /* fatal */) {
-                tls_conn.fail_reason = TLS_FAIL_UNEXPECTED_MESSAGE;
+                tls_conn.fail_reason = TLS_FAIL_PEER_ALERT;
                 tls_conn.state = TLS_FAILED;
                 return;
             }
@@ -1013,6 +1074,9 @@ static inline void tls_connect(u32 ip, u16 port, const char *hostname, const u8 
     tls_conn.server_seq = 0;
     tls_conn.write_cipher_active = 0;
     tls_conn.read_cipher_active = 0;
+    tls_conn.alert_level = 0;
+    tls_conn.alert_desc = 0;
+    tls_conn.peer_close_notify = 0;
 
     u32 i = 0;
     for (; hostname[i] && i < sizeof(tls_conn.hostname) - 1; i++) tls_conn.hostname[i] = hostname[i];

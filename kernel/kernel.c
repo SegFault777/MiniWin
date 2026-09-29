@@ -1934,15 +1934,17 @@ static void web_go_url(void) {
     https_client.state = HTTPS_IDLE;
 
     if (web_looks_like_url(web_urlbar_buf)) {
-        /* Strip a leading "https://" or "http://" if the person typed
-         * one -- MiniWeb always decides the transport itself (HTTPS
-         * unless it's a bare IP literal, matching the PYPI.ORG/GATEWAY
-         * bookmarks' own split) rather than trusting a scheme prefix,
-         * since this kernel's http_get()/https_get() calls are chosen
-         * by web_use_https, not parsed out of the URL string. */
+        /* An explicit scheme is honored: "http://" means plain HTTP,
+         * "https://" means TLS, and NO scheme means TLS (the safe
+         * default -- nearly every real site is HTTPS-only now). This
+         * used to ignore the prefix entirely and force HTTPS for every
+         * hostname / HTTP for every bare IP, which made "http://" sites
+         * unreachable and gave the test rig no way to ask for HTTPS
+         * against an IP literal. */
         const char *rest = web_urlbar_buf;
+        int want_https = 1;
         if (rest[0]=='h'&&rest[1]=='t'&&rest[2]=='t'&&rest[3]=='p'&&rest[4]=='s'&&rest[5]==':'&&rest[6]=='/'&&rest[7]=='/') rest += 8;
-        else if (rest[0]=='h'&&rest[1]=='t'&&rest[2]=='t'&&rest[3]=='p'&&rest[4]==':'&&rest[5]=='/'&&rest[6]=='/') rest += 7;
+        else if (rest[0]=='h'&&rest[1]=='t'&&rest[2]=='t'&&rest[3]=='p'&&rest[4]==':'&&rest[5]=='/'&&rest[6]=='/') { rest += 7; want_https = 0; }
 
         char host[WEB_URLBAR_MAXLEN + 1], path[64];
         web_split_host_path(rest, host, sizeof(host), path, sizeof(path));
@@ -1950,13 +1952,18 @@ static void web_go_url(void) {
         kstrcpy(web_last_path, path, sizeof(web_last_path));
 
         u32 ip;
+        web_use_https = want_https;
         if (web_parse_ipv4(host, &ip)) {
             /* a bare IP literal has nothing to resolve -- connect
-             * directly over plain HTTP, same as the GATEWAY bookmark */
-            web_use_https = 0;
-            http_get(ip, host, path);
+             * directly (the GATEWAY bookmark is "http://<ip>/") */
+            if (want_https) {
+                u8 seed[16];
+                web_make_entropy_seed(seed);
+                https_get(ip, host, path, seed);
+            } else {
+                http_get(ip, host, path);
+            }
         } else {
-            web_use_https = 1;
             web_resolving = 1;
             dns_resolve(host);
         }
@@ -2020,6 +2027,84 @@ static void web_poll(void) {
         }
     }
 }
+
+
+/* ---- TEST HOOK (compiled ONLY when built with -DMW_AUTOTEST_URL="..."; a
+ * normal build contains none of this) ----
+ * Drives MiniWeb without a human: once DHCP has finished and the network
+ * has had a moment to settle, it "types" MW_AUTOTEST_URL into the URL bar,
+ * presses Enter, then reports the outcome over the serial port and
+ * (optionally) powers the VM off, so a shell script can run a whole
+ * handshake test headlessly. QEMU's mouse-driven GUI on a 1-core host is
+ * too flaky to test a protocol stack through; serial output is not. */
+#ifdef MW_AUTOTEST_URL
+static int mw_at_state = 0;
+static u32 mw_at_settle = 0;
+static u32 mw_at_started_tick = 0;
+
+static void mw_at_report_bytes(const u8 *data, u32 len) {
+    serial_puts("[AUTOTEST] body bytes=");
+    serial_put_dec(len);
+    serial_puts("\n[AUTOTEST] first-line: ");
+    for (u32 i = 0; i < len && i < 100 && data[i] != '\r' && data[i] != '\n'; i++) serial_putc((char)data[i]);
+    serial_puts("\n");
+#ifdef MW_AUTOTEST_DUMP
+    /* dump the head of the response verbatim, so a script can grep it */
+    serial_puts("[AUTOTEST] dump-begin\n");
+    for (u32 i = 0; i < len && i < MW_AUTOTEST_DUMP; i++) {
+        char c = (char)data[i];
+        serial_putc((c == '\n' || (c >= 32 && c < 127)) ? c : '.');
+    }
+    serial_puts("\n[AUTOTEST] dump-end\n");
+#endif
+}
+
+static void mw_autotest_step(void) {
+    if (mw_at_state == 0) {
+        if (!net_cfg.ready) return;
+        if (++mw_at_settle < 300) return;           /* let ARP/DNS settle for a moment */
+        kstrcpy(web_urlbar_buf, MW_AUTOTEST_URL, sizeof(web_urlbar_buf));
+        web_urlbar_len = 0;
+        while (web_urlbar_buf[web_urlbar_len]) web_urlbar_len++;
+        serial_puts("[AUTOTEST] go " MW_AUTOTEST_URL "\n");
+        mw_at_started_tick = net_ticks;
+        web_go_url();
+        mw_at_state = 1;
+        return;
+    }
+    if (mw_at_state != 1) return;
+
+    if (web_dns_failed) {
+        serial_puts("[AUTOTEST] RESULT dns-failed\n");
+        mw_at_state = 2;
+    } else if (web_use_https) {
+        if (https_client.state == HTTPS_DONE) {
+            serial_puts("[AUTOTEST] RESULT https-ok\n");
+            mw_at_report_bytes(https_client.response, https_client.response_len);
+            mw_at_state = 2;
+        } else if (https_client.state == HTTPS_FAILED) {
+            serial_puts("[AUTOTEST] RESULT https-failed reason=");
+            serial_put_dec((u32)tls_conn.fail_reason);
+            serial_puts("\n");
+            mw_at_state = 2;
+        }
+    } else {
+        if (http_client.state == HTTP_DONE) {
+            serial_puts("[AUTOTEST] RESULT http-ok\n");
+            mw_at_report_bytes(http_client.response, http_client.response_len);
+            mw_at_state = 2;
+        } else if (http_client.state == HTTP_FAILED) {
+            serial_puts("[AUTOTEST] RESULT http-failed\n");
+            mw_at_state = 2;
+        }
+    }
+    if (mw_at_state == 1 && net_ticks - mw_at_started_tick > 400000u) {
+        serial_puts("[AUTOTEST] RESULT timeout\n");
+        mw_at_state = 2;
+    }
+    if (mw_at_state == 2) serial_puts("[AUTOTEST] finished\n");
+}
+#endif
 
 /* Draws whatever http_client currently holds as wrapped plain-ASCII
  * text -- deliberately NOT HTML-aware (no tag stripping, no entity
@@ -3782,6 +3867,9 @@ void kmain(void) {
          * HTTP side) until the next click on a site row calls
          * web_go() again. */
         web_poll();
+#ifdef MW_AUTOTEST_URL
+        mw_autotest_step();
+#endif
 
         render_frame(mx, my, status);
         delay(2000); /* lowered further from 8000 -- mouse felt sluggish/

@@ -2,7 +2,15 @@
 set -e
 cd "$(dirname "$0")"
 
-BUILD=build
+# Two escape hatches for test builds (never used for committed builds):
+#   BUILD=/tmp/mwtest ./build.sh   -- put every artifact somewhere other
+#                                     than the git-tracked build/ dir
+#   EXTRA_CFLAGS="-DMW_..." ./build.sh -- extra compiler flags, e.g. the
+#                                     MW_AUTOTEST_* hooks in kernel.c (it goes
+#                                     through `eval`, so a string value is
+#                                     written -DNAME='\"text\"' with the
+#                                     backslashes)
+BUILD=${BUILD:-build}
 mkdir -p $BUILD
 
 echo "[1/5] Assembling bootloader (2 stages)..."
@@ -58,8 +66,8 @@ echo "[3/5] Compiling C kernel..."
 # section so the --gc-sections pass below can actually find and discard
 # the ones nothing calls (see the comment in kernel/link.ld for why the
 # wildcard patterns there matter just as much as these two flags do).
-gcc -m32 -ffreestanding -fno-pie -fno-stack-protector -nostdlib -nostdinc \
-    -Wall -Wextra -Os -ffunction-sections -fdata-sections -c kernel/kernel.c -o $BUILD/kernel.o
+eval gcc -m32 -ffreestanding -fno-pie -fno-stack-protector -nostdlib -nostdinc \
+    -Wall -Wextra -Os -ffunction-sections -fdata-sections $EXTRA_CFLAGS -c kernel/kernel.c -o $BUILD/kernel.o
 
 echo "[4/5] Linking kernel..."
 ld -m elf_i386 -T kernel/link.ld -nostdlib --gc-sections \
@@ -253,9 +261,9 @@ if [ "$MIN_IMAGE_SECTORS" -gt "$TARGET_TOTAL_SECTORS" ]; then
     exit 1
 fi
 
-python3 - "$TARGET_TOTAL_BYTES" <<'EOF'
+python3 - "$TARGET_TOTAL_BYTES" "$BUILD/os-image.img" <<'EOF'
 import os, sys
-path = "build/os-image.img"
+path = sys.argv[2]
 target = int(sys.argv[1])
 size = os.path.getsize(path)
 if size < target:

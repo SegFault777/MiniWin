@@ -143,15 +143,15 @@ static inline https_state_t https_poll(u64 now_packed) {
                 u16 n = tls_poll_recv_app_data(https_client.response + https_client.response_len, room);
                 https_client.response_len = (u16)(https_client.response_len + n);
             }
-            /* Done when the underlying TCP connection has seen the
-             * peer's FIN and every buffer between here and the raw
+            /* Done when the peer has said it's finished (TCP FIN, or a TLS
+             * close_notify -- whichever comes first) and every buffer between here and the raw
              * socket is empty -- TCP's own recv queue, TLS's raw
              * (not-yet-a-complete-record) buffer, and TLS's decrypted
              * application-data buffer. All three empty is what proves
              * there's truly nothing left to read, not just nothing
              * left *right now*. Mirrors http.h's own completion check
              * one layer up. */
-            if (tcp_conn.peer_fin_seen && tcp_conn.recv_len == 0 &&
+            if ((tcp_conn.peer_fin_seen || tls_conn.peer_close_notify) && tcp_conn.recv_len == 0 &&
                 tls_conn.rx_raw_len == 0 && tls_conn.app_recv_len == 0) {
                 serial_puts("[HTTPS] response complete, ");
                 serial_put_dec(https_client.response_len);
