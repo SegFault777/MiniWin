@@ -66,7 +66,29 @@
 #define TLS_HS_CLIENT_KEY_EXCHANGE  16
 #define TLS_HS_FINISHED             20
 
-#define TLS_CIPHER_SUITE 0xC02F   /* TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256 */
+/* Cipher suites this client offers, in preference order. All four are TLS 1.2 ECDHE AEAD suites
+ * -- forward secret, GCM -- differing in (a) what signs the key exchange, the server certificate's
+ * key type (ECDSA vs RSA) and (b) the AES key size / hash (128+SHA-256 vs 256+SHA-384). Before
+ * pre-24 only the last-but-one (0xC02F) was offered, so any server whose certificate is ECDSA --
+ * most Google/Cloudflare-fronted sites -- had no suite in common with us and answered
+ * handshake_failure. */
+#define TLS_SUITE_ECDHE_ECDSA_AES128_GCM_SHA256 0xC02B
+#define TLS_SUITE_ECDHE_ECDSA_AES256_GCM_SHA384 0xC02C
+#define TLS_SUITE_ECDHE_RSA_AES128_GCM_SHA256   0xC02F
+#define TLS_SUITE_ECDHE_RSA_AES256_GCM_SHA384   0xC030
+
+static inline int tls_suite_supported(u16 s) {
+    return s == TLS_SUITE_ECDHE_ECDSA_AES128_GCM_SHA256 || s == TLS_SUITE_ECDHE_ECDSA_AES256_GCM_SHA384 ||
+           s == TLS_SUITE_ECDHE_RSA_AES128_GCM_SHA256   || s == TLS_SUITE_ECDHE_RSA_AES256_GCM_SHA384;
+}
+static inline int tls_suite_is_ecdsa(u16 s)  { return s == TLS_SUITE_ECDHE_ECDSA_AES128_GCM_SHA256 || s == TLS_SUITE_ECDHE_ECDSA_AES256_GCM_SHA384; }
+static inline int tls_suite_is_sha384(u16 s) { return s == TLS_SUITE_ECDHE_ECDSA_AES256_GCM_SHA384 || s == TLS_SUITE_ECDHE_RSA_AES256_GCM_SHA384; }
+static inline int tls_suite_key_len(u16 s)   { return tls_suite_is_sha384(s) ? 32 : 16; }   /* AES-256 vs AES-128 */
+
+/* Named groups (RFC 8422): the elliptic curves the ephemeral key exchange may run on. */
+#define TLS_GROUP_SECP256R1 0x0017
+#define TLS_GROUP_SECP384R1 0x0018
+#define TLS_GROUP_X25519    0x001D
 
 #define TLS_MAX_RECORD_PLAINTEXT 16384   /* TLS spec's own per-record cap */
 /* rx_raw MUST be able to hold one complete record even at the maximum
@@ -183,9 +205,14 @@ typedef struct {
     u8 client_random[32];
     u8 server_random[32];
 
-    u8 my_private[32];   /* our ephemeral X25519 private key for this connection */
-    u8 my_public[32];
-    u8 peer_public[32];  /* server's ephemeral X25519 public key, from ServerKeyExchange */
+    u16 cipher_suite;    /* the suite the server picked (one of TLS_SUITE_*) */
+    u16 kx_curve;        /* the named group of the ephemeral key exchange (TLS_GROUP_*) */
+
+    u8 my_private[48];   /* our ephemeral private key: 32 bytes for X25519/P-256, 48 for P-384 */
+    u8 my_public[97];    /* ...and its public half: 32 bytes (X25519) or 0x04||X||Y (65/97) */
+    u32 my_public_len;
+    u8 peer_public[97];  /* the server's ephemeral public key, from ServerKeyExchange */
+    u32 peer_public_len;
 
     u8 master_secret[48];
 
@@ -195,6 +222,9 @@ typedef struct {
     u64 client_seq, server_seq;
     int write_cipher_active, read_cipher_active;
 
+    sha512_ctx_t transcript384; /* the same running hash, but SHA-384: the *_SHA384 suites hash the
+                                 * handshake with it, and the suite isn't known until ServerHello --
+                                 * after the ClientHello is already hashed -- so both are kept. */
     sha256_ctx_t transcript;   /* running hash over every handshake message,
                                * sent or received, in order -- see
                                * tls_transcript_update() */
@@ -217,7 +247,8 @@ typedef struct {
      * *encryption* padding at all -- ECDHE carries the secret, not RSA).
      * Not a hardened CSPRNG -- see tls_connect()'s own comment for the
      * honest caveat on that. */
-    u32 rng_state[4];
+    u8 rng_state[32];   /* hash-based generator state -- see tls_rng_* */
+    u32 rng_counter;
 } tls_conn_t;
 
 static tls_conn_t tls_conn;
@@ -226,46 +257,65 @@ static tls_conn_t tls_conn;
 #define TLS_HS_BUF   ((u8 *)MW_TLS_HS_ADDR)
 #define TLS_APP_RECV ((u8 *)MW_TLS_APP_ADDR)
 
-/* ---- a small non-cryptographic PRNG, xorshift128, seeded from
- * whatever entropy the caller has (RTC, tick counters, ...) ----
- * Explicitly NOT a cryptographically secure RNG: xorshift is fast,
- * simple, and has excellent statistical properties, but its internal
- * state is trivially invertible from a handful of outputs, which is
- * disqualifying for anything defending against an adversary who can
- * observe outputs and wants to predict future ones. For this client's
- * two actual uses -- ClientHello's client_random (public anyway, sent
- * in the clear) and an ephemeral X25519 private key (needs
- * unpredictability, which is the one place this matters) -- a hobby OS
- * with no hardware entropy source and no intention of defending against
- * a nation-state adversary is choosing "honestly weak and documented"
- * over "pretend to be strong and be wrong about it." A future session
- * wiring up RDRAND (checked via CPUID, a single available-on-any-
- * modern-x86 instruction) as the seed source, or as a direct
- * replacement when present, would meaningfully improve this without
- * needing a different algorithm here. */
-static inline void tls_rng_seed(const u8 seed[16]) {
-    for (int i = 0; i < 4; i++) {
-        tls_conn.rng_state[i] = ((u32)seed[i*4] << 24) | ((u32)seed[i*4+1] << 16)
-                               | ((u32)seed[i*4+2] << 8) | (u32)seed[i*4+3];
-        if (tls_conn.rng_state[i] == 0) tls_conn.rng_state[i] = 0x9E3779B9u ^ (u32)i; /* never all-zero */
-    }
+/* ---- the random generator: SHA-256 over a hidden state, plus cycle-counter jitter ----
+ * The original was xorshift128, whose state can be recovered from a few outputs. That was
+ * fatal in exactly this design: ClientHello puts 32 bytes of that generator's output on the
+ * wire in the clear (client_random), and the ephemeral private key was drawn from the very
+ * next outputs -- so anyone watching the handshake could rebuild the state and compute the
+ * private key. Now every output is SHA-256(state || counter): one-way, so seeing client_random
+ * reveals nothing about what comes after it, and the state is re-hashed after each request so
+ * an old state can't be recovered from a later one.
+ *
+ * What it can NOT do is create entropy that isn't there. The caller's seed (RTC + tick
+ * counters) is small, so on top of it every request mixes in the CPU's time-stamp counter:
+ * sampled at moments driven by network round trips (ClientHello, then again after the server's
+ * flight arrives), its low bits are effectively unpredictable to a remote observer, and RDRAND
+ * is mixed in too when CPUID says it exists. Honest summary: much better than before, still not
+ * a certified entropy source -- a machine with neither RDRAND nor a jittery network is only as
+ * strong as its clock. */
+static inline void tls_rng_mix(const u8 *data, u32 len) {
+    sha256_ctx_t c; sha256_init(&c);
+    sha256_update(&c, tls_conn.rng_state, 32);
+    sha256_update(&c, data, len);
+    sha256_final(&c, tls_conn.rng_state);
 }
-static inline u32 tls_rng_u32(void) {
-    u32 x = tls_conn.rng_state[0];
-    u32 t = tls_conn.rng_state[3];
-    tls_conn.rng_state[3] = tls_conn.rng_state[2];
-    tls_conn.rng_state[2] = tls_conn.rng_state[1];
-    tls_conn.rng_state[1] = x;
-    t ^= t << 11; t ^= t >> 8;
-    tls_conn.rng_state[0] = t ^ x ^ (x >> 19);
-    return tls_conn.rng_state[0];
+static inline void tls_rng_mix_hw(void) {
+    u32 lo, hi;
+    __asm__ volatile ("rdtsc" : "=a"(lo), "=d"(hi));
+    u32 words[3] = { lo, hi, 0 };
+    /* RDRAND: CPUID.1:ECX bit 30. Guarded, because executing it on a CPU without it is a fault. */
+    u32 a = 1, b, c2 = 0, d;
+    __asm__ volatile ("cpuid" : "+a"(a), "=b"(b), "+c"(c2), "=d"(d));
+    if (c2 & (1u << 30)) {
+        u32 r; u8 ok;
+        for (int tries = 0; tries < 8; tries++) {
+            __asm__ volatile ("rdrand %0; setc %1" : "=r"(r), "=qm"(ok) : : "cc");
+            if (ok) { words[2] = r; break; }
+        }
+    }
+    tls_rng_mix((const u8 *)words, sizeof(words));
+}
+static inline void tls_rng_seed(const u8 seed[16]) {
+    for (int i = 0; i < 32; i++) tls_conn.rng_state[i] = 0;
+    tls_conn.rng_counter = 0;
+    tls_rng_mix(seed, 16);
+    tls_rng_mix_hw();
 }
 static inline void tls_rng_bytes(u8 *out, u32 len) {
+    tls_rng_mix_hw();                      /* fresh jitter for every request */
     u32 i = 0;
     while (i < len) {
-        u32 r = tls_rng_u32();
-        for (int b = 0; b < 4 && i < len; b++, i++) out[i] = (u8)(r >> (b * 8));
+        sha256_ctx_t c; sha256_init(&c);
+        sha256_update(&c, tls_conn.rng_state, 32);
+        u8 ctr[5] = { 0x01, (u8)(tls_conn.rng_counter >> 24), (u8)(tls_conn.rng_counter >> 16),
+                      (u8)(tls_conn.rng_counter >> 8), (u8)tls_conn.rng_counter };
+        tls_conn.rng_counter++;
+        sha256_update(&c, ctr, 5);
+        u8 block[32]; sha256_final(&c, block);
+        for (u32 b = 0; b < 32 && i < len; b++, i++) out[i] = block[b];
     }
+    u8 ratchet = 0x02;                     /* forward secrecy for the generator itself */
+    tls_rng_mix(&ratchet, 1);
 }
 
 /* ---- TLS 1.2's PRF: P_SHA256(secret, label||seed), per RFC 5246 5 ----
@@ -274,10 +324,19 @@ static inline void tls_rng_bytes(u8 *out, u32 len) {
  * truncated to out_len bytes. Every session key this connection ever
  * uses (master secret, then the whole key_block) comes out of this one
  * function, just with different (secret, label, seed, out_len). */
+static inline void tls_hmac(u8 *out, const u8 *key, u32 key_len, const u8 *msg, u32 msg_len) {
+    if (tls_suite_is_sha384(tls_conn.cipher_suite)) hmac_sha384(key, key_len, msg, msg_len, out);
+    else hmac_sha256(key, key_len, msg, msg_len, out);
+}
+
+/* The PRF's hash follows the negotiated suite: SHA-256 for the *_SHA256 suites, SHA-384 for the
+ * *_SHA384 ones (RFC 5288 / 5289). h is its output size (32 or 48) -- the A(i) values and the
+ * blocks are h bytes each. */
 static inline void tls_prf(u8 *out, u32 out_len,
                             const u8 *secret, u32 secret_len,
                             const char *label,
                             const u8 *seed, u32 seed_len) {
+    u32 h = tls_suite_is_sha384(tls_conn.cipher_suite) ? 48 : 32;
     u8 label_seed[256];
     u32 label_len = 0;
     while (label[label_len]) label_len++;
@@ -285,26 +344,26 @@ static inline void tls_prf(u8 *out, u32 out_len,
     for (u32 i = 0; i < label_len; i++) label_seed[i] = (u8)label[i];
     for (u32 i = 0; i < seed_len; i++) label_seed[label_len + i] = seed[i];
 
-    u8 a[32];
-    hmac_sha256(secret, secret_len, label_seed, ls_len, a); /* A(1) */
+    u8 a[48];
+    tls_hmac(a, secret, secret_len, label_seed, ls_len); /* A(1) */
 
     u32 produced = 0;
     while (produced < out_len) {
-        u8 a_plus_seed[32 + 256];
-        for (int i = 0; i < 32; i++) a_plus_seed[i] = a[i];
-        for (u32 i = 0; i < ls_len; i++) a_plus_seed[32 + i] = label_seed[i];
+        u8 a_plus_seed[48 + 256];
+        for (u32 i = 0; i < h; i++) a_plus_seed[i] = a[i];
+        for (u32 i = 0; i < ls_len; i++) a_plus_seed[h + i] = label_seed[i];
 
-        u8 block[32];
-        hmac_sha256(secret, secret_len, a_plus_seed, 32 + ls_len, block);
+        u8 block[48];
+        tls_hmac(block, secret, secret_len, a_plus_seed, h + ls_len);
 
         u32 take = out_len - produced;
-        if (take > 32) take = 32;
+        if (take > h) take = h;
         for (u32 i = 0; i < take; i++) out[produced + i] = block[i];
         produced += take;
 
-        u8 next_a[32];
-        hmac_sha256(secret, secret_len, a, 32, next_a);
-        for (int i = 0; i < 32; i++) a[i] = next_a[i];
+        u8 next_a[48];
+        tls_hmac(next_a, secret, secret_len, a, h);
+        for (u32 i = 0; i < h; i++) a[i] = next_a[i];
     }
 }
 
@@ -320,6 +379,7 @@ static inline void tls_transcript_update(const u8 *msg, u32 msg_len) {
     fprintf(stderr, "\n");
 #endif
     sha256_update(&tls_conn.transcript, msg, msg_len);
+    sha512_update(&tls_conn.transcript384, msg, msg_len);
 }
 
 /* Writes one TLS record: header (content type, version, length) plus
@@ -413,9 +473,10 @@ static inline void tls_send_client_hello(void) {
     for (int i = 0; i < 32; i++) body[pos++] = tls_conn.client_random[i];
     body[pos++] = 0; /* session_id length: 0, no resumption offered */
 
-    body[pos++] = 0x00; body[pos++] = 0x02; /* cipher_suites length: 2 bytes = 1 suite */
-    body[pos++] = (u8)(TLS_CIPHER_SUITE >> 8);
-    body[pos++] = (u8)(TLS_CIPHER_SUITE & 0xFF);
+    body[pos++] = 0x00; body[pos++] = 0x08; /* cipher_suites length: 8 bytes = 4 suites */
+    static const u16 offered[4] = { TLS_SUITE_ECDHE_ECDSA_AES128_GCM_SHA256, TLS_SUITE_ECDHE_RSA_AES128_GCM_SHA256,
+                                    TLS_SUITE_ECDHE_ECDSA_AES256_GCM_SHA384, TLS_SUITE_ECDHE_RSA_AES256_GCM_SHA384 };
+    for (int k = 0; k < 4; k++) { body[pos++] = (u8)(offered[k] >> 8); body[pos++] = (u8)(offered[k] & 0xFF); }
 
     body[pos++] = 0x01; body[pos++] = 0x00; /* compression_methods: 1 method, null (0) */
 
@@ -423,7 +484,14 @@ static inline void tls_send_client_hello(void) {
     u32 ext_start = pos;
 
     /* server_name (SNI): extension_type=0, list of {name_type=0(host_name), name} */
-    {
+    /* server_name (SNI) -- but never for a bare IP literal: RFC 6066 forbids it, and some servers
+     * answer an IP in SNI with an unrecognized_name alert. */
+    int host_is_ip = host_len > 0;
+    for (u32 i = 0; i < host_len; i++) {
+        char hc = tls_conn.hostname[i];
+        if (!((hc >= '0' && hc <= '9') || hc == '.')) { host_is_ip = 0; break; }
+    }
+    if (!host_is_ip) {
         body[pos++] = 0x00; body[pos++] = 0x00;
         u32 ext_body_len_pos = pos; pos += 2;
         u32 list_len_pos = pos; pos += 2;
@@ -437,10 +505,12 @@ static inline void tls_send_client_hello(void) {
     }
     /* supported_groups: extension_type=10, list of named groups -- x25519 (0x001D) only */
     {
-        body[pos++] = 0x00; body[pos++] = 0x0A;
-        body[pos++] = 0x00; body[pos++] = 0x04; /* ext body len */
-        body[pos++] = 0x00; body[pos++] = 0x02; /* list len */
-        body[pos++] = 0x00; body[pos++] = 0x1D; /* x25519 */
+        body[pos++] = 0x00; body[pos++] = 0x0A;          /* supported_groups: which curves we can do */
+        body[pos++] = 0x00; body[pos++] = 0x08;          /* ext body len */
+        body[pos++] = 0x00; body[pos++] = 0x06;          /* list len: 3 groups */
+        body[pos++] = 0x00; body[pos++] = 0x1D;          /* x25519 */
+        body[pos++] = 0x00; body[pos++] = 0x17;          /* secp256r1 (P-256) */
+        body[pos++] = 0x00; body[pos++] = 0x18;          /* secp384r1 (P-384) */
     }
     /* ec_point_formats: extension_type=11 -- uncompressed(0) only.
      * Not actually meaningful for X25519 (which has no point-compression
@@ -454,10 +524,14 @@ static inline void tls_send_client_hello(void) {
     }
     /* signature_algorithms: extension_type=13 -- rsa_pkcs1_sha256 (0x0401) only */
     {
-        body[pos++] = 0x00; body[pos++] = 0x0D;
-        body[pos++] = 0x00; body[pos++] = 0x04;
-        body[pos++] = 0x00; body[pos++] = 0x02;
-        body[pos++] = 0x04; body[pos++] = 0x01;
+        body[pos++] = 0x00; body[pos++] = 0x0D;          /* signature_algorithms: what we can VERIFY */
+        body[pos++] = 0x00; body[pos++] = 0x0C;          /* ext body len */
+        body[pos++] = 0x00; body[pos++] = 0x0A;          /* list len: 5 pairs of (hash, signature) */
+        body[pos++] = 0x04; body[pos++] = 0x03;          /* ecdsa_secp256r1_sha256 */
+        body[pos++] = 0x05; body[pos++] = 0x03;          /* ecdsa_secp384r1_sha384 */
+        body[pos++] = 0x04; body[pos++] = 0x01;          /* rsa_pkcs1_sha256 */
+        body[pos++] = 0x05; body[pos++] = 0x01;          /* rsa_pkcs1_sha384 */
+        body[pos++] = 0x06; body[pos++] = 0x01;          /* rsa_pkcs1_sha512 */
     }
 
     u32 ext_total_len = pos - ext_start;
@@ -488,7 +562,7 @@ static inline int tls_parse_server_hello(const u8 *body, u32 len) {
     /* pos now at compression_method (1 byte), then extensions -- skip both, unread */
     (void)pos;
 
-    if (cipher_suite != TLS_CIPHER_SUITE) {
+    if (!tls_suite_supported(cipher_suite)) {
         serial_puts("[TLS] server picked unsupported cipher suite 0x");
         serial_put_hex16(cipher_suite);
         serial_puts(" (version bytes 0x");
@@ -497,6 +571,7 @@ static inline int tls_parse_server_hello(const u8 *body, u32 len) {
         tls_conn.fail_reason = TLS_FAIL_UNSUPPORTED_CIPHER_SUITE;
         return 0;
     }
+    tls_conn.cipher_suite = cipher_suite;
     return 1;
 }
 
@@ -676,55 +751,77 @@ static inline int tls_parse_server_key_exchange(const u8 *body, u32 len) {
     if (len < 4) { tls_conn.fail_reason = TLS_FAIL_UNEXPECTED_MESSAGE; return 0; }
     if (body[0] != 3) { tls_conn.fail_reason = TLS_FAIL_UNSUPPORTED_CURVE; return 0; } /* curve_type: named_curve */
     u16 named_curve = (u16)((body[1] << 8) | body[2]);
-    if (named_curve != 0x001D) { tls_conn.fail_reason = TLS_FAIL_UNSUPPORTED_CURVE; return 0; }
+    u32 want_len;
+    if (named_curve == TLS_GROUP_X25519) want_len = 32;
+    else if (named_curve == TLS_GROUP_SECP256R1) want_len = 65;
+    else if (named_curve == TLS_GROUP_SECP384R1) want_len = 97;
+    else {
+        serial_puts("[TLS] server chose unsupported curve 0x");
+        serial_put_hex16(named_curve);
+        serial_putc('\n');
+        tls_conn.fail_reason = TLS_FAIL_UNSUPPORTED_CURVE;
+        return 0;
+    }
     u8 pubkey_len = body[3];
-    if (pubkey_len != 32 || 4u + pubkey_len > len) { tls_conn.fail_reason = TLS_FAIL_UNSUPPORTED_CURVE; return 0; }
+    if (pubkey_len != want_len || 4u + pubkey_len > len) { tls_conn.fail_reason = TLS_FAIL_UNSUPPORTED_CURVE; return 0; }
 
     u32 params_end = 4 + pubkey_len;
-    for (int i = 0; i < 32; i++) tls_conn.peer_public[i] = body[4 + i];
+    tls_conn.kx_curve = named_curve;
+    tls_conn.peer_public_len = pubkey_len;
+    for (u32 i = 0; i < pubkey_len; i++) tls_conn.peer_public[i] = body[4 + i];
 
+    /* Then the signature over those params: a SignatureAndHashAlgorithm pair, a length, the bytes. */
     if (params_end + 4 > len) { tls_conn.fail_reason = TLS_FAIL_UNEXPECTED_MESSAGE; return 0; }
-    /* SignatureAndHashAlgorithm: 2 bytes -- this client only ever asked
-     * for rsa_pkcs1_sha256 (0x0401) in ClientHello, and only knows how
-     * to verify that one, so anything else is a hard fail rather than
-     * an attempt to also support whatever the server picked instead. */
-    if (body[params_end] != 0x04 || body[params_end + 1] != 0x01) {
+    u8 hash_byte = body[params_end], sig_byte = body[params_end + 1];
+    int hash_id = (hash_byte == 4) ? PKCS1_HASH_SHA256 : (hash_byte == 5) ? PKCS1_HASH_SHA384
+                : (hash_byte == 6) ? PKCS1_HASH_SHA512 : PKCS1_HASH_NONE;
+    int is_ecdsa_sig = (sig_byte == 3);
+    if (hash_id == PKCS1_HASH_NONE || (sig_byte != 1 && sig_byte != 3)) {
+        serial_puts("[TLS] server signed with unsupported algorithm 0x");
+        serial_put_hex16((u16)((hash_byte << 8) | sig_byte));
+        serial_putc('\n');
         tls_conn.fail_reason = TLS_FAIL_SKE_SIGNATURE;
         return 0;
     }
+    /* The signature scheme has to agree with the suite the server itself picked... */
+    if (is_ecdsa_sig != tls_suite_is_ecdsa(tls_conn.cipher_suite)) { tls_conn.fail_reason = TLS_FAIL_SKE_SIGNATURE; return 0; }
     u16 sig_len = (u16)((body[params_end + 2] << 8) | body[params_end + 3]);
     u32 sig_start = params_end + 4;
     if (sig_start + sig_len > len) { tls_conn.fail_reason = TLS_FAIL_UNEXPECTED_MESSAGE; return 0; }
 
-    u8 signed_data[4 + 512];
+    /* signed = client_random || server_random || the ECDH params exactly as sent */
+    u8 signed_data[64 + 4 + 97];
     u32 sd_pos = 0;
     for (int i = 0; i < 32; i++) signed_data[sd_pos++] = tls_conn.client_random[i];
     for (int i = 0; i < 32; i++) signed_data[sd_pos++] = tls_conn.server_random[i];
     for (u32 i = 0; i < params_end; i++) signed_data[sd_pos++] = body[i];
 
+    /* ...and with the certificate's own key type -- which is what actually vouches for these params. */
     x509_cert_t *leaf = &tls_conn.chain[0];
-    if (!leaf->pubkey_valid) {   /* an EC leaf can't sign an RSA-suite ServerKeyExchange */
-        tls_conn.fail_reason = TLS_FAIL_SKE_SIGNATURE;
-        return 0;
-    }
-    if (!pkcs1_verify_sha256(signed_data, sd_pos, body + sig_start, sig_len,
-                              &leaf->pubkey_modulus, leaf->pubkey_exponent)) {
-        tls_conn.fail_reason = TLS_FAIL_SKE_SIGNATURE;
-        return 0;
+    if (is_ecdsa_sig) {
+        ecc_curve_t *curve = ecc_curve_by_group(leaf->ec_group);
+        u8 digest[64];
+        u32 dl = pkcs1_hash(hash_id, signed_data, sd_pos, digest);
+        if (!curve || leaf->ec_point_len == 0 || !dl ||
+            !ecdsa_verify_der(curve, leaf->ec_point, leaf->ec_point_len, digest, dl, body + sig_start, sig_len)) {
+            tls_conn.fail_reason = TLS_FAIL_SKE_SIGNATURE;
+            return 0;
+        }
+    } else {
+        if (!leaf->pubkey_valid ||
+            !pkcs1_verify(hash_id, signed_data, sd_pos, body + sig_start, sig_len, &leaf->pubkey_modulus, leaf->pubkey_exponent)) {
+            tls_conn.fail_reason = TLS_FAIL_SKE_SIGNATURE;
+            return 0;
+        }
     }
     return 1;
 }
 
-/* Builds and sends ClientKeyExchange: just our ephemeral X25519 public
- * key, length-prefixed. (The RSA-key-transport variant of this message
- * -- an encrypted premaster secret -- belongs to the cipher suite this
- * client abandoned; ECDHE's ClientKeyExchange is this much simpler,
- * one of the few places the pivot to ECDHE actually reduced code.) */
 static inline void tls_send_client_key_exchange(void) {
-    u8 body[1 + 32];
-    body[0] = 32;
-    for (int i = 0; i < 32; i++) body[1 + i] = tls_conn.my_public[i];
-    tls_send_handshake(TLS_HS_CLIENT_KEY_EXCHANGE, body, sizeof(body));
+    u8 body[1 + 97];
+    body[0] = (u8)tls_conn.my_public_len;
+    for (u32 i = 0; i < tls_conn.my_public_len; i++) body[1 + i] = tls_conn.my_public[i];
+    tls_send_handshake(TLS_HS_CLIENT_KEY_EXCHANGE, body, 1 + tls_conn.my_public_len);
 }
 
 /* Derives master_secret from the X25519 shared secret (the "premaster
@@ -734,46 +831,47 @@ static inline void tls_send_client_key_exchange(void) {
  * each) and client/server write IVs (4-byte GCM salts each) -- no MAC
  * keys, since GCM is AEAD and authenticates via the tag, not a separate
  * HMAC the way the CBC suites this client doesn't support would need. */
-static inline void tls_derive_keys(const u8 premaster[32]) {
+static inline void tls_derive_keys(const u8 *premaster, u32 premaster_len) {
     u8 seed[64];
     for (int i = 0; i < 32; i++) seed[i] = tls_conn.client_random[i];
     for (int i = 0; i < 32; i++) seed[32 + i] = tls_conn.server_random[i];
-    tls_prf(tls_conn.master_secret, 48, premaster, 32, "master secret", seed, 64);
+    tls_prf(tls_conn.master_secret, 48, premaster, premaster_len, "master secret", seed, 64);
 
-    u8 key_block[2 * (16 + 4)];
+    /* key_block = client_write_key | server_write_key | client_write_IV | server_write_IV
+     * (no MAC keys: GCM authenticates itself). 16-byte keys for AES-128, 32 for AES-256. */
+    u32 klen = (u32)tls_suite_key_len(tls_conn.cipher_suite);
+    u8 key_block[2 * 32 + 2 * 4];
     u8 seed2[64];
     for (int i = 0; i < 32; i++) seed2[i] = tls_conn.server_random[i];
     for (int i = 0; i < 32; i++) seed2[32 + i] = tls_conn.client_random[i];
-    tls_prf(key_block, sizeof(key_block), tls_conn.master_secret, 48, "key expansion", seed2, 64);
+    tls_prf(key_block, 2 * klen + 8, tls_conn.master_secret, 48, "key expansion", seed2, 64);
 
     u32 pos = 0;
-    aes128_set_key(&tls_conn.client_write_aes, key_block + pos); pos += 16;
-    aes128_set_key(&tls_conn.server_write_aes, key_block + pos); pos += 16;
+    aes_set_key(&tls_conn.client_write_aes, key_block + pos, (int)klen); pos += klen;
+    aes_set_key(&tls_conn.server_write_aes, key_block + pos, (int)klen); pos += klen;
     for (int i = 0; i < 4; i++) { tls_conn.client_write_iv[i] = key_block[pos + i]; }
     pos += 4;
     for (int i = 0; i < 4; i++) { tls_conn.server_write_iv[i] = key_block[pos + i]; }
     pos += 4;
 }
 
-/* Computes a Finished message's 12-byte verify_data: PRF(master_secret,
- * label, SHA-256(transcript so far))[0:12]. `label` is "client
- * finished" for ours, "server finished" for verifying the server's --
- * same construction, different label and different point in the
- * transcript (ours is computed before our own Finished is sent/hashed;
- * the server's expected value, which we compute to check against what
- * it actually sent, is computed after OUR Finished has already been
- * folded into the transcript, matching where the server computes its
- * own copy from its point of view). */
 static inline void tls_compute_finished(u8 out[12], const char *label) {
-    sha256_ctx_t snapshot = tls_conn.transcript; /* copy -- sha256_final()
-                                                  * mutates, and the real
-                                                  * transcript must keep
-                                                  * accumulating afterward */
-    u8 transcript_hash[32];
-    sha256_final(&snapshot, transcript_hash);
-
-    u8 full[32];
-    tls_prf(full, 32, tls_conn.master_secret, 48, label, transcript_hash, 32);
+    /* verify_data = PRF(master_secret, label, Hash(all handshake messages so far))[0..11], where
+     * Hash is the suite's PRF hash. Snapshot copies: *_final() consumes its context, and the
+     * transcript must keep growing afterwards (the server's Finished is hashed in later). */
+    u8 transcript_hash[48];
+    u32 hl;
+    if (tls_suite_is_sha384(tls_conn.cipher_suite)) {
+        sha512_ctx_t snap = tls_conn.transcript384;
+        sha384_final(&snap, transcript_hash);
+        hl = 48;
+    } else {
+        sha256_ctx_t snap = tls_conn.transcript;
+        sha256_final(&snap, transcript_hash);
+        hl = 32;
+    }
+    u8 full[12];
+    tls_prf(full, 12, tls_conn.master_secret, 48, label, transcript_hash, hl);
     for (int i = 0; i < 12; i++) out[i] = full[i];
 }
 
@@ -883,11 +981,31 @@ static inline void tls_dispatch_handshake_message(u8 msg_type, const u8 *body, u
                  * keypair, compute the shared secret against the
                  * server's ephemeral public key, derive the session
                  * keys, and respond. */
-                tls_rng_bytes(tls_conn.my_private, 32);
-                x25519_derive_public(tls_conn.my_public, tls_conn.my_private);
-                u8 premaster[32];
-                x25519_scalarmult(premaster, tls_conn.my_private, tls_conn.peer_public);
-                tls_derive_keys(premaster);
+                u8 premaster[48];
+                u32 premaster_len;
+                if (tls_conn.kx_curve == TLS_GROUP_X25519) {
+                    tls_rng_bytes(tls_conn.my_private, 32);
+                    x25519_derive_public(tls_conn.my_public, tls_conn.my_private);
+                    tls_conn.my_public_len = 32;
+                    x25519_scalarmult(premaster, tls_conn.my_private, tls_conn.peer_public);
+                    premaster_len = 32;
+                } else {
+                    ecc_curve_t *ec = ecc_curve_by_group(tls_conn.kx_curve);
+                    u8 rnd[48];
+                    if (!ec) { tls_conn.fail_reason = TLS_FAIL_UNSUPPORTED_CURVE; tls_conn.state = TLS_FAILED; return; }
+                    tls_rng_bytes(rnd, (u32)ec->bytes);
+                    if (!ecdh_keygen(ec, rnd, tls_conn.my_private, tls_conn.my_public)) {
+                        tls_conn.fail_reason = TLS_FAIL_UNSUPPORTED_CURVE; tls_conn.state = TLS_FAILED; return;
+                    }
+                    tls_conn.my_public_len = (u32)(1 + 2 * ec->bytes);
+                    /* ecdh_shared() refuses a point that isn't on the curve: a malicious or
+                     * broken server can't feed us an invalid-curve point to leak our key. */
+                    if (!ecdh_shared(ec, tls_conn.my_private, tls_conn.peer_public, tls_conn.peer_public_len, premaster)) {
+                        tls_conn.fail_reason = TLS_FAIL_UNSUPPORTED_CURVE; tls_conn.state = TLS_FAILED; return;
+                    }
+                    premaster_len = (u32)ec->bytes;
+                }
+                tls_derive_keys(premaster, premaster_len);
 
                 tls_send_client_key_exchange();
                 tls_send_finished();
@@ -1095,6 +1213,9 @@ static inline void tls_connect(u32 ip, u16 port, const char *hostname, const u8 
 
     tls_rng_seed(entropy_seed);
     sha256_init(&tls_conn.transcript);
+    sha384_init(&tls_conn.transcript384);
+    tls_conn.cipher_suite = 0;
+    tls_conn.kx_curve = 0;
 
     tcp_connect(ip, port);
 }
