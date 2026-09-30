@@ -10,6 +10,7 @@ Line formats (hex, "-" = empty):
   ECDSA <bits> <pub> <digest> <sigDER> <1|0>     expected verify result
   ECDH  <bits> <rand> <peer_pub> <our_pub> <shared>   (our priv = rand | topbit, reduced mod n)
   ECBAD <bits> <peer_pub>                         a point ecdh_shared() must REJECT
+  X509 <leaf.der> <issuer.der> <1|0> <ec_group|0>  x509_verify_signed_by(leaf, issuer) expected result
 """
 import hashlib, hmac, random, sys
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -72,5 +73,36 @@ for bits, (curve, nb, order) in CURVES.items():
     out.append("ECBAD %d %s" % (bits, (b"\x04" + b"\x00" * (2 * nb)).hex()))     # (0,0)
     out.append("ECBAD %d %s" % (bits, (b"\x02" + good[1:1 + nb]).hex()))          # compressed: unsupported
     out.append("ECBAD %d %s" % (bits, good[:-1].hex()))            # truncated
+
+# ---- X.509: real certificates, every signature/key combination a public chain uses ----
+import datetime
+from cryptography import x509 as cx
+from cryptography.x509.oid import NameOID
+from cryptography.hazmat.primitives.asymmetric import rsa
+def mk_key(kind):
+    if kind == "rsa": return rsa.generate_private_key(65537, 2048)
+    return ec.generate_private_key(ec.SECP256R1() if kind == "p256" else ec.SECP384R1())
+def mk_cert(subject_cn, subject_key, issuer_cn, issuer_key, halg, is_ca):
+    now = datetime.datetime(2026, 1, 1)
+    b = (cx.CertificateBuilder().subject_name(cx.Name([cx.NameAttribute(NameOID.COMMON_NAME, subject_cn)]))
+         .issuer_name(cx.Name([cx.NameAttribute(NameOID.COMMON_NAME, issuer_cn)]))
+         .public_key(subject_key.public_key()).serial_number(cx.random_serial_number())
+         .not_valid_before(now).not_valid_after(now + datetime.timedelta(days=3650))
+         .add_extension(cx.BasicConstraints(ca=is_ca, path_length=None), critical=True))
+    return b.sign(issuer_key, halg).public_bytes(serialization.Encoding.DER)
+HALGS = {"sha256": hashes.SHA256(), "sha384": hashes.SHA384(), "sha512": hashes.SHA512()}
+def eg(kind): return {"rsa": 0, "p256": 23, "p384": 24}[kind]
+keys = {k: mk_key(k) for k in ("rsa", "p256", "p384")}
+ca_der = {k: mk_cert("CA-" + k, keys[k], "CA-" + k, keys[k], hashes.SHA256() if k != "p384" else hashes.SHA384(), True) for k in keys}
+for ca_kind in keys:
+    for leaf_kind in keys:
+        for hn, ha in HALGS.items():
+            leaf_key = mk_key(leaf_kind)
+            leaf = mk_cert("leaf-%s-%s" % (leaf_kind, hn), leaf_key, "CA-" + ca_kind, keys[ca_kind], ha, False)
+            out.append("X509 %s %s 1 %d" % (leaf.hex(), ca_der[ca_kind].hex(), eg(leaf_kind)))
+            wrong = [k for k in keys if k != ca_kind][0]
+            out.append("X509 %s %s 0 %d" % (leaf.hex(), ca_der[wrong].hex(), eg(leaf_kind)))   # right subject name irrelevant: signature must fail
+            t = bytearray(leaf); t[len(t) // 2 - 40] ^= 0x01                                      # corrupt inside the TBS
+            out.append("X509 %s %s 0 %d" % (bytes(t).hex(), ca_der[ca_kind].hex(), eg(leaf_kind)))
 open(sys.argv[1] if len(sys.argv) > 1 else "/tmp/crypto_vectors.txt", "w").write("\n".join(out) + "\n")
 print("wrote", len(out), "vectors")

@@ -13,7 +13,9 @@
  *                         stay under 0x9FC00 or it walks into the EBDA/VGA
  *                         window)
  *   0x100000 - 0x17FFFF   the kernel STACK (512KB, grows DOWN from 0x180000)
- *   0x180000 - 0x3FFFFF   the NET ARENA (2.5MB) -- every big network buffer
+ *   0x180000 - 0x3FFFFF   the NET ARENA (2.5MB) -- every big network buffer,
+ *                         including the NICs' DMA buffers (the card's bus-master
+ *                         DMA works on any physical address, and .bss was out of room)
  *   0x400000 - 0x52BFFF   vga.h's backbuffer (640*480*4)
  *
  * WHY THE STACK MOVED: it used to start at 0x9FC00 (the top of
@@ -51,6 +53,10 @@
 #define MW_TLS_APP_SIZE   0x00008000u   /* 32KB  decrypted application data awaiting the HTTP layer */
 #define MW_TLS_REC_SIZE   0x00005000u   /* 20KB  scratch for building one outgoing record */
 #define MW_HTTP_BODY_SIZE 0x00040000u   /* 256KB a whole fetched page, headers included */
+#define MW_E1000_RX_SIZE  0x00010000u   /* 64KB  e1000 receive DMA buffers (32 descriptors x 2048) */
+#define MW_E1000_TX_SIZE  0x00004000u   /* 16KB  e1000 transmit DMA buffers (8 x 2048) */
+#define MW_RTL_RX_SIZE    0x00002800u   /* 10KB  rtl8139 receive ring (8192 + 16 + 1500 needed) */
+#define MW_RTL_TX_SIZE    0x00001800u   /* 6KB   rtl8139 transmit slots (4 x 1536) */
 
 #define MW_TCP_RECV_ADDR  (MW_NETMEM_BASE)
 #define MW_TCP_SEND_ADDR  (MW_TCP_RECV_ADDR + MW_TCP_RECV_SIZE)
@@ -59,7 +65,11 @@
 #define MW_TLS_APP_ADDR   (MW_TLS_HS_ADDR   + MW_TLS_HS_SIZE)
 #define MW_TLS_REC_ADDR   (MW_TLS_APP_ADDR  + MW_TLS_APP_SIZE)
 #define MW_HTTP_BODY_ADDR (MW_TLS_REC_ADDR  + MW_TLS_REC_SIZE)
-#define MW_NETMEM_USED_END (MW_HTTP_BODY_ADDR + MW_HTTP_BODY_SIZE)
+#define MW_E1000_RX_ADDR  (MW_HTTP_BODY_ADDR + MW_HTTP_BODY_SIZE)
+#define MW_E1000_TX_ADDR  (MW_E1000_RX_ADDR + MW_E1000_RX_SIZE)
+#define MW_RTL_RX_ADDR    (MW_E1000_TX_ADDR + MW_E1000_TX_SIZE)
+#define MW_RTL_TX_ADDR    (MW_RTL_RX_ADDR   + MW_RTL_RX_SIZE)
+#define MW_NETMEM_USED_END (MW_RTL_TX_ADDR + MW_RTL_TX_SIZE)
 
 /* Compile-time proof the arena is big enough (negative array size =
  * build error, no libc's static_assert needed). */

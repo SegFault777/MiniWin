@@ -5,6 +5,7 @@
 #include "bignum.h"
 #include "sha256.h"
 #include "pkcs1.h"
+#include "ecc.h"
 
 /* ============================================================
  * x509.h -- turns a DER-encoded X.509 certificate into the handful of
@@ -16,11 +17,15 @@
  * Certificate (RFC 5280's ASN.1 module), field by field, in the exact
  * order the spec lays them out.
  *
- * Only RSA + SHA-256 signatures are understood (matching the rest of
- * this TLS client's single-cipher-suite scope) -- a certificate signed
- * with anything else (ECDSA, SHA-1, SHA-384, ...) is parsed far enough
- * to be recognized and rejected with a clear reason, not silently
- * mishandled.
+ * Signatures understood (pre-23): RSA PKCS#1 v1.5 with SHA-256/384/512 and
+ * ECDSA with SHA-256/384/512, on RSA keys and on NIST P-256/P-384 keys --
+ * enough for every public web CA chain in practice (Let's Encrypt, Google
+ * Trust Services, Amazon, DigiCert, Sectigo, ...). Before that this file
+ * knew only RSA + SHA-256, so any chain containing an ECDSA link or a
+ * sha384WithRSA intermediate was reported as \"untrusted\". Anything still
+ * unrecognized (SHA-1, RSA-PSS certificate signatures, other curves) is
+ * parsed far enough to be recognized and rejected with a clear reason,
+ * not silently mishandled.
  * ============================================================ */
 
 /* DER-encoded OID byte sequences this parser needs to recognize.
@@ -35,9 +40,21 @@
 static const u8 OID_RSA_ENCRYPTION[]      = {0x2a,0x86,0x48,0x86,0xf7,0x0d,0x01,0x01,0x01};
 static const u8 OID_SHA256_WITH_RSA[]     = {0x2a,0x86,0x48,0x86,0xf7,0x0d,0x01,0x01,0x0b};
 static const u8 OID_SHA256[]              = {0x60,0x86,0x48,0x01,0x65,0x03,0x04,0x02,0x01};
+static const u8 OID_SHA384_WITH_RSA[]     = {0x2a,0x86,0x48,0x86,0xf7,0x0d,0x01,0x01,0x0c};
+static const u8 OID_SHA512_WITH_RSA[]     = {0x2a,0x86,0x48,0x86,0xf7,0x0d,0x01,0x01,0x0d};
+static const u8 OID_ECDSA_WITH_SHA256[]   = {0x2a,0x86,0x48,0xce,0x3d,0x04,0x03,0x02};
+static const u8 OID_ECDSA_WITH_SHA384[]   = {0x2a,0x86,0x48,0xce,0x3d,0x04,0x03,0x03};
+static const u8 OID_ECDSA_WITH_SHA512[]   = {0x2a,0x86,0x48,0xce,0x3d,0x04,0x03,0x04};
+static const u8 OID_EC_PUBLIC_KEY[]       = {0x2a,0x86,0x48,0xce,0x3d,0x02,0x01};   /* 1.2.840.10045.2.1 */
+static const u8 OID_CURVE_P256[]          = {0x2a,0x86,0x48,0xce,0x3d,0x03,0x01,0x07}; /* secp256r1 / prime256v1 */
+static const u8 OID_CURVE_P384[]          = {0x2b,0x81,0x04,0x00,0x22};                /* secp384r1 */
 static const u8 OID_SUBJECT_ALT_NAME[]    = {0x55,0x1d,0x11};
 static const u8 OID_BASIC_CONSTRAINTS[]   = {0x55,0x1d,0x13};
 static const u8 OID_COMMON_NAME[]         = {0x55,0x04,0x03};
+
+#define X509_SIG_NONE      0
+#define X509_SIG_RSA_PKCS1 1
+#define X509_SIG_ECDSA     2
 
 #define X509_MAX_NAME_LEN 512   /* raw DER bytes of issuer/subject Name --
                                  * kept as opaque bytes for equality
@@ -73,6 +90,20 @@ typedef struct {
                          * never be used as an issuer (we have no ECDSA
                          * verification) or, if it's the leaf, means
                          * this connection can't proceed */
+
+    /* An elliptic-curve public key (id-ecPublicKey), if that is what the SPKI
+     * held: which named curve (TLS group id 23 = P-256, 24 = P-384; 0 = none or
+     * an unsupported curve) and the uncompressed point 0x04||X||Y (65 or 97 bytes),
+     * kept as a copy so the cert struct owns it. RSA keys leave this at 0. */
+    u16 ec_group;
+    u8  ec_point[97];
+    u32 ec_point_len;
+
+    /* How this certificate's own signature was made, decoded from the outer
+     * signatureAlgorithm: the scheme (X509_SIG_RSA_PKCS1 / X509_SIG_ECDSA) and
+     * the hash (PKCS1_HASH_*). Both nonzero = a combination this client can verify. */
+    int sig_scheme;
+    int sig_hash;
 
     u8  signature[512];   /* raw RSA signature bytes -- big enough for
                            * RSA-4096 (512 bytes); anything larger is
@@ -237,6 +268,10 @@ static inline int x509_parse(const u8 *der, u32 der_len, x509_cert_t *cert) {
     cert->cn_len = 0;
     cert->pubkey_valid = 0;
     cert->sig_alg_supported = 0;
+    cert->ec_group = 0;
+    cert->ec_point_len = 0;
+    cert->sig_scheme = X509_SIG_NONE;
+    cert->sig_hash = PKCS1_HASH_NONE;
 
     asn1_tlv_t outer, tbs;
     if (!asn1_expect(der, der_len, ASN1_TAG_SEQUENCE, &outer)) return 0;
@@ -316,7 +351,28 @@ static inline int x509_parse(const u8 *der, u32 der_len, x509_cert_t *cert) {
         if (!asn1_expect(spki.value, spki.len, ASN1_TAG_SEQUENCE, &alg)) return 0;
         if (!asn1_parse_tlv(alg.value, alg.len, &alg_oid)) return 0;
 
-        if (asn1_oid_equals(&alg_oid, OID_RSA_ENCRYPTION, sizeof(OID_RSA_ENCRYPTION))) {
+        if (asn1_oid_equals(&alg_oid, OID_EC_PUBLIC_KEY, sizeof(OID_EC_PUBLIC_KEY))) {
+            /* AlgorithmIdentifier { id-ecPublicKey, namedCurve OID }, then a BIT STRING
+             * holding the uncompressed point. Only the two NIST curves ecc.h implements
+             * are accepted; anything else leaves ec_group = 0 (= unusable key). */
+            asn1_tlv_t curve_oid, pt_bits;
+            u32 arem = alg.len - (u32)(alg_oid.next - alg.value);
+            u32 spki_remaining = spki.len - (u32)(alg.next - spki.value);
+            if (asn1_parse_tlv(alg_oid.next, arem, &curve_oid) &&
+                asn1_expect(alg.next, spki_remaining, ASN1_TAG_BIT_STRING, &pt_bits)) {
+                u16 group = 0;
+                if (asn1_oid_equals(&curve_oid, OID_CURVE_P256, sizeof(OID_CURVE_P256))) group = 23;
+                else if (asn1_oid_equals(&curve_oid, OID_CURVE_P384, sizeof(OID_CURVE_P384))) group = 24;
+                const u8 *pd; u32 pl;
+                asn1_bit_string_bytes(&pt_bits, &pd, &pl);
+                u32 want = (group == 23) ? 65u : (group == 24) ? 97u : 0u;
+                if (group && pl == want && pd[0] == 0x04) {
+                    for (u32 i = 0; i < pl; i++) cert->ec_point[i] = pd[i];
+                    cert->ec_point_len = pl;
+                    cert->ec_group = group;
+                }
+            }
+        } else if (asn1_oid_equals(&alg_oid, OID_RSA_ENCRYPTION, sizeof(OID_RSA_ENCRYPTION))) {
             asn1_tlv_t pk_bits;
             u32 spki_remaining = spki.len - (u32)(alg.next - spki.value);
             if (asn1_expect(alg.next, spki_remaining, ASN1_TAG_BIT_STRING, &pk_bits)) {
@@ -368,7 +424,14 @@ static inline int x509_parse(const u8 *der, u32 der_len, x509_cert_t *cert) {
     asn1_tlv_t sig_alg, sig_alg_oid;
     if (!asn1_expect(op, outer_remaining, ASN1_TAG_SEQUENCE, &sig_alg)) return 0;
     if (!asn1_parse_tlv(sig_alg.value, sig_alg.len, &sig_alg_oid)) return 0;
-    cert->sig_alg_supported = asn1_oid_equals(&sig_alg_oid, OID_SHA256_WITH_RSA, sizeof(OID_SHA256_WITH_RSA));
+    if      (asn1_oid_equals(&sig_alg_oid, OID_SHA256_WITH_RSA, sizeof(OID_SHA256_WITH_RSA))) { cert->sig_scheme = X509_SIG_RSA_PKCS1; cert->sig_hash = PKCS1_HASH_SHA256; }
+    else if (asn1_oid_equals(&sig_alg_oid, OID_SHA384_WITH_RSA, sizeof(OID_SHA384_WITH_RSA))) { cert->sig_scheme = X509_SIG_RSA_PKCS1; cert->sig_hash = PKCS1_HASH_SHA384; }
+    else if (asn1_oid_equals(&sig_alg_oid, OID_SHA512_WITH_RSA, sizeof(OID_SHA512_WITH_RSA))) { cert->sig_scheme = X509_SIG_RSA_PKCS1; cert->sig_hash = PKCS1_HASH_SHA512; }
+    else if (asn1_oid_equals(&sig_alg_oid, OID_ECDSA_WITH_SHA256, sizeof(OID_ECDSA_WITH_SHA256))) { cert->sig_scheme = X509_SIG_ECDSA; cert->sig_hash = PKCS1_HASH_SHA256; }
+    else if (asn1_oid_equals(&sig_alg_oid, OID_ECDSA_WITH_SHA384, sizeof(OID_ECDSA_WITH_SHA384))) { cert->sig_scheme = X509_SIG_ECDSA; cert->sig_hash = PKCS1_HASH_SHA384; }
+    else if (asn1_oid_equals(&sig_alg_oid, OID_ECDSA_WITH_SHA512, sizeof(OID_ECDSA_WITH_SHA512))) { cert->sig_scheme = X509_SIG_ECDSA; cert->sig_hash = PKCS1_HASH_SHA512; }
+    /* "supported" now means: a scheme and hash this client can actually check */
+    cert->sig_alg_supported = (cert->sig_scheme != X509_SIG_NONE && cert->sig_hash != PKCS1_HASH_NONE);
     outer_remaining -= (u32)(sig_alg.next - op);
     op = sig_alg.next;
 
@@ -409,6 +472,37 @@ static inline int x509_verify_signature(const x509_cert_t *cert, const bignum_t 
     return pkcs1_verify_sha256(cert->tbs_data, cert->tbs_len,
                                 cert->signature, cert->signature_len,
                                 issuer_modulus, issuer_exponent);
+}
+
+/* Verifies that `cert` was signed by `issuer`: the single entry point that knows
+ * both signature schemes. The issuer's KEY TYPE has to match the scheme -- an
+ * ECDSA signature is only ever checked against an EC key, an RSA one against an
+ * RSA key -- so a mismatched pairing fails instead of being coerced. The hash is
+ * whatever the certificate's own signatureAlgorithm declared. */
+static inline int x509_verify_signed_by(const x509_cert_t *cert, const x509_cert_t *issuer) {
+    if (!cert->sig_alg_supported) return 0;
+    if (cert->sig_scheme == X509_SIG_RSA_PKCS1) {
+        if (!issuer->pubkey_valid) return 0;
+        return pkcs1_verify(cert->sig_hash, cert->tbs_data, cert->tbs_len,
+                            cert->signature, cert->signature_len,
+                            &issuer->pubkey_modulus, issuer->pubkey_exponent);
+    }
+    if (cert->sig_scheme == X509_SIG_ECDSA) {
+        ecc_curve_t *curve = ecc_curve_by_group(issuer->ec_group);
+        if (!curve || issuer->ec_point_len == 0) return 0;
+        u8 digest[64];
+        u32 dl = pkcs1_hash(cert->sig_hash, cert->tbs_data, cert->tbs_len, digest);
+        if (!dl) return 0;
+        return ecdsa_verify_der(curve, issuer->ec_point, issuer->ec_point_len,
+                                digest, dl, cert->signature, cert->signature_len);
+    }
+    return 0;
+}
+
+/* True if this certificate carries a public key this client can use for anything
+ * (an RSA key, or an EC key on a supported curve). */
+static inline int x509_has_usable_key(const x509_cert_t *cert) {
+    return cert->pubkey_valid || cert->ec_group != 0;
 }
 
 static inline int x509_is_valid_now(const x509_cert_t *cert, u64 now_packed) {

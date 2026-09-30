@@ -9,6 +9,9 @@
 #include "x25519.h"
 #include "x509.h"
 #include "pkcs1.h"
+#include "sha512.h"
+#include "hmac_sha384.h"
+#include "ecc.h"
 #include "trusted_roots.h"
 #ifdef MW_TLS_TEST_ROOTS
 #include MW_TLS_TEST_ROOTS   /* defines MW_TEST_ROOT_COUNT, mw_test_roots[], mw_test_root_lens[] */
@@ -78,14 +81,14 @@
  * server that (reasonably) sent its response as one large record. Sized
  * with a little headroom above the bare minimum for whatever of the
  * next record's bytes TCP happens to deliver in the same read. */
-#define TLS_RX_RAW_BUF_SIZE   17408   /* 17KB: 16413-byte max record + headroom */
-#define TLS_HS_BUF_SIZE       8192    /* reassembled handshake-content bytes,
+#define TLS_RX_RAW_BUF_SIZE   MW_TLS_RAW_SIZE   /* 20KB: 16413-byte max record + headroom */
+#define TLS_HS_BUF_SIZE       MW_TLS_HS_SIZE  /* 32KB (was 8KB): reassembled handshake-content bytes,
                                        * not yet split into messages -- real
                                        * certificate chains (a leaf plus one
                                        * or two intermediates) run a few KB;
                                        * this has comfortable headroom above
                                        * anything actually observed */
-#define TLS_APP_RECV_BUF_SIZE 4096   /* NOT sized for a worst-case 16384-byte
+#define TLS_APP_RECV_BUF_SIZE MW_TLS_APP_SIZE /* 32KB (was 4KB) -- NOT sized for a worst-case 16384-byte
                                       * record -- see tls_process_raw_buffer()'s
                                       * application_data handling, which
                                       * truncates (keeps the first
@@ -101,7 +104,7 @@
                                       * legally allows" saves real BSS
                                       * budget for a limit this client
                                       * already imposes one layer up anyway. */
-#define TLS_CHAIN_MAX 3              /* leaf + one or two intermediates/root.
+#define TLS_CHAIN_MAX 5              /* (was 3) leaf + up to four intermediates/root. Some servers send a cross-signed extra.
                                       * Real chains are overwhelmingly 2-3
                                       * certificates (a server sending
                                       * leaf+intermediate and trusting the
@@ -199,11 +202,12 @@ typedef struct {
     x509_cert_t chain[TLS_CHAIN_MAX];
     int chain_len;
 
-    u8 rx_raw[TLS_RX_RAW_BUF_SIZE];
+    /* The three big byte buffers (raw record bytes, reassembled handshake bytes, decrypted
+     * application data) are NOT members any more: they sit in the net arena (memmap.h) as
+     * TLS_RX_RAW / TLS_HS_BUF / TLS_APP_RECV, which took 29KB out of .bss. Only their fill
+     * levels live here. */
     u32 rx_raw_len;
-    u8 hs_buf[TLS_HS_BUF_SIZE];
     u32 hs_buf_len;
-    u8 app_recv[TLS_APP_RECV_BUF_SIZE];
     u32 app_recv_len;
 
     /* A tiny xorshift-like PRNG state, seeded once by whatever entropy
@@ -217,6 +221,10 @@ typedef struct {
 } tls_conn_t;
 
 static tls_conn_t tls_conn;
+
+#define TLS_RX_RAW   ((u8 *)MW_TLS_RAW_ADDR)
+#define TLS_HS_BUF   ((u8 *)MW_TLS_HS_ADDR)
+#define TLS_APP_RECV ((u8 *)MW_TLS_APP_ADDR)
 
 /* ---- a small non-cryptographic PRNG, xorshift128, seeded from
  * whatever entropy the caller has (RTC, tick counters, ...) ----
@@ -566,8 +574,7 @@ static inline void tls_dbg_print_cn(const char *label, const u8 *name, u32 len) 
 static inline int tls_anchored_by(const x509_cert_t *cert, const u8 *der, u32 der_len) {
     x509_cert_t root;
     if (!x509_parse(der, der_len, &root)) return 0;
-    return x509_issuer_matches_subject(cert, &root) &&
-           x509_verify_signature(cert, &root.pubkey_modulus, root.pubkey_exponent);
+    return x509_issuer_matches_subject(cert, &root) && x509_verify_signed_by(cert, &root);
 }
 
 /* Walks tls_conn.chain[] (as parsed by tls_parse_certificate_message())
@@ -593,7 +600,7 @@ static inline int tls_verify_certificate_chain(u64 now_packed) {
 
     for (int i = 0; i < tls_conn.chain_len; i++) {
         x509_cert_t *cert = &tls_conn.chain[i];
-        if (!cert->pubkey_valid || !cert->sig_alg_supported) {
+        if (!x509_has_usable_key(cert) || !cert->sig_alg_supported) {
             tls_conn.fail_reason = TLS_FAIL_CERT_CHAIN;
             return 0;
         }
@@ -619,7 +626,7 @@ static inline int tls_verify_certificate_chain(u64 now_packed) {
             tls_conn.fail_reason = TLS_FAIL_CERT_CHAIN;
             return 0;
         }
-        if (!x509_verify_signature(child, &parent->pubkey_modulus, parent->pubkey_exponent)) {
+        if (!x509_verify_signed_by(child, parent)) {
             tls_conn.fail_reason = TLS_FAIL_CERT_CHAIN;
             return 0;
         }
@@ -696,6 +703,10 @@ static inline int tls_parse_server_key_exchange(const u8 *body, u32 len) {
     for (u32 i = 0; i < params_end; i++) signed_data[sd_pos++] = body[i];
 
     x509_cert_t *leaf = &tls_conn.chain[0];
+    if (!leaf->pubkey_valid) {   /* an EC leaf can't sign an RSA-suite ServerKeyExchange */
+        tls_conn.fail_reason = TLS_FAIL_SKE_SIGNATURE;
+        return 0;
+    }
     if (!pkcs1_verify_sha256(signed_data, sd_pos, body + sig_start, sig_len,
                               &leaf->pubkey_modulus, leaf->pubkey_exponent)) {
         tls_conn.fail_reason = TLS_FAIL_SKE_SIGNATURE;
@@ -836,7 +847,7 @@ static inline int tls_decrypt_record(u8 content_type, u8 *payload, u32 payload_l
 }
 
 /* Dispatches exactly one complete handshake message (already reassembled
- * in tls_conn.hs_buf) according to the current state. Advances
+ * in TLS_HS_BUF) according to the current state. Advances
  * tls_conn.state on success; sets TLS_FAILED + a reason on anything
  * unexpected. This is the heart of the handshake's actual protocol
  * logic -- everything above this function is plumbing (framing,
@@ -911,7 +922,7 @@ static inline void tls_dispatch_handshake_message(u8 msg_type, const u8 *body, u
     }
 }
 
-/* Splits tls_conn.hs_buf into complete handshake messages and dispatches
+/* Splits TLS_HS_BUF into complete handshake messages and dispatches
  * each in order, folding received messages into the transcript hash as
  * they're consumed -- mirroring tls_send_handshake()'s hashing on the
  * send side, so both directions' messages end up hashed in true wire
@@ -919,11 +930,11 @@ static inline void tls_dispatch_handshake_message(u8 msg_type, const u8 *body, u
  * underlying byte stream. */
 static inline void tls_process_handshake_buffer(u64 now_packed) {
     while (tls_conn.hs_buf_len >= 4) {
-        u32 body_len = ((u32)tls_conn.hs_buf[1] << 16) | ((u32)tls_conn.hs_buf[2] << 8) | tls_conn.hs_buf[3];
+        u32 body_len = ((u32)TLS_HS_BUF[1] << 16) | ((u32)TLS_HS_BUF[2] << 8) | TLS_HS_BUF[3];
         u32 total = 4 + body_len;
         if (tls_conn.hs_buf_len < total) break; /* message not fully arrived yet */
 
-        u8 msg_type = tls_conn.hs_buf[0];
+        u8 msg_type = TLS_HS_BUF[0];
 
         /* Special case: the server's own Finished message. Per RFC 5246
          * 7.4.9, a Finished message's verify_data covers every handshake
@@ -938,21 +949,21 @@ static inline void tls_process_handshake_buffer(u64 now_packed) {
         int is_server_finished = (tls_conn.state == TLS_CLIENT_FINISHED_SENT && msg_type == TLS_HS_FINISHED);
 
         if (!is_server_finished) {
-            tls_transcript_update(tls_conn.hs_buf, total);
+            tls_transcript_update(TLS_HS_BUF, total);
         }
-        tls_dispatch_handshake_message(msg_type, tls_conn.hs_buf + 4, body_len, now_packed);
+        tls_dispatch_handshake_message(msg_type, TLS_HS_BUF + 4, body_len, now_packed);
         if (is_server_finished && tls_conn.state != TLS_FAILED) {
-            tls_transcript_update(tls_conn.hs_buf, total);
+            tls_transcript_update(TLS_HS_BUF, total);
         }
 
-        for (u32 i = total; i < tls_conn.hs_buf_len; i++) tls_conn.hs_buf[i - total] = tls_conn.hs_buf[i];
+        for (u32 i = total; i < tls_conn.hs_buf_len; i++) TLS_HS_BUF[i - total] = TLS_HS_BUF[i];
         tls_conn.hs_buf_len -= total;
 
         if (tls_conn.state == TLS_FAILED) return;
     }
 }
 
-/* Splits tls_conn.rx_raw into complete TLS records and processes each:
+/* Splits TLS_RX_RAW into complete TLS records and processes each:
  * change_cipher_spec flips read_cipher_active and resets server_seq;
  * alert is inspected (a fatal alert fails the connection; close_notify
  * is treated as a clean EOF signal, same spirit as TCP's own FIN);
@@ -961,12 +972,12 @@ static inline void tls_process_handshake_buffer(u64 now_packed) {
  * gets decrypted and appended to app_recv for http.h to read. */
 static inline void tls_process_raw_buffer(u64 now_packed) {
     while (tls_conn.rx_raw_len >= 5) {
-        u8 content_type = tls_conn.rx_raw[0];
-        u32 rec_len = ((u32)tls_conn.rx_raw[3] << 8) | tls_conn.rx_raw[4];
+        u8 content_type = TLS_RX_RAW[0];
+        u32 rec_len = ((u32)TLS_RX_RAW[3] << 8) | TLS_RX_RAW[4];
         u32 total = 5 + rec_len;
         if (tls_conn.rx_raw_len < total) break;
 
-        u8 *payload = tls_conn.rx_raw + 5;
+        u8 *payload = TLS_RX_RAW + 5;
         u8 *plain = payload;
         u32 plain_len = rec_len;
 
@@ -1018,7 +1029,7 @@ static inline void tls_process_raw_buffer(u64 now_packed) {
                     tls_conn.state = TLS_FAILED;
                     return;
                 }
-                for (u32 i = 0; i < plain_len; i++) tls_conn.hs_buf[tls_conn.hs_buf_len + i] = plain[i];
+                for (u32 i = 0; i < plain_len; i++) TLS_HS_BUF[tls_conn.hs_buf_len + i] = plain[i];
                 tls_conn.hs_buf_len += plain_len;
             } else {
                 /* Unlike hs_buf above, an oversized application_data
@@ -1036,12 +1047,12 @@ static inline void tls_process_raw_buffer(u64 now_packed) {
                  * outright instead of truncating. */
                 u32 room = TLS_APP_RECV_BUF_SIZE - tls_conn.app_recv_len;
                 u32 take = plain_len < room ? plain_len : room;
-                for (u32 i = 0; i < take; i++) tls_conn.app_recv[tls_conn.app_recv_len + i] = plain[i];
+                for (u32 i = 0; i < take; i++) TLS_APP_RECV[tls_conn.app_recv_len + i] = plain[i];
                 tls_conn.app_recv_len += take;
             }
         }
 
-        for (u32 i = total; i < tls_conn.rx_raw_len; i++) tls_conn.rx_raw[i - total] = tls_conn.rx_raw[i];
+        for (u32 i = total; i < tls_conn.rx_raw_len; i++) TLS_RX_RAW[i - total] = TLS_RX_RAW[i];
         tls_conn.rx_raw_len -= total;
 
         tls_process_handshake_buffer(now_packed);
@@ -1114,7 +1125,7 @@ static inline tls_state_t tls_poll(u64 now_packed) {
         tls_conn.state == TLS_ESTABLISHED) {
         u32 room = TLS_RX_RAW_BUF_SIZE - tls_conn.rx_raw_len;
         if (room > 0) {
-            u16 n = tcp_poll_recv(tls_conn.rx_raw + tls_conn.rx_raw_len, (u16)(room > 0xFFFF ? 0xFFFF : room));
+            u16 n = tcp_poll_recv(TLS_RX_RAW + tls_conn.rx_raw_len, (u16)(room > 0xFFFF ? 0xFFFF : room));
             tls_conn.rx_raw_len += n;
         }
         tls_process_raw_buffer(now_packed);
@@ -1146,8 +1157,8 @@ static inline int tls_send_app_data(const u8 *data, u32 len) {
  * pattern http.h already established. */
 static inline u16 tls_poll_recv_app_data(u8 *out, u16 maxlen) {
     u16 n = tls_conn.app_recv_len < maxlen ? (u16)tls_conn.app_recv_len : maxlen;
-    for (u16 i = 0; i < n; i++) out[i] = tls_conn.app_recv[i];
-    for (u32 i = n; i < tls_conn.app_recv_len; i++) tls_conn.app_recv[i - n] = tls_conn.app_recv[i];
+    for (u16 i = 0; i < n; i++) out[i] = TLS_APP_RECV[i];
+    for (u32 i = n; i < tls_conn.app_recv_len; i++) TLS_APP_RECV[i - n] = TLS_APP_RECV[i];
     tls_conn.app_recv_len -= n;
     return n;
 }

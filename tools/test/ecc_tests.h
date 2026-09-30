@@ -1,6 +1,11 @@
 /* ecc_tests.h -- the ECC/ECDSA/ECDH half of host_crypto_test.c (pulled in with
  * -DHAVE_ECC_TESTS). Vectors come from `cryptography`/OpenSSL, see gen_crypto_vectors.py. */
 #include "../../kernel/ecc.h"
+#include "../../kernel/asn1.h"
+#include "../../kernel/bignum.h"
+#include "../../kernel/sha256.h"
+#include "../../kernel/pkcs1.h"
+#include "../../kernel/x509.h"
 
 static u32 ecc_unhex(const char *s, u8 *out) {
     u32 n = (u32)strlen(s) / 2;
@@ -28,6 +33,22 @@ static void ecc_test_line(char **tok, int nt, int *checks, int *failures) {
         ok = ecdh_shared(c, priv, peer, ql, got_sh);
         (*checks)++;
         if (!ok || memcmp(got_sh, shared, c->bytes)) { (*failures)++; printf("FAIL: ECDH P-%s shared secret mismatch\n", tok[1]); }
+    } else if (!strcmp(tok[0], "X509") && nt >= 5) {
+        static u8 leaf_der[4096], ca_der[4096];
+        static x509_cert_t leaf, ca;
+        u32 ll = ecc_unhex(tok[1], leaf_der), cl = ecc_unhex(tok[2], ca_der);
+        int want = atoi(tok[3]), want_group = atoi(tok[4]);
+        int parsed_leaf = x509_parse(leaf_der, ll, &leaf);
+        int parsed_ca = x509_parse(ca_der, cl, &ca);
+        (*checks)++;
+        if (!parsed_ca) { (*failures)++; printf("FAIL: X509 issuer failed to parse\n"); return; }
+        int got = parsed_leaf ? x509_verify_signed_by(&leaf, &ca) : 0;
+        if (got != want) { (*failures)++; printf("FAIL: X509 verify expected %d got %d (scheme=%d hash=%d issuer key rsa=%d ec=%d)\n", want, got, parsed_leaf ? leaf.sig_scheme : -1, parsed_leaf ? leaf.sig_hash : -1, ca.pubkey_valid, ca.ec_group); }
+        if (want && parsed_leaf) {          /* also: the leaf's own key was classified correctly */
+            (*checks)++;
+            int is_rsa = (want_group == 0);
+            if (is_rsa ? !leaf.pubkey_valid : (leaf.ec_group != want_group)) { (*failures)++; printf("FAIL: X509 leaf key type wrong (want group %d, got ec=%d rsa=%d)\n", want_group, leaf.ec_group, leaf.pubkey_valid); }
+        }
     } else if (!strcmp(tok[0], "ECBAD") && nt >= 3) {
         c = atoi(tok[1]) == 256 ? &ecc_p256 : &ecc_p384;
         u32 ql = ecc_unhex(tok[2], peer);

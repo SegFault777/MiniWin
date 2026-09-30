@@ -1,6 +1,7 @@
 #ifndef E1000_H
 #define E1000_H
 #include "io.h"
+#include "memmap.h"
 #include "pci.h"
 #include "serial.h"
 #include "nic.h"
@@ -98,8 +99,16 @@ typedef struct {
 
 static e1000_rx_desc_t e1000_rx_ring[E1000_NUM_RX_DESC] __attribute__((aligned(16)));
 static e1000_tx_desc_t e1000_tx_ring[E1000_NUM_TX_DESC] __attribute__((aligned(16)));
-static u8 e1000_rx_buf[E1000_NUM_RX_DESC][E1000_BUF_LEN] __attribute__((aligned(16)));
-static u8 e1000_tx_buf[E1000_NUM_TX_DESC][E1000_BUF_LEN] __attribute__((aligned(16)));
+/* The packet buffers live in the net arena (kernel/memmap.h), not .bss: 80KB of
+ * DMA buffers was the single biggest thing in .bss, and once the trust store grew
+ * the low-memory image no longer had room for it. Paging is off, so the arena's
+ * physical addresses are directly usable both as pointers and as DMA targets.
+ * The macros keep the old `e1000_rx_buf[i]` spelling working unchanged. */
+typedef u8 e1000_buf_row_t[E1000_BUF_LEN];
+#define e1000_rx_buf ((e1000_buf_row_t *)MW_E1000_RX_ADDR)
+#define e1000_tx_buf ((e1000_buf_row_t *)MW_E1000_TX_ADDR)
+typedef char e1000_assert_rx_fits[(E1000_NUM_RX_DESC * E1000_BUF_LEN <= MW_E1000_RX_SIZE) ? 1 : -1];
+typedef char e1000_assert_tx_fits[(E1000_NUM_TX_DESC * E1000_BUF_LEN <= MW_E1000_TX_SIZE) ? 1 : -1];
 
 static u32 e1000_mmio_base;
 static u32 e1000_rx_cur;

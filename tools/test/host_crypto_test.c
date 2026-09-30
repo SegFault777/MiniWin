@@ -23,6 +23,7 @@ static u32 unhex(const char *s, u8 *out) {
 }
 
 #ifdef HAVE_ECC_TESTS
+#include "../../kernel/trusted_roots.h"
 #include "ecc_tests.h"
 #endif
 
@@ -32,7 +33,7 @@ static int failures = 0, checks = 0;
 int main(int argc, char **argv) {
     FILE *f = fopen(argc > 1 ? argv[1] : "/tmp/crypto_vectors.txt", "r");
     if (!f) { perror("vectors"); return 2; }
-    static char line[200000];
+    static char line[400000];
     static u8 a[70000], b[70000], c[70000], d[70000], e[70000], g[70000];
     while (fgets(line, sizeof line, f)) {
         line[strcspn(line, "\r\n")] = 0;
@@ -74,6 +75,29 @@ int main(int argc, char **argv) {
         else ecc_test_line(tok, nt, &checks, &failures);
 #endif
     }
+#ifdef HAVE_ECC_TESTS
+    /* The real trust store, through the real parser: every embedded root must parse, be a CA,
+     * and carry a usable key; and every root whose self-signature uses a scheme we support
+     * must VERIFY against itself -- roots are self-signed, so this checks ECDSA P-256/P-384
+     * and RSA/SHA-2 verification against genuine Mozilla-store certificates. */
+    {
+        int rsa_keys = 0, ec_keys = 0, self_ok = 0, self_skipped = 0;
+        static x509_cert_t root;
+        for (int r = 0; r < TRUSTED_ROOT_COUNT; r++) {
+            checks++;
+            if (!x509_parse(trusted_roots[r], trusted_root_lens[r], &root) || !x509_has_usable_key(&root) || !root.is_ca) {
+                failures++; printf("FAIL: trusted root #%d does not parse as a usable CA\n", r); continue;
+            }
+            if (root.pubkey_valid) rsa_keys++; else ec_keys++;
+            if (!root.sig_alg_supported) { self_skipped++; continue; }
+            checks++;
+            if (x509_verify_signed_by(&root, &root)) self_ok++;
+            else { failures++; printf("FAIL: root #%d self-signature did not verify (scheme=%d hash=%d ec_group=%d)\n", r, root.sig_scheme, root.sig_hash, root.ec_group); }
+        }
+        printf("trust store: %d roots (%d RSA, %d EC); self-signatures verified: %d, unsupported scheme skipped: %d\n",
+               TRUSTED_ROOT_COUNT, rsa_keys, ec_keys, self_ok, self_skipped);
+    }
+#endif
     printf("%d checks, %d failures\n", checks, failures);
     return failures != 0;
 }

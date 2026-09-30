@@ -3,6 +3,7 @@
 #include "io.h"
 #include "bignum.h"
 #include "sha256.h"
+#include "sha512.h"
 
 /* ============================================================
  * pkcs1.h -- the OTHER direction of PKCS#1 v1.5: padding a short
@@ -55,9 +56,50 @@ static const u8 PKCS1_SHA256_DIGESTINFO_PREFIX[] = {
  * shape" logic exists exactly once. Returns 1 only if every check
  * passes: correct padding shape, correct DigestInfo prefix, and the
  * recovered hash bytes equal SHA-256(data) exactly. */
-static inline int pkcs1_verify_sha256(const u8 *data, u32 data_len,
-                                        const u8 *sig, u32 sig_len,
-                                        const bignum_t *modulus, u32 exponent) {
+/* The other two DigestInfo prefixes real certificate chains need. Same
+ * shape as the SHA-256 one above: SEQUENCE { SEQUENCE { OID <hash>, NULL },
+ * OCTET STRING (<digest length> bytes) } -- only the OID's last byte
+ * (…04 02 02 = sha384, …04 02 03 = sha512) and the lengths change. Checked
+ * against real signatures (the host test in tools/test/), not derived by hand. */
+static const u8 PKCS1_SHA384_DIGESTINFO_PREFIX[] = {
+    0x30,0x41,0x30,0x0d,0x06,0x09,0x60,0x86,0x48,0x01,0x65,0x03,0x04,0x02,0x02,0x05,0x00,0x04,0x30
+};
+static const u8 PKCS1_SHA512_DIGESTINFO_PREFIX[] = {
+    0x30,0x51,0x30,0x0d,0x06,0x09,0x60,0x86,0x48,0x01,0x65,0x03,0x04,0x02,0x03,0x05,0x00,0x04,0x40
+};
+
+/* Which hash a signature was made with. Shared by x509.h (a certificate's
+ * signatureAlgorithm) and tls.h (a ServerKeyExchange's SignatureAndHashAlgorithm). */
+#define PKCS1_HASH_NONE   0
+#define PKCS1_HASH_SHA256 1
+#define PKCS1_HASH_SHA384 2
+#define PKCS1_HASH_SHA512 3
+
+/* Hashes `data` with the named algorithm into `out` (up to 64 bytes) and returns the digest
+ * length, or 0 for an unknown algorithm. */
+static inline u32 pkcs1_hash(int hash_id, const u8 *data, u32 data_len, u8 out[64]) {
+    if (hash_id == PKCS1_HASH_SHA256) { sha256(data, data_len, out); return 32; }
+    if (hash_id == PKCS1_HASH_SHA384) { sha384(data, data_len, out); return 48; }
+    if (hash_id == PKCS1_HASH_SHA512) { sha512(data, data_len, out); return 64; }
+    return 0;
+}
+
+/* Verifies an RSASSA-PKCS1-v1_5 signature over `data`, hashing it with
+ * `hash_id` -- the one signature-checking primitive both kernel/x509.h
+ * (a certificate against its issuer) and kernel/tls.h (a ServerKeyExchange
+ * against the leaf's key) need, so the "undo the RSA public-key operation
+ * and check the padding shape" logic exists exactly once. Returns 1 only if
+ * every check passes: correct padding shape, the DigestInfo prefix for this
+ * hash, and recovered digest bytes exactly equal to hash(data). */
+static inline int pkcs1_verify(int hash_id, const u8 *data, u32 data_len,
+                               const u8 *sig, u32 sig_len,
+                               const bignum_t *modulus, u32 exponent) {
+    const u8 *prefix; u32 prefix_len;
+    if (hash_id == PKCS1_HASH_SHA256)      { prefix = PKCS1_SHA256_DIGESTINFO_PREFIX; prefix_len = (u32)sizeof(PKCS1_SHA256_DIGESTINFO_PREFIX); }
+    else if (hash_id == PKCS1_HASH_SHA384) { prefix = PKCS1_SHA384_DIGESTINFO_PREFIX; prefix_len = (u32)sizeof(PKCS1_SHA384_DIGESTINFO_PREFIX); }
+    else if (hash_id == PKCS1_HASH_SHA512) { prefix = PKCS1_SHA512_DIGESTINFO_PREFIX; prefix_len = (u32)sizeof(PKCS1_SHA512_DIGESTINFO_PREFIX); }
+    else return 0;
+
     u32 mod_bytes;
     { int bits = bn_bit_length(modulus); mod_bytes = (u32)((bits + 7) / 8); }
     if (mod_bytes == 0 || mod_bytes > 512) return 0;
@@ -78,19 +120,24 @@ static inline int pkcs1_verify_sha256(const u8 *data, u32 data_len,
     if (i >= mod_bytes || recovered[i] != 0x00) return 0;
     i++;
 
+    u8 expected_hash[64];
+    u32 hash_len = pkcs1_hash(hash_id, data, data_len, expected_hash);
     u32 digestinfo_len = mod_bytes - i;
-    u32 prefix_len = (u32)sizeof(PKCS1_SHA256_DIGESTINFO_PREFIX);
-    if (digestinfo_len != prefix_len + 32) return 0;
+    if (digestinfo_len != prefix_len + hash_len) return 0;
     for (u32 j = 0; j < prefix_len; j++) {
-        if (recovered[i + j] != PKCS1_SHA256_DIGESTINFO_PREFIX[j]) return 0;
+        if (recovered[i + j] != prefix[j]) return 0;
     }
-
-    u8 expected_hash[32];
-    sha256(data, data_len, expected_hash);
-    for (u32 j = 0; j < 32; j++) {
+    for (u32 j = 0; j < hash_len; j++) {
         if (recovered[i + prefix_len + j] != expected_hash[j]) return 0;
     }
     return 1;
+}
+
+/* The original SHA-256-only entry point, kept so existing callers read the same. */
+static inline int pkcs1_verify_sha256(const u8 *data, u32 data_len,
+                                        const u8 *sig, u32 sig_len,
+                                        const bignum_t *modulus, u32 exponent) {
+    return pkcs1_verify(PKCS1_HASH_SHA256, data, data_len, sig, sig_len, modulus, exponent);
 }
 
 static inline int pkcs1_encrypt(const u8 *secret, u32 secret_len,

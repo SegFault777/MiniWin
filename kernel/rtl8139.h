@@ -1,6 +1,7 @@
 #ifndef RTL8139_H
 #define RTL8139_H
 #include "io.h"
+#include "memmap.h"
 #include "pci.h"
 #include "serial.h"
 #include "nic.h"
@@ -45,11 +46,15 @@
  * this chip is documented; the extra room means a packet landing near
  * the end of the ring never needs to be split across the wrap point. */
 #define RTL_RX_BUF_LEN (8192 + 16 + 1500)
-static u8 rtl_rx_buf[RTL_RX_BUF_LEN] __attribute__((aligned(4)));
+/* Buffers live in the net arena (kernel/memmap.h) -- see e1000.h for why. */
+#define rtl_rx_buf ((u8 *)MW_RTL_RX_ADDR)
+typedef char rtl_assert_rx_fits[(RTL_RX_BUF_LEN <= MW_RTL_RX_SIZE) ? 1 : -1];
 
 #define RTL_TX_SLOTS 4
 #define RTL_TX_BUF_LEN 1536
-static u8 rtl_tx_buf[RTL_TX_SLOTS][RTL_TX_BUF_LEN] __attribute__((aligned(4)));
+typedef u8 rtl_tx_row_t[RTL_TX_BUF_LEN];
+#define rtl_tx_buf ((rtl_tx_row_t *)MW_RTL_TX_ADDR)
+typedef char rtl_assert_tx_fits[(RTL_TX_SLOTS * RTL_TX_BUF_LEN <= MW_RTL_TX_SIZE) ? 1 : -1];
 
 static u16 rtl_io_base;
 static u32 rtl_rx_offset;     /* our software read pointer into rtl_rx_buf */
