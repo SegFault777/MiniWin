@@ -2173,6 +2173,9 @@ static void mw_autotest_step(void) {
         kstrcpy(web_urlbar_buf, MW_AUTOTEST_URL, sizeof(web_urlbar_buf));
         web_urlbar_len = 0;
         while (web_urlbar_buf[web_urlbar_len]) web_urlbar_len++;
+#ifdef MW_AUTOTEST_DNS_OVERRIDE
+        net_cfg.dns_ip = MW_AUTOTEST_DNS_OVERRIDE;   /* pretend DHCP handed out THIS DNS server (e.g. a dead one) */
+#endif
         serial_puts("[AUTOTEST] go " MW_AUTOTEST_URL "\n");
         mw_at_started_tick = net_ticks;
         web_go_url();
@@ -2196,7 +2199,9 @@ static void mw_autotest_step(void) {
 
     /* A redirect restarts the fetch (state goes back to connecting), so "done" really means the FINAL page. */
     if (web_dns_failed) {
-        serial_puts("[AUTOTEST] RESULT dns-failed\n");
+        serial_puts("[AUTOTEST] RESULT dns-failed: ");
+        serial_puts(dns_client.fail);
+        serial_putc('\n');
         mw_at_state = 2;
     } else if (web_use_https) {
         if (https_client.state == HTTPS_DONE && web_page_ready) {
@@ -2308,6 +2313,90 @@ static void web_ensure_layout(void) {
         hv_layout(cols);
         web_view_cols = cols;
         web_scroll_by(0);        /* re-clamp */
+    }
+}
+
+/* ---- explaining a failed page load, in words ---- */
+static const char *web_tls_fail_text(void) {
+    switch (tls_conn.fail_reason) {
+        case TLS_FAIL_TCP:                     return "The connection closed during the secure handshake.";
+        case TLS_FAIL_UNEXPECTED_MESSAGE:      return "The server sent something unexpected during the handshake (protocol error).";
+        case TLS_FAIL_UNSUPPORTED_CIPHER_SUITE:return "The server picked an encryption method MiniWin does not support.";
+        case TLS_FAIL_UNSUPPORTED_CURVE:       return "The server's key-exchange curve is not supported (MiniWin: x25519, P-256, P-384).";
+        case TLS_FAIL_CERT_PARSE:              return "The server's certificate could not be read.";
+        case TLS_FAIL_CERT_CHAIN:              return "The certificate chain is broken, expired, or uses an unsupported signature.";
+        case TLS_FAIL_CERT_UNTRUSTED:          return "The server's certificate is not signed by a root MiniWin trusts.";
+        case TLS_FAIL_HOSTNAME_MISMATCH:       return "The certificate is for a different host name than the one requested.";
+        case TLS_FAIL_SKE_SIGNATURE:           return "The server's key-exchange signature did not verify.";
+        case TLS_FAIL_DECRYPT:                 return "A secure record failed its integrity check (data was corrupted).";
+        case TLS_FAIL_SERVER_FINISHED:         return "The server's Finished message did not verify.";
+        case TLS_FAIL_BUFFER_OVERFLOW:         return "A handshake message was larger than MiniWin can handle.";
+        case TLS_FAIL_PEER_ALERT:              return "The server refused the connection with a TLS alert (see the number below).";
+        default:                               return "The secure connection failed.";
+    }
+}
+
+/* Word-wraps `text` into the page area starting at *row; advances *row. */
+static void web_draw_wrapped(int *row, const char *text, u32 color) {
+    int bx, by, bw, bh;
+    web_body_geom(&bx, &by, &bw, &bh);
+    u32 cols = (u32)(bw / FONT_CELL);
+    if (cols < 10) cols = 10;
+    u32 n = 0; while (text[n]) n++;
+    u32 pos = 0;
+    while (pos < n && (*row + 1) * WEB_LINE_H <= bh) {
+        u32 end = pos + cols;
+        if (end >= n) end = n;
+        else { u32 k = end; while (k > pos && text[k] != ' ') k--; if (k > pos) end = k; }
+        char line[160]; u32 ll = 0;
+        for (u32 i = pos; i < end && ll + 1 < sizeof(line); i++) line[ll++] = text[i];
+        line[ll] = 0;
+        font_draw_string(bx, by + *row * WEB_LINE_H, line, color);
+        (*row)++;
+        pos = end; while (pos < n && text[pos] == ' ') pos++;
+    }
+}
+
+static void draw_web_failure(void) {
+    int row = 0;
+    char head[140]; u32 hl = 0;
+    if (web_dns_failed) {
+        append_str(head, &hl, sizeof(head), "Could not find \"");
+        append_str(head, &hl, sizeof(head), web_last_host);
+        append_str(head, &hl, sizeof(head), "\".");
+        web_draw_wrapped(&row, head, COL_BLACK);
+        row++;
+        web_draw_wrapped(&row, dns_client.fail[0] ? dns_client.fail : "The DNS lookup failed.", COL_BLACK);
+        row++;
+        web_draw_wrapped(&row, "Check the spelling, and that the virtual machine has working network access (DNS comes from the DHCP server).", COL_DGRAY);
+        return;
+    }
+    int https_failed = web_use_https && https_client.state == HTTPS_FAILED;
+    int http_failed = !web_use_https && http_client.state == HTTP_FAILED;
+    if (!https_failed && !http_failed) return;
+    append_str(head, &hl, sizeof(head), https_failed ? "Could not open a secure connection to " : "Could not connect to ");
+    append_str(head, &hl, sizeof(head), web_last_host);
+    append_str(head, &hl, sizeof(head), ".");
+    web_draw_wrapped(&row, head, COL_BLACK);
+    row++;
+    if (https_failed) {
+        web_draw_wrapped(&row, web_tls_fail_text(), COL_BLACK);
+        char code[64]; u32 cl = 0;
+        append_str(code, &cl, sizeof(code), "(error ");
+        char d[12]; u32 v = (u32)tls_conn.fail_reason; int nd = 0;
+        do { d[nd++] = (char)('0' + v % 10); v /= 10; } while (v && nd < 6);
+        while (nd) { char one[2] = { d[--nd], 0 }; append_str(code, &cl, sizeof(code), one); }
+        if (tls_conn.fail_reason == TLS_FAIL_PEER_ALERT) {
+            append_str(code, &cl, sizeof(code), ", alert ");
+            v = tls_conn.alert_desc; nd = 0;
+            do { d[nd++] = (char)('0' + v % 10); v /= 10; } while (v && nd < 6);
+            while (nd) { char one[2] = { d[--nd], 0 }; append_str(code, &cl, sizeof(code), one); }
+        }
+        append_str(code, &cl, sizeof(code), ")");
+        row++;
+        web_draw_wrapped(&row, code, COL_DGRAY);
+    } else {
+        web_draw_wrapped(&row, "The server did not answer, or refused the connection.", COL_BLACK);
     }
 }
 
@@ -2525,6 +2614,7 @@ static void draw_web_window(void) {
     /* response body (or nothing yet, or the failure already explained
      * by the status line above) */
     if (web_page_ready && !web_resolving && !web_dns_failed) draw_web_page();
+    else if (!web_resolving) draw_web_failure();   /* a DNS / connection / TLS failure explains itself */
 }
 
 /* Forward declarations -- term_run_input() (below) needs to call all

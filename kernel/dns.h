@@ -4,6 +4,7 @@
 #include "net.h"
 #include "udp.h"
 #include "serial.h"
+#include "rtc.h"
 
 /* ============================================================
  * dns.h -- DNS, or: the phone book that finally lets this kernel type
@@ -32,9 +33,18 @@
                                  * with */
 #define DNS_TYPE_A   1
 #define DNS_CLASS_IN 1
-#define DNS_TIMEOUT_TICKS 4000   /* generous but finite -- see
-                                  * tcp.h's TCP_RETRANSMIT_TICKS for what
-                                  * a "tick" measures here */
+/* TIMEOUTS ARE IN REAL TIME, not loop iterations. The original gave up after 4000 "ticks" -- but a
+ * tick is one pass of the main loop, whose speed depends entirely on the machine: ~45 passes/second
+ * under software-emulated QEMU (so 4000 ticks was a generous ~90 seconds there), but thousands per
+ * second under hardware-accelerated QEMU/VirtualBox/real hardware (so the same 4000 ticks became
+ * ~1-4 seconds, and a host resolver with a cold cache could easily take longer -- "DNS Lookup
+ * Failed" on a perfectly working network). Each attempt now waits DNS_ATTEMPT_SECONDS of RTC time,
+ * and a lookup makes up to DNS_MAX_ATTEMPTS attempts. The RTC has one-second resolution, so a
+ * "3 second" wait really fires 2-3 seconds in. DNS_TICK_BACKSTOP covers a machine whose RTC isn't
+ * ticking at all, so a lookup can still never hang forever. */
+#define DNS_ATTEMPT_SECONDS 3
+#define DNS_MAX_ATTEMPTS    4
+#define DNS_TICK_BACKSTOP   200000u
 #define DNS_MAX_NAME 128
 
 typedef enum {
@@ -49,6 +59,10 @@ typedef struct {
     u16 query_id;
     u32 query_tick;
     u32 result_ip;
+    u32 query_wall;                 /* RTC seconds-of-day when the current attempt was sent */
+    u32 servers[DNS_MAX_ATTEMPTS];  /* who each attempt is sent to */
+    int attempt;                    /* 0-based index of the attempt in flight */
+    char fail[96];                  /* WHY the lookup failed, in words -- shown on the page */
     char hostname[DNS_MAX_NAME];   /* kept purely so a timeout/response
                                     * can be logged with a human-readable
                                     * "for hostname X" instead of just an
@@ -114,44 +128,104 @@ static inline u16 dns_skip_name(const u8 *data, u16 len, u16 offset) {
     return 0; /* ran off the end -- truncated packet */
 }
 
-/* Fires off an A-record query for `host` (e.g. "pypi.org") to
- * net_cfg.dns_ip. Overwrites any query already in flight, same
- * single-slot philosophy as arp_send_request()'s cache eviction and
- * tcp_connect()'s single connection -- this kernel only ever wants one
- * answer at a time. */
-static inline void dns_resolve(const char *host) {
-    dns_client.state = DNS_QUERYING;
-    dns_client.query_id = (u16)(net_ticks & 0xFFFF); /* good enough --
-                                                       * we only ever have
-                                                       * one query outstanding,
-                                                       * so the id just needs
-                                                       * to not be stale from
-                                                       * a previous one */
+static inline u32 dns_wall_seconds(void) {
+    rtc_time_t t;
+    rtc_read(&t);
+    return (u32)t.hour * 3600u + (u32)t.minute * 60u + (u32)t.second;
+}
+
+static inline void dns_ip_str(u32 ip, char *out) {   /* dotted quad, `out` >= 16 bytes */
+    u32 n = 0;
+    for (int sh = 24; sh >= 0; sh -= 8) {
+        u32 o = (ip >> sh) & 0xFF;
+        char d[4]; int nd = 0;
+        do { d[nd++] = (char)('0' + o % 10); o /= 10; } while (o);
+        while (nd) out[n++] = d[--nd];
+        if (sh) out[n++] = '.';
+    }
+    out[n] = 0;
+}
+
+static inline void dns_fail_append(const char *text) {
+    u32 n = 0; while (dns_client.fail[n]) n++;
+    for (u32 i = 0; text[i] && n + 1 < sizeof(dns_client.fail); i++) dns_client.fail[n++] = text[i];
+    dns_client.fail[n] = 0;
+}
+
+/* Sends the query for the CURRENT attempt to that attempt's server. */
+static inline void dns_send_attempt(void) {
+    u32 server = dns_client.servers[dns_client.attempt];
     dns_client.query_tick = net_ticks;
-    dns_client.result_ip = 0;
-    u16 i = 0;
-    for (; host[i] && i < sizeof(dns_client.hostname) - 1; i++) dns_client.hostname[i] = host[i];
-    dns_client.hostname[i] = 0;
+    dns_client.query_wall = dns_wall_seconds();
 
     u8 pkt[12 + DNS_MAX_NAME + 4];
     net_put16_be(&pkt[0], dns_client.query_id);
-    net_put16_be(&pkt[2], 0x0100); /* standard query, recursion desired --
-                                    * "please do the actual legwork of
-                                    * chasing referrals, that's your job" */
-    net_put16_be(&pkt[4], 1);      /* QDCOUNT: one question */
+    net_put16_be(&pkt[2], 0x0100);   /* flags: standard query, recursion desired */
+    net_put16_be(&pkt[4], 1);        /* one question */
     net_put16_be(&pkt[6], 0);
     net_put16_be(&pkt[8], 0);
     net_put16_be(&pkt[10], 0);
 
     u16 pos = 12;
-    pos = (u16)(pos + dns_encode_name(&pkt[pos], host));
+    pos = (u16)(pos + dns_encode_name(&pkt[pos], dns_client.hostname));
     net_put16_be(&pkt[pos], DNS_TYPE_A); pos += 2;
     net_put16_be(&pkt[pos], DNS_CLASS_IN); pos += 2;
 
     serial_puts("[DNS] querying ");
-    serial_puts(host);
+    serial_puts(dns_client.hostname);
+    serial_puts(" via ");
+    net_log_ip(server);
+    serial_puts(" (attempt ");
+    serial_put_dec((u32)dns_client.attempt + 1);
+    serial_puts(")\n");
+    udp_send(net_cfg.my_ip, DNS_CLIENT_PORT, server, DNS_SERVER_PORT, pkt, pos);
+}
+
+/* This attempt didn't work out (no reply, or a server-side error): move on to the next server, or give
+ * up with `why` as the reason if there are none left. */
+static inline void dns_next_attempt_or_fail(const char *why) {
+    if (dns_client.attempt + 1 < DNS_MAX_ATTEMPTS) {
+        dns_client.attempt++;
+        dns_send_attempt();
+        return;
+    }
+    dns_client.fail[0] = 0;
+    dns_fail_append(why);
+    dns_fail_append(" Tried:");
+    for (int i = 0; i < DNS_MAX_ATTEMPTS; i++) {
+        int seen = 0;
+        for (int k = 0; k < i; k++) if (dns_client.servers[k] == dns_client.servers[i]) seen = 1;
+        if (seen) continue;
+        char ip[16]; dns_ip_str(dns_client.servers[i], ip);
+        dns_fail_append(" ");
+        dns_fail_append(ip);
+    }
+    serial_puts("[DNS] giving up on ");
+    serial_puts(dns_client.hostname);
+    serial_puts(": ");
+    serial_puts(dns_client.fail);
     serial_putc('\n');
-    udp_send(net_cfg.my_ip, DNS_CLIENT_PORT, net_cfg.dns_ip, DNS_SERVER_PORT, pkt, pos);
+    dns_client.state = DNS_FAILED;
+}
+
+/* Starts looking up `host` (e.g. "pypi.org"). The server list: the DHCP-supplied DNS server (twice -- a
+ * lost UDP packet or a slow first ARP exchange is the usual reason a first query goes unanswered),
+ * then the default gateway (home routers commonly forward DNS), then 8.8.8.8 as a last resort. Overwrites
+ * any lookup already in flight (single-slot, like everything else in this stack). */
+static inline void dns_resolve(const char *host) {
+    dns_client.state = DNS_QUERYING;
+    dns_client.query_id = (u16)((net_ticks * 2654435761u) >> 16);   /* just needs to differ from the last lookup's */
+    dns_client.result_ip = 0;
+    dns_client.fail[0] = 0;
+    dns_client.attempt = 0;
+    dns_client.servers[0] = net_cfg.dns_ip;
+    dns_client.servers[1] = net_cfg.dns_ip;
+    dns_client.servers[2] = net_cfg.gateway_ip ? net_cfg.gateway_ip : 0x08080808u;
+    dns_client.servers[3] = 0x08080808u;
+    u16 i = 0;
+    for (; host[i] && i < sizeof(dns_client.hostname) - 1; i++) dns_client.hostname[i] = host[i];
+    dns_client.hostname[i] = 0;
+    dns_send_attempt();
 }
 
 /* UDP listener callback for port DNS_CLIENT_PORT -- parses a response,
@@ -164,7 +238,9 @@ static inline void dns_resolve(const char *host) {
 static inline void dns_handle_reply(u32 src_ip, u16 src_port, const u8 *data, u16 len) {
     (void)src_port;
     if (dns_client.state != DNS_QUERYING) return;
-    if (src_ip != net_cfg.dns_ip) return; /* not from the server we asked */
+    int asked = 0;                         /* only believe a server we have actually asked */
+    for (int k = 0; k <= dns_client.attempt; k++) if (dns_client.servers[k] == src_ip) asked = 1;
+    if (!asked) return;
     if (len < 12) return;
 
     u16 id = net_get16_be(&data[0]);
@@ -176,10 +252,25 @@ static inline void dns_handle_reply(u32 src_ip, u16 src_port, const u8 *data, u1
     u16 ancount = net_get16_be(&data[6]);
 
     if (rcode != 0) {
-        serial_puts("[DNS] server returned error code ");
+        char ip[16]; dns_ip_str(src_ip, ip);
+        serial_puts("[DNS] ");
+        serial_puts(ip);
+        serial_puts(" returned error code ");
         serial_put_dec(rcode);
         serial_putc('\n');
-        dns_client.state = DNS_FAILED;
+        if (rcode == 3) {
+            /* NXDOMAIN is the authoritative "that name does not exist": asking someone else won't help */
+            dns_client.fail[0] = 0;
+            dns_fail_append("No such host (server ");
+            dns_fail_append(ip);
+            dns_fail_append(" says it does not exist).");
+            dns_client.state = DNS_FAILED;
+        } else {
+            /* SERVFAIL / REFUSED / NOTIMP: this server is unwell or unwilling -- try the next one */
+            char why[40] = "Server error ";
+            u32 n = 13; why[n++] = (char)('0' + (rcode % 10)); why[n] = 0;
+            dns_next_attempt_or_fail(why);
+        }
         return;
     }
 
@@ -218,6 +309,8 @@ static inline void dns_handle_reply(u32 src_ip, u16 src_port, const u8 *data, u1
     serial_puts("[DNS] no A record found for ");
     serial_puts(dns_client.hostname);
     serial_putc('\n');
+    dns_client.fail[0] = 0;
+    dns_fail_append("The name exists but has no IPv4 address (A record).");
     dns_client.state = DNS_FAILED;
 }
 
@@ -237,9 +330,11 @@ static inline void dns_init(void) {
  * "one shot, trust the network" stance. */
 static inline void dns_poll(void) {
     if (dns_client.state != DNS_QUERYING) return;
-    if (net_ticks - dns_client.query_tick > DNS_TIMEOUT_TICKS) {
-        serial_puts("[DNS] timed out waiting for a reply\n");
-        dns_client.state = DNS_FAILED;
+    u32 now = dns_wall_seconds();
+    u32 waited = (now + 86400u - dns_client.query_wall) % 86400u;   /* RTC seconds, safe across midnight */
+    if (waited >= DNS_ATTEMPT_SECONDS || net_ticks - dns_client.query_tick > DNS_TICK_BACKSTOP) {
+        serial_puts("[DNS] no reply within the time limit\n");
+        dns_next_attempt_or_fail("No reply from the DNS server.");
     }
 }
 
