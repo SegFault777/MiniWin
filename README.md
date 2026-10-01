@@ -111,8 +111,13 @@ Needs `nasm`, a 32-bit-capable `gcc` (`gcc-multilib` on Debian/Ubuntu if
 you're on a 64-bit host), and `ld`.
 
 ```bash
-./build.sh
+./build.sh && tools/install_all.sh   # the second step puts GREETER.MWP and the icons back
 ```
+
+**Don't want to build it?** Every version's ready-made image is attached to its
+[GitHub Release](../../releases) as `<version>-image.img` (e.g. `MiniWin 1.0-pre-25-image.img`),
+with release notes saying what changed. The `build/` directory is not tracked in git -- build
+outputs live in Releases, not in the history.
 
 Produces `build/os-image.img`, a raw disk image -- exactly 1MB
 (1,048,576 bytes), a deliberately round size rather than arbitrary

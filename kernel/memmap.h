@@ -55,8 +55,12 @@
 #define MW_HTTP_BODY_SIZE 0x00040000u   /* 256KB a whole fetched page, headers included */
 #define MW_E1000_RX_SIZE  0x00010000u   /* 64KB  e1000 receive DMA buffers (32 descriptors x 2048) */
 #define MW_E1000_TX_SIZE  0x00004000u   /* 16KB  e1000 transmit DMA buffers (8 x 2048) */
-#define MW_RTL_RX_SIZE    0x00002800u   /* 10KB  rtl8139 receive ring (8192 + 16 + 1500 needed) */
+#define MW_RTL_RX_SIZE    0x00009000u   /* 36KB  rtl8139 receive ring (32KB ring + 16 + one frame of WRAP overrun) */
 #define MW_RTL_TX_SIZE    0x00001800u   /* 6KB   rtl8139 transmit slots (4 x 1536) */
+#define MW_HV_TEXT_SIZE   0x00030000u   /* 192KB the rendered page as plain text (htmlview.h) */
+#define MW_HV_URLS_SIZE   0x00010000u   /* 64KB  link targets (hrefs) of the rendered page */
+#define MW_HV_LINKS_SIZE  0x00003000u   /* 12KB  link table: 1024 entries x 12 bytes */
+#define MW_HV_LINES_SIZE  0x00008000u   /* 32KB  wrapped-line start offsets: 8192 lines x 4 bytes */
 
 #define MW_TCP_RECV_ADDR  (MW_NETMEM_BASE)
 #define MW_TCP_SEND_ADDR  (MW_TCP_RECV_ADDR + MW_TCP_RECV_SIZE)
@@ -69,7 +73,11 @@
 #define MW_E1000_TX_ADDR  (MW_E1000_RX_ADDR + MW_E1000_RX_SIZE)
 #define MW_RTL_RX_ADDR    (MW_E1000_TX_ADDR + MW_E1000_TX_SIZE)
 #define MW_RTL_TX_ADDR    (MW_RTL_RX_ADDR   + MW_RTL_RX_SIZE)
-#define MW_NETMEM_USED_END (MW_RTL_TX_ADDR + MW_RTL_TX_SIZE)
+#define MW_HV_TEXT_ADDR   (MW_RTL_TX_ADDR + MW_RTL_TX_SIZE)
+#define MW_HV_URLS_ADDR   (MW_HV_TEXT_ADDR + MW_HV_TEXT_SIZE)
+#define MW_HV_LINKS_ADDR  (MW_HV_URLS_ADDR + MW_HV_URLS_SIZE)
+#define MW_HV_LINES_ADDR  (MW_HV_LINKS_ADDR + MW_HV_LINKS_SIZE)
+#define MW_NETMEM_USED_END (MW_HV_LINES_ADDR + MW_HV_LINES_SIZE)
 
 /* Compile-time proof the arena is big enough (negative array size =
  * build error, no libc's static_assert needed). */

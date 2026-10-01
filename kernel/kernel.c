@@ -25,6 +25,7 @@
 #include "tls.h"
 #include "http.h"
 #include "https.h"
+#include "htmlview.h"
 #include "net_stack.h"
 #include "mwp.h"
 
@@ -1680,7 +1681,14 @@ static int  web_urlbar_focused = 0;
  * the person can keep typing into, or clear, while a fetch from an
  * EARLIER submission is still in flight). */
 static char web_last_host[WEB_URLBAR_MAXLEN + 1];
-static char web_last_path[64];
+#define WEB_PATH_MAX 320                    /* request path incl. query (a search URL is long) */
+static char web_last_path[WEB_PATH_MAX];
+static u16  web_last_port = 0;
+static int  web_redirects_left = 0;         /* a fetch may follow this many more redirects */
+static int  web_page_ready = 0;             /* the finished response has been turned into the on-screen page */
+static u32  web_view_cols = 0;              /* the column count the page was last laid out for */
+#define WEB_SB_W 12                         /* scrollbar width, px */
+static void web_start_fetch(int https, const char *host, u16 port, const char *path);
 
 static inline int web_btn_close_x(void) { return web_win.x + web_win.w - 2 - BTN_W; }
 static inline int web_btn_max_x(void)   { return web_btn_close_x() - BTN_W - BTN_GAP; }
@@ -1776,34 +1784,21 @@ static u64 web_now_packed(void) {
 
 static void web_go(int site) {
     web_current_site = site;
-    web_dns_failed = 0;
-    web_resolving = 0;
-    http_client.state = HTTP_IDLE;   /* clear any previous fetch's leftover
-                                      * state so status text and the
-                                      * response area don't show stale
-                                      * results from a different site
-                                      * while this one is still in flight */
-    https_client.state = HTTPS_IDLE;
+    web_redirects_left = 5;
     if (site == WEB_SITE_PYPI) {
-        /* Real DNS now, no more hardcoded IP -- see dns.h. If this
-         * lookup fails (no DNS server reachable, NXDOMAIN, a dropped
-         * query with nothing to retry it), web_poll() below notices via
-         * dns_client.state and reports it rather than ever calling
-         * https_get() with a garbage address. */
-        web_use_https = 1;
-        web_resolving = 1;
-        kstrcpy(web_last_host, "pypi.org", sizeof(web_last_host));
-        kstrcpy(web_last_path, "/", sizeof(web_last_path));
-        dns_resolve("pypi.org");
+        web_start_fetch(1, "pypi.org", 443, "/");
     } else {
-        /* The gateway has no hostname worth resolving -- it's not a
-         * server anyone runs DNS for, it's QEMU's own SLIRP plumbing --
-         * so this path skips DNS entirely and connects by the address
-         * DHCP already told us was the gateway. */
-        web_use_https = 0;
-        kstrcpy(web_last_host, "10.0.2.2 (gateway)", sizeof(web_last_host));
-        kstrcpy(web_last_path, "/", sizeof(web_last_path));
-        http_get(net_cfg.gateway_ip, "10.0.2.2 (gateway)", "/");
+        /* the gateway bookmark: dotted-quad of whatever DHCP said the gateway is */
+        char gw[20]; u32 gl = 0; gw[0] = 0;
+        for (int sh = 24; sh >= 0; sh -= 8) {
+            u32 oct = (net_cfg.gateway_ip >> sh) & 0xFF;
+            char d[4]; int nd = 0;
+            do { d[nd++] = (char)('0' + oct % 10); oct /= 10; } while (oct);
+            while (nd) gw[gl++] = d[--nd];
+            if (sh) gw[gl++] = '.';
+        }
+        gw[gl] = 0;
+        web_start_fetch(0, gw, 80, "/");
     }
 }
 
@@ -1871,19 +1866,6 @@ static int web_looks_like_url(const char *s) {
  * anything; this is purely string-splitting, same "trust the network
  * stack to reject what it can't handle" philosophy as the rest of
  * MiniWeb's URL handling. */
-static void web_split_host_path(const char *s, char *host, u32 host_sz, char *path, u32 path_sz) {
-    u32 hi = 0, i = 0;
-    while (s[i] && s[i] != '/' && hi < host_sz - 1) host[hi++] = s[i++];
-    host[hi] = 0;
-    if (s[i] == '/') {
-        u32 pi = 0;
-        while (s[i] && pi < path_sz - 1) path[pi++] = s[i++];
-        path[pi] = 0;
-    } else {
-        path[0] = '/'; path[1] = 0;
-    }
-}
-
 /* Percent-encodes `src` into `out` the minimal amount an HTTP request
  * line actually needs: space -> '+' (the traditional query-string
  * convention, and what DuckDuckGo's own search box sends), and any
@@ -1924,107 +1906,249 @@ static void web_urlencode(const char *src, char *out, u32 out_sz) {
  * typed into instead of a fixed bookmark index" -- same
  * IDLE-state-clearing, same web_resolving/web_dns_failed bookkeeping,
  * just computing the host/path/transport from web_urlbar_buf first. */
+/* ---- addresses: turning typed text, redirects and clicked links into (scheme, host, port, path) ---- */
+
+static int web_is_alpha(char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); }
+
+/* "host:8080" -> host "host", port 8080 (port left at 0 if absent). Also drops any "user@" prefix. */
+static void web_split_port(char *host, u16 *port) {
+    for (u32 i = 0; host[i]; i++) {
+        if (host[i] == '@') { u32 k = 0; for (u32 m = i + 1; host[m]; m++) host[k++] = host[m]; host[k] = 0; break; }
+    }
+    int colon = -1;
+    for (int i = 0; host[i]; i++) if (host[i] == ':') colon = i;
+    if (colon < 0) return;
+    u32 v = 0; int nd = 0;
+    for (int i = colon + 1; host[i]; i++) {
+        if (host[i] < '0' || host[i] > '9') return;          /* not a port: leave it alone */
+        v = v * 10 + (u32)(host[i] - '0'); nd++;
+        if (v > 65535) return;
+    }
+    if (nd == 0) return;
+    host[colon] = 0;
+    *port = (u16)v;
+}
+
+/* Resolves `ref` against the page currently shown, the way a browser resolves a link or a Location:
+ * header. Handles absolute URLs, scheme-relative ("//host/path" -- exactly what DuckDuckGo Lite's
+ * result links look like), absolute paths, ?query-only and plain relative paths. Returns 0 for
+ * anything that isn't HTTP(S) (mailto:, javascript:, ...). */
+static int web_resolve_ref(const char *ref, int *https, char *host, u32 host_sz, u16 *port, char *path, u32 path_sz) {
+    *https = web_use_https; *port = 0;
+    kstrcpy(host, web_last_host, host_sz);
+    int have_port = 0;
+    u16 cur_port = web_last_port;
+    const char *rest = ref;
+    int authority = 0;
+
+    if (rest[0]=='h'&&rest[1]=='t'&&rest[2]=='t'&&rest[3]=='p'&&rest[4]=='s'&&rest[5]==':'&&rest[6]=='/'&&rest[7]=='/') { rest += 8; *https = 1; authority = 1; }
+    else if (rest[0]=='h'&&rest[1]=='t'&&rest[2]=='t'&&rest[3]=='p'&&rest[4]==':'&&rest[5]=='/'&&rest[6]=='/') { rest += 7; *https = 0; authority = 1; }
+    else if (rest[0]=='/' && rest[1]=='/') { rest += 2; authority = 1; }
+    else {
+        for (int i = 0; ref[i] && ref[i] != '/' && ref[i] != '?' && ref[i] != '#'; i++)
+            if (ref[i] == ':' && i > 0 && web_is_alpha(ref[0])) {
+                /* "scheme:" that isn't http(s) -- but "host:8080/x" also has a colon; a scheme is all letters */
+                int all_alpha = 1;
+                for (int k = 0; k < i; k++) if (!web_is_alpha(ref[k])) all_alpha = 0;
+                if (all_alpha && !(ref[i+1] >= '0' && ref[i+1] <= '9')) return 0;
+            }
+    }
+
+    char tmp_path[WEB_PATH_MAX];
+    tmp_path[0] = 0;
+    if (authority) {
+        u32 hi = 0;
+        while (rest[hi] && rest[hi] != '/' && rest[hi] != '?' && rest[hi] != '#' && hi < host_sz - 1) { host[hi] = rest[hi]; hi++; }
+        host[hi] = 0;
+        web_split_port(host, port);
+        have_port = (*port != 0);
+        rest += hi;
+        if (rest[0] == 0 || rest[0] == '#') kstrcpy(tmp_path, "/", sizeof(tmp_path));
+        else if (rest[0] == '?') { kstrcpy(tmp_path, "/", sizeof(tmp_path)); u32 pl = 1; append_str(tmp_path, &pl, sizeof(tmp_path), rest); }
+        else kstrcpy(tmp_path, rest, sizeof(tmp_path));
+        if (host[0] == 0) return 0;
+    } else if (ref[0] == '/') {
+        kstrcpy(tmp_path, ref, sizeof(tmp_path));
+    } else if (ref[0] == '?') {
+        kstrcpy(tmp_path, web_last_path, sizeof(tmp_path));
+        for (u32 i = 0; tmp_path[i]; i++) if (tmp_path[i] == '?') { tmp_path[i] = 0; break; }
+        u32 pl = 0; while (tmp_path[pl]) pl++;
+        append_str(tmp_path, &pl, sizeof(tmp_path), ref);
+    } else if (ref[0] == '#' || ref[0] == 0) {
+        kstrcpy(tmp_path, web_last_path, sizeof(tmp_path));
+    } else {
+        kstrcpy(tmp_path, web_last_path, sizeof(tmp_path));
+        int slash = -1;
+        for (int i = 0; tmp_path[i] && tmp_path[i] != '?'; i++) if (tmp_path[i] == '/') slash = i;
+        tmp_path[slash + 1] = 0;
+        u32 pl = (u32)(slash + 1);
+        append_str(tmp_path, &pl, sizeof(tmp_path), ref);
+    }
+    for (u32 i = 0; tmp_path[i]; i++) if (tmp_path[i] == '#') { tmp_path[i] = 0; break; }   /* a fragment never goes on the wire */
+    if (tmp_path[0] == 0) kstrcpy(tmp_path, "/", sizeof(tmp_path));
+    kstrcpy(path, tmp_path, path_sz);
+
+    if (!have_port) {
+        /* the same host over the same scheme keeps the current port; anything else gets its scheme's default */
+        int same_host = 1;
+        for (u32 i = 0; ; i++) { if (host[i] != web_last_host[i]) { same_host = 0; break; } if (!host[i]) break; }
+        *port = (same_host && *https == web_use_https && cur_port) ? cur_port : (u16)(*https ? 443 : 80);
+    }
+    return 1;
+}
+
+static void web_connect(u32 ip) {
+    if (web_use_https) {
+        u8 seed[16];
+        web_make_entropy_seed(seed);
+        https_get(ip, web_last_port, web_last_host, web_last_path, seed);
+    } else {
+        http_get(ip, web_last_port, web_last_host, web_last_path);
+    }
+}
+
+/* The ONE place a page load starts -- from the URL bar, a bookmark, a clicked link, or a redirect. */
+static void web_start_fetch(int https, const char *host, u16 port, const char *path) {
+    web_dns_failed = 0;
+    web_resolving = 0;
+    web_page_ready = 0;
+    http_client.state = HTTP_IDLE;
+    https_client.state = HTTPS_IDLE;
+    web_use_https = https;
+    web_last_port = port ? port : (u16)(https ? 443 : 80);
+    kstrcpy(web_last_host, host, sizeof(web_last_host));
+    kstrcpy(web_last_path, path, sizeof(web_last_path));
+    hv_render_message("");
+    web_view_cols = 0;
+
+    u32 ip;
+    if (web_parse_ipv4(web_last_host, &ip)) {
+        web_connect(ip);                       /* an IP literal has nothing to resolve */
+    } else {
+        web_resolving = 1;
+        dns_resolve(web_last_host);
+    }
+}
+
+/* Follows a link (or anything else carrying an href) from the current page. */
+static void web_navigate_ref(const char *ref) {
+    int https; u16 port;
+    char host[WEB_URLBAR_MAXLEN + 1], path[WEB_PATH_MAX];
+    if (!web_resolve_ref(ref, &https, host, sizeof(host), &port, path, sizeof(path))) return;
+    web_current_site = WEB_SOURCE_URLBAR;
+    web_redirects_left = 5;
+    web_start_fetch(https, host, port, path);
+}
+
 static void web_go_url(void) {
     if (web_urlbar_len == 0) return; /* nothing typed, nothing to do */
 
     web_current_site = WEB_SOURCE_URLBAR;
-    web_dns_failed = 0;
-    web_resolving = 0;
-    http_client.state = HTTP_IDLE;
-    https_client.state = HTTPS_IDLE;
+    web_redirects_left = 5;
 
     if (web_looks_like_url(web_urlbar_buf)) {
-        /* An explicit scheme is honored: "http://" means plain HTTP,
-         * "https://" means TLS, and NO scheme means TLS (the safe
-         * default -- nearly every real site is HTTPS-only now). This
-         * used to ignore the prefix entirely and force HTTPS for every
-         * hostname / HTTP for every bare IP, which made "http://" sites
-         * unreachable and gave the test rig no way to ask for HTTPS
-         * against an IP literal. */
+        /* No scheme means HTTPS (nearly every real site is HTTPS-only now); an explicit one is honored. */
         const char *rest = web_urlbar_buf;
         int want_https = 1;
         if (rest[0]=='h'&&rest[1]=='t'&&rest[2]=='t'&&rest[3]=='p'&&rest[4]=='s'&&rest[5]==':'&&rest[6]=='/'&&rest[7]=='/') rest += 8;
         else if (rest[0]=='h'&&rest[1]=='t'&&rest[2]=='t'&&rest[3]=='p'&&rest[4]==':'&&rest[5]=='/'&&rest[6]=='/') { rest += 7; want_https = 0; }
 
-        char host[WEB_URLBAR_MAXLEN + 1], path[64];
-        web_split_host_path(rest, host, sizeof(host), path, sizeof(path));
-        kstrcpy(web_last_host, host, sizeof(web_last_host));
-        kstrcpy(web_last_path, path, sizeof(web_last_path));
-
-        u32 ip;
-        web_use_https = want_https;
-        if (web_parse_ipv4(host, &ip)) {
-            /* a bare IP literal has nothing to resolve -- connect
-             * directly (the GATEWAY bookmark is "http://<ip>/") */
-            if (want_https) {
-                u8 seed[16];
-                web_make_entropy_seed(seed);
-                https_get(ip, host, path, seed);
-            } else {
-                http_get(ip, host, path);
-            }
-        } else {
-            web_resolving = 1;
-            dns_resolve(host);
-        }
+        char host[WEB_URLBAR_MAXLEN + 1], path[WEB_PATH_MAX];
+        u16 port = 0;
+        /* split at the first '/', '?' or '#' (so "example.com?x=1" works too) */
+        u32 hi = 0;
+        while (rest[hi] && rest[hi] != '/' && rest[hi] != '?' && rest[hi] != '#' && hi < sizeof(host) - 1) { host[hi] = rest[hi]; hi++; }
+        host[hi] = 0;
+        web_split_port(host, &port);
+        const char *tail = rest + hi;
+        if (tail[0] == 0 || tail[0] == '#') kstrcpy(path, "/", sizeof(path));
+        else if (tail[0] == '?') { kstrcpy(path, "/", sizeof(path)); u32 pl = 1; append_str(path, &pl, sizeof(path), tail); }
+        else kstrcpy(path, tail, sizeof(path));
+        web_start_fetch(want_https, host, port, path);
     } else {
-        /* Not URL-shaped -- treat the whole field as a DuckDuckGo Lite
-         * search query instead. lite.duckduckgo.com is itself just
-         * another HTTPS hostname as far as this kernel's client is
-         * concerned, so this is really the exact same DNS-then-HTTPS
-         * path as any typed-in URL, just with a server-and-path this
-         * function picked instead of the person. */
-        char encoded[160];
+        char encoded[200];
         web_urlencode(web_urlbar_buf, encoded, sizeof(encoded));
-        kstrcpy(web_last_host, "lite.duckduckgo.com", sizeof(web_last_host));
-        kstrcpy(web_last_path, "/lite/?q=", sizeof(web_last_path));
-        u32 path_len = 9; /* strlen("/lite/?q=") -- append_str() needs a
-                            * running length, not just a NUL-terminated
-                            * buffer, so it's tracked explicitly here
-                            * rather than re-scanning web_last_path */
-        append_str(web_last_path, &path_len, sizeof(web_last_path), encoded);
-        web_use_https = 1;
-        web_resolving = 1;
-        dns_resolve("lite.duckduckgo.com");
+        char path[WEB_PATH_MAX];
+        kstrcpy(path, "/lite/?q=", sizeof(path));
+        u32 path_len = 9; /* strlen("/lite/?q=") -- append_str() needs the current length */
+        append_str(path, &path_len, sizeof(path), encoded);
+        web_start_fetch(1, "lite.duckduckgo.com", 443, path);
     }
 }
 
-/* Advances whichever phase MiniWeb is currently in -- DNS lookup, then
- * (once that resolves) the HTTP or HTTPS fetch itself, whichever this
- * site uses. Call once per main-loop iteration; a no-op when nothing's
- * in flight. Kept as MiniWeb's own function, separate from
- * net_stack_poll()'s dns_poll()/tcp_poll_retransmit() calls, since
- * deciding "DNS just finished, now start the fetch" is an
- * application-level decision, not something dns.h/http.h/tls.h should
- * be reaching into each other to make on their own. */
+static int web_ct_has(const char *ct, const char *word) {
+    u32 wl = 0; while (word[wl]) wl++;
+    for (u32 i = 0; ct[i]; i++) {
+        u32 k = 0;
+        while (k < wl && ct[i + k] && ((ct[i + k] >= 'A' && ct[i + k] <= 'Z') ? ct[i + k] + 32 : ct[i + k]) == word[k]) k++;
+        if (k == wl) return 1;
+    }
+    return 0;
+}
+
+/* The response has fully arrived: follow a redirect, or turn the body into the page to show. */
+static void web_page_complete(void) {
+    web_page_ready = 1;
+    if (hr_is_redirect() && web_redirects_left > 0) {
+        int https; u16 port;
+        char host[WEB_URLBAR_MAXLEN + 1], path[WEB_PATH_MAX];
+        if (web_resolve_ref(hr.location, &https, host, sizeof(host), &port, path, sizeof(path))) {
+            web_redirects_left--;
+            serial_puts("[WEB] redirect ("); serial_put_dec((u32)hr.status); serial_puts(") -> ");
+            serial_puts(host); serial_puts(path); serial_putc('\n');
+            web_start_fetch(https, host, port, path);
+            return;
+        }
+    }
+    const u8 *body = HR_BUF + hr.body_start;
+    u32 n = hr.body_len;
+    if (hr.encoded) {
+        hv_render_message("This page is compressed (Content-Encoding) and MiniWeb cannot decompress it.");
+    } else if (hr_is_redirect()) {
+        hv_render_message("Too many redirects.");
+    } else if (hr.content_type[0] == 0 ? (n > 0 && body[0] == '<') : web_ct_has(hr.content_type, "html")) {
+        hv_render_html(body, n);
+    } else if (hr.content_type[0] == 0 || web_ct_has(hr.content_type, "text/") ||
+               web_ct_has(hr.content_type, "json") || web_ct_has(hr.content_type, "xml")) {
+        hv_render_plain(body, n);
+    } else {
+        hv_render_message("MiniWeb can't display this kind of content.");
+    }
+    if (n == 0 && !hr.encoded) {
+        char m[48]; u32 ml = 0;
+        append_str(m, &ml, sizeof(m), "(empty response, HTTP ");
+        char d[8]; u32 st = (u32)hr.status; int nd = 0;
+        do { d[nd++] = (char)('0' + st % 10); st /= 10; } while (st && nd < 6);
+        while (nd) { char one[2] = { d[--nd], 0 }; append_str(m, &ml, sizeof(m), one); }
+        append_str(m, &ml, sizeof(m), ")");
+        hv_render_message(m);
+    }
+    web_view_cols = 0;      /* force a fresh layout at the current window width */
+}
+
 static void web_poll(void) {
     if (web_resolving) {
         if (dns_client.state == DNS_RESOLVED) {
             web_resolving = 0;
-            if (web_use_https) {
-                u8 seed[16];
-                web_make_entropy_seed(seed);
-                https_get(dns_client.result_ip, dns_client.hostname, web_last_path, seed);
-            } else {
-                http_get(dns_client.result_ip, dns_client.hostname, web_last_path);
-            }
+            web_connect(dns_client.result_ip);
         } else if (dns_client.state == DNS_FAILED) {
             web_resolving = 0;
             web_dns_failed = 1;
         }
-        return; /* don't also poll HTTP/HTTPS this same tick -- there's
-                 * nothing for it to do yet */
+        return; /* don't also poll HTTP/HTTPS this same tick -- there's nothing to poll yet */
     }
     if (web_use_https) {
         if (https_client.state != HTTPS_IDLE &&
             https_client.state != HTTPS_DONE && https_client.state != HTTPS_FAILED) {
             https_poll(web_now_packed());
         }
+        if (https_client.state == HTTPS_DONE && !web_page_ready) web_page_complete();
     } else {
         if (http_client.state != HTTP_IDLE &&
             http_client.state != HTTP_DONE && http_client.state != HTTP_FAILED) {
             http_poll();
         }
+        if (http_client.state == HTTP_DONE && !web_page_ready) web_page_complete();
     }
 }
 
@@ -2042,23 +2166,6 @@ static int mw_at_state = 0;
 static u32 mw_at_settle = 0;
 static u32 mw_at_started_tick = 0;
 
-static void mw_at_report_bytes(const u8 *data, u32 len) {
-    serial_puts("[AUTOTEST] body bytes=");
-    serial_put_dec(len);
-    serial_puts("\n[AUTOTEST] first-line: ");
-    for (u32 i = 0; i < len && i < 100 && data[i] != '\r' && data[i] != '\n'; i++) serial_putc((char)data[i]);
-    serial_puts("\n");
-#ifdef MW_AUTOTEST_DUMP
-    /* dump the head of the response verbatim, so a script can grep it */
-    serial_puts("[AUTOTEST] dump-begin\n");
-    for (u32 i = 0; i < len && i < MW_AUTOTEST_DUMP; i++) {
-        char c = (char)data[i];
-        serial_putc((c == '\n' || (c >= 32 && c < 127)) ? c : '.');
-    }
-    serial_puts("\n[AUTOTEST] dump-end\n");
-#endif
-}
-
 static void mw_autotest_step(void) {
     if (mw_at_state == 0) {
         if (!net_cfg.ready) return;
@@ -2074,13 +2181,26 @@ static void mw_autotest_step(void) {
     }
     if (mw_at_state != 1) return;
 
+    /* a heartbeat while waiting, so a stall can be told apart from "just slow" in the serial log */
+    {
+        static u32 beat_ctr = 0;
+        if (++beat_ctr % 100 == 0) {
+            serial_puts("[AUTOTEST] .. tcp="); serial_put_dec((u32)tcp_conn.state);
+            serial_puts(" hr.len="); serial_put_dec(hr.len);
+            serial_puts(" recv_len="); serial_put_dec(tcp_conn.recv_len);
+            serial_puts(" fin="); serial_put_dec((u32)tcp_conn.peer_fin_seen);
+            serial_puts(" ticks="); serial_put_dec(net_ticks);
+            serial_putc('\n');
+        }
+    }
+
+    /* A redirect restarts the fetch (state goes back to connecting), so "done" really means the FINAL page. */
     if (web_dns_failed) {
         serial_puts("[AUTOTEST] RESULT dns-failed\n");
         mw_at_state = 2;
     } else if (web_use_https) {
-        if (https_client.state == HTTPS_DONE) {
+        if (https_client.state == HTTPS_DONE && web_page_ready) {
             serial_puts("[AUTOTEST] RESULT https-ok\n");
-            mw_at_report_bytes(https_client.response, https_client.response_len);
             mw_at_state = 2;
         } else if (https_client.state == HTTPS_FAILED) {
             serial_puts("[AUTOTEST] RESULT https-failed reason=");
@@ -2089,20 +2209,61 @@ static void mw_autotest_step(void) {
             mw_at_state = 2;
         }
     } else {
-        if (http_client.state == HTTP_DONE) {
+        if (http_client.state == HTTP_DONE && web_page_ready) {
             serial_puts("[AUTOTEST] RESULT http-ok\n");
-            mw_at_report_bytes(http_client.response, http_client.response_len);
             mw_at_state = 2;
         } else if (http_client.state == HTTP_FAILED) {
             serial_puts("[AUTOTEST] RESULT http-failed\n");
             mw_at_state = 2;
         }
     }
-    if (mw_at_state == 1 && net_ticks - mw_at_started_tick > 400000u) {
+    if (mw_at_state == 1 && net_ticks - mw_at_started_tick > 800000u) {
         serial_puts("[AUTOTEST] RESULT timeout\n");
         mw_at_state = 2;
     }
-    if (mw_at_state == 2) serial_puts("[AUTOTEST] finished\n");
+    if (mw_at_state == 2) {
+        serial_puts("[AUTOTEST] status="); serial_put_dec((u32)hr.status);
+        serial_puts(" raw-bytes="); serial_put_dec(hr.len);
+        serial_puts(" body-bytes="); serial_put_dec(hr.body_len);
+        serial_puts(" truncated="); serial_put_dec((u32)hr.truncated);
+        serial_puts(" chunked="); serial_put_dec((u32)hr.chunked);
+        serial_puts(" host="); serial_puts(web_last_host);
+        serial_puts(" path="); serial_puts(web_last_path);
+        {   /* a rolling checksum of the decoded body, so a test can prove the bytes are EXACTLY right */
+            u32 h = 0;
+            for (u32 i = 0; i < hr.body_len; i++) h = h * 31u + HR_BUF[hr.body_start + i];
+            serial_puts("\n[AUTOTEST] body-hash=0x"); serial_put_hex32(h);
+        }
+        serial_puts("\n[AUTOTEST] title=["); serial_puts(hv.title);
+        serial_puts("] links="); serial_put_dec(hv.link_count);
+        serial_puts(" text-bytes="); serial_put_dec(hv.text_len);
+        serial_puts("\n");
+#ifdef MW_AUTOTEST_DUMP
+        serial_puts("[AUTOTEST] text-begin\n");
+        for (u32 i = 0; i < hv.text_len && i < MW_AUTOTEST_DUMP; i++) {
+            char c = (char)HV_TEXT[i];
+            serial_putc((c == '\n' || (c >= 32 && c < 127)) ? c : '.');
+        }
+        serial_puts("\n[AUTOTEST] text-end\n");
+#endif
+        serial_puts("[AUTOTEST] finished\n");
+#ifdef MW_AUTOTEST_FOLLOW
+        /* then "click" link number MW_AUTOTEST_FOLLOW on the page, exactly as a mouse click would, and
+         * report the page that loads (a link on DuckDuckGo Lite goes through a redirector first) */
+        static int followed = 0;
+        if (!followed && (int)hv.link_count > MW_AUTOTEST_FOLLOW) {
+            followed = 1;
+            serial_puts("[AUTOTEST] follow link ");
+            serial_put_dec(MW_AUTOTEST_FOLLOW);
+            serial_puts(" -> ");
+            serial_puts(HV_URLS + HV_LINKS[MW_AUTOTEST_FOLLOW].url_off);
+            serial_putc('\n');
+            web_navigate_ref(HV_URLS + HV_LINKS[MW_AUTOTEST_FOLLOW].url_off);
+            mw_at_state = 1;
+            mw_at_started_tick = net_ticks;
+        }
+#endif
+    }
 }
 #endif
 
@@ -2115,29 +2276,117 @@ static void mw_autotest_step(void) {
  * this kernel doesn't have a text-scroll widget yet, and an HTTP
  * response's opening lines (status line + headers) are the most useful
  * ones to see at a glance anyway. */
-static void draw_web_response_text(int x, int y, int w, int h, const u8 *data, u16 len) {
-    int cx = x, cy = y;
-    int max_x = x + w - FONT_CELL;
-    int max_y = y + h - FONT_CELL;
-    for (u16 i = 0; i < len; i++) {
-        char c = (char)data[i];
-        if (c == '\r') continue; /* CRLF line endings -- skip the \r, act on the \n */
-        if (c == '\n' || cx > max_x) {
-            cx = x;
-            cy += FONT_CELL + 1;
-            if (c == '\n') continue;
-        }
-        if (cy > max_y) break;
-        /* font_draw_char() now renders real upper AND lower case glyphs
-         * (Galmuri11 actually has both -- see font.h), and covers the
-         * full printable-ASCII range on its own, so the only bytes
-         * actually worth blanking out here are the genuine
-         * non-printable ones (raw control bytes, high-bit-set bytes)
-         * that show up occasionally in real HTTP traffic; everything
-         * else passes through untouched. */
-        font_draw_char(cx, cy, (c >= 0x20 && c < 0x7F) ? c : ' ', COL_BLACK);
-        cx += FONT_CELL;
+/* Where the page body (text area + scrollbar) sits inside the window. One function so drawing,
+ * scrolling and click hit-testing can never disagree about the geometry. */
+static void web_body_geom(int *bx, int *by, int *bw, int *bh) {
+    *bx = web_win.x + 3;
+    *by = web_content_y() + FONT_CELL + 3;
+    *bw = web_win.w - 6 - WEB_SB_W;
+    *bh = web_win.y + web_win.h - *by - 3;
+}
+#define WEB_LINE_H (FONT_CELL + 1)
+static int web_visible_lines(void) {
+    int bx, by, bw, bh;
+    web_body_geom(&bx, &by, &bw, &bh);
+    int v = bh / WEB_LINE_H;
+    return v < 1 ? 1 : v;
+}
+static void web_scroll_by(int lines) {
+    int vis = web_visible_lines();
+    int max = (int)hv.line_count > vis ? (int)hv.line_count - vis : 0;
+    int s = (int)hv.scroll + lines;
+    if (s < 0) s = 0;
+    if (s > max) s = max;
+    hv.scroll = (u32)s;
+}
+/* Keeps the layout in step with the window's width (the window can be resized or maximized). */
+static void web_ensure_layout(void) {
+    int bx, by, bw, bh;
+    web_body_geom(&bx, &by, &bw, &bh);
+    u32 cols = (u32)(bw / FONT_CELL);
+    if (cols != web_view_cols) {
+        hv_layout(cols);
+        web_view_cols = cols;
+        web_scroll_by(0);        /* re-clamp */
     }
+}
+
+/* Draws the rendered page: wrapped text lines from hv.scroll down, links in blue and underlined,
+ * Hangul syllables via the Korean font, plus a scrollbar. */
+static void draw_web_page(void) {
+    web_ensure_layout();
+    int bx, by, bw, bh;
+    web_body_geom(&bx, &by, &bw, &bh);
+    int vis = web_visible_lines();
+
+    /* first link that could still be on screen (links are stored in text order) */
+    u32 first_off = hv.scroll < hv.line_count ? HV_LINES[hv.scroll] : 0;
+    u32 lk = 0;
+    while (lk < hv.link_count && HV_LINKS[lk].tend <= first_off) lk++;
+
+    for (int row = 0; row < vis; row++) {
+        u32 li = hv.scroll + (u32)row;
+        if (li >= hv.line_count) break;
+        int cy = by + row * WEB_LINE_H;
+        int cx = bx;
+        u32 e = hv_line_end(li);
+        for (u32 p = HV_LINES[li]; p < e; ) {
+            while (lk < hv.link_count && HV_LINKS[lk].tend <= p) lk++;
+            int in_link = (lk < hv.link_count && p >= HV_LINKS[lk].tstart);
+            u32 color = in_link ? COL_BLUE : COL_BLACK;
+            u8 c = HV_TEXT[p];
+            if (c >= 0xE0) {
+                int cp = ko_utf8_decode3((const char *)&HV_TEXT[p]);
+                if (cp > 0) ko_font_draw_codepoint(cx, cy, cp, color);
+                p += 3;
+            } else {
+                if (c != ' ') font_draw_char(cx, cy, (char)((c >= 0x20 && c < 0x7F) ? c : '?'), color);
+                p += 1;
+            }
+            if (in_link) bb_fillrect(cx, cy + FONT_CELL, FONT_CELL, 1, COL_BLUE);
+            cx += FONT_CELL;
+        }
+    }
+
+    /* scrollbar: a track, and a thumb sized/placed by how much of the page is in view */
+    int sx = web_win.x + web_win.w - 3 - WEB_SB_W;
+    bb_fillrect(sx, by, WEB_SB_W, bh, COL_DGRAY);
+    if (hv.line_count > 0) {
+        int total = (int)hv.line_count;
+        int thumb_h = total <= vis ? bh : (bh * vis) / total;
+        if (thumb_h < 10) thumb_h = 10;
+        int travel = bh - thumb_h;
+        int max_scroll = total > vis ? total - vis : 0;
+        int thumb_y = by + (max_scroll > 0 ? (travel * (int)hv.scroll) / max_scroll : 0);
+        bb_fillrect(sx + 1, thumb_y, WEB_SB_W - 2, thumb_h, COL_LGRAY);
+    }
+}
+
+/* A mouse click somewhere in the page area: on the scrollbar it scrolls, on a link it follows it.
+ * Returns 1 if the click landed in the body region at all (so the caller doesn't treat it as a click on nothing). */
+static int web_page_click(int mx, int my) {
+    int bx, by, bw, bh;
+    web_body_geom(&bx, &by, &bw, &bh);
+    if (!in_rect(mx, my, bx, by, bw + WEB_SB_W, bh)) return 0;
+    if (mx >= bx + bw) {                              /* the scrollbar: click above/below the thumb pages, else jumps */
+        int vis = web_visible_lines();
+        int total = (int)hv.line_count;
+        int max_scroll = total > vis ? total - vis : 0;
+        if (max_scroll > 0) {
+            int target = ((my - by) * max_scroll) / (bh > 0 ? bh : 1);
+            hv.scroll = (u32)(target < 0 ? 0 : target > max_scroll ? max_scroll : target);
+        }
+        return 1;
+    }
+    if (!web_page_ready) return 1;
+    u32 col = (u32)((mx - bx) / FONT_CELL);
+    u32 line = hv.scroll + (u32)((my - by) / WEB_LINE_H);
+    int off = hv_offset_at(line, col);
+    if (off >= 0) {
+        int link = hv_link_at((u32)off);
+        if (link >= 0) web_navigate_ref(HV_URLS + HV_LINKS[link].url_off);
+    }
+    return 1;
 }
 
 static void draw_web_window(void) {
@@ -2246,7 +2495,7 @@ static void draw_web_window(void) {
             case HTTPS_CONNECTING:        status_text = "TLS handshake..."; break;
             case HTTPS_SENDING_REQUEST:   status_text = "Sending request..."; break;
             case HTTPS_AWAITING_RESPONSE: status_text = "Waiting for response..."; break;
-            case HTTPS_DONE:              status_text = "Done. (HTTPS)"; break;
+            case HTTPS_DONE:              status_text = web_page_ready ? "Done. (HTTPS)" : "Rendering..."; break;
             case HTTPS_FAILED:            status_text = "TLS/HTTPS failed."; break;
             default:                      status_text = ""; break;
         }
@@ -2261,20 +2510,21 @@ static void draw_web_window(void) {
         }
     }
     if (status_text) font_draw_string(wx + 3, web_content_y(), status_text, COL_BLUE);
+    if (status_text && web_page_ready && hv.title[0]) {
+        /* the page's <title>, after the status, clipped to the window's width */
+        u32 sl = 0; while (status_text[sl]) sl++;
+        int room = (ww - 6) / FONT_CELL - (int)sl - 2;
+        if (room > 3) {
+            char t[100]; u32 tl = 0;
+            while (hv.title[tl] && (int)tl < room && tl + 1 < sizeof(t)) { t[tl] = hv.title[tl]; tl++; }
+            t[tl] = 0;
+            font_draw_string(wx + 3 + (int)(sl + 2) * FONT_CELL, web_content_y(), t, COL_BLACK);
+        }
+    }
 
     /* response body (or nothing yet, or the failure already explained
      * by the status line above) */
-    int body_y = web_content_y() + FONT_CELL + 3;
-    int body_h = wy + wh - body_y - 3;
-    if (web_use_https) {
-        if (https_client.state == HTTPS_DONE || https_client.state == HTTPS_AWAITING_RESPONSE) {
-            draw_web_response_text(wx + 3, body_y, ww - 6, body_h, https_client.response, https_client.response_len);
-        }
-    } else {
-        if (http_client.state == HTTP_DONE || http_client.state == HTTP_AWAITING_RESPONSE) {
-            draw_web_response_text(wx + 3, body_y, ww - 6, body_h, http_client.response, http_client.response_len);
-        }
-    }
+    if (web_page_ready && !web_resolving && !web_dns_failed) draw_web_page();
 }
 
 /* Forward declarations -- term_run_input() (below) needs to call all
@@ -3446,6 +3696,8 @@ void kmain(void) {
                         } else if (web_site_row_hit(mx, my, WEB_SITE_GATEWAY)) {
                             web_urlbar_focused = 0;
                             web_go(WEB_SITE_GATEWAY);
+                        } else if (web_page_click(mx, my)) {
+                            web_urlbar_focused = 0;       /* a click on the page: follow a link / use the scrollbar */
                         } else if (web_titlebar_drag_hit(mx, my) && !web_win.maximized) {
                             web_urlbar_focused = 0;
                             dragging_id = WIN_ID_WEB;
@@ -3750,6 +4002,18 @@ void kmain(void) {
         for (int zi = z_count - 1; zi >= 0; zi--) {
             int id = z_order[zi];
             if (win_is_open(id) && !win_is_minimized(id)) { focused_id = id; break; }
+        }
+
+        /* Scrolling the web page: Up/Down move three lines; with the URL bar NOT focused, Space pages
+         * down and B pages up (the same keys every text-mode browser uses). The keys are consumed here
+         * so they don't also reach the URL bar's text entry below. */
+        if (focused_id == WIN_ID_WEB && k != KEY_NONE) {
+            int page = web_visible_lines() - 1;
+            if (page < 1) page = 1;
+            if (k == KEY_UP)        { web_scroll_by(-3); k = KEY_NONE; }
+            else if (k == KEY_DOWN) { web_scroll_by(3);  k = KEY_NONE; }
+            else if (!web_urlbar_focused && k == ' ')                { web_scroll_by(page);  k = KEY_NONE; }
+            else if (!web_urlbar_focused && (k == 'b' || k == 'B'))  { web_scroll_by(-page); k = KEY_NONE; }
         }
 
         if (focused_id >= 0 && focused_id != WIN_ID_SETTING && focused_id != WIN_ID_WEB && focused_id != WIN_ID_TERMINAL) {

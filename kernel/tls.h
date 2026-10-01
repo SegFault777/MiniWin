@@ -935,6 +935,15 @@ static inline int tls_decrypt_record(u8 content_type, u8 *payload, u32 payload_l
     aad[12] = (u8)(ct_len & 0xFF);
 
     if (!gcm_decrypt(&tls_conn.server_write_aes, nonce, aad, 13, ciphertext, ct_len, tag)) {
+        serial_puts("[TLS] record failed authentication: seq=");
+        serial_put_dec((u32)tls_conn.server_seq);
+        serial_puts(" type=");
+        serial_put_dec(content_type);
+        serial_puts(" len=");
+        serial_put_dec(ct_len);
+        serial_puts(" tcp.recv_len=");
+        serial_put_dec(tcp_conn.recv_len);
+        serial_putc('\n');
         tls_conn.fail_reason = TLS_FAIL_DECRYPT;
         return 0;
     }
@@ -1095,6 +1104,15 @@ static inline void tls_process_raw_buffer(u64 now_packed) {
         u32 total = 5 + rec_len;
         if (tls_conn.rx_raw_len < total) break;
 
+        /* BACKPRESSURE: if this is application data and the reader hasn't yet drained enough of
+         * app_recv to hold it, leave the record sitting in the raw buffer and try again next poll.
+         * The full raw buffer then stops tls_poll() reading from TCP, TCP's advertised window
+         * shrinks, and the server slows down -- flow control end to end, instead of the old
+         * behaviour of silently dropping whatever didn't fit (which, once pages could be larger
+         * than one buffer, would have quietly corrupted every big download). */
+        if (content_type == TLS_CONTENT_APPLICATION_DATA &&
+            tls_conn.app_recv_len + rec_len > TLS_APP_RECV_BUF_SIZE) break;
+
         u8 *payload = TLS_RX_RAW + 5;
         u8 *plain = payload;
         u32 plain_len = rec_len;
@@ -1150,19 +1168,8 @@ static inline void tls_process_raw_buffer(u64 now_packed) {
                 for (u32 i = 0; i < plain_len; i++) TLS_HS_BUF[tls_conn.hs_buf_len + i] = plain[i];
                 tls_conn.hs_buf_len += plain_len;
             } else {
-                /* Unlike hs_buf above, an oversized application_data
-                 * record is NOT treated as fatal -- this client only
-                 * ever wants to preview a response's opening bytes
-                 * anyway (TLS_APP_RECV_BUF_SIZE matches https.h's own
-                 * response buffer size, which matches http.h's), so
-                 * once app_recv is full, the rest of this record (and
-                 * any records after it, until the caller drains some
-                 * room via tls_poll_recv_app_data()) is quietly
-                 * dropped. A handshake message can never be partially
-                 * discarded like this -- every byte of it is load-
-                 * bearing for the transcript hash -- which is exactly
-                 * why that branch above still fails the connection
-                 * outright instead of truncating. */
+                /* (The backpressure check at the top of the loop guarantees this fits; the
+                 * clamp below is belt and braces, never a normal path.) */
                 u32 room = TLS_APP_RECV_BUF_SIZE - tls_conn.app_recv_len;
                 u32 take = plain_len < room ? plain_len : room;
                 for (u32 i = 0; i < take; i++) TLS_APP_RECV[tls_conn.app_recv_len + i] = plain[i];

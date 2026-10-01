@@ -4,6 +4,7 @@
 #include "net.h"
 #include "tls.h"
 #include "serial.h"
+#include "httpresp.h"
 
 /* ============================================================
  * https.h -- http.h's counterpart, speaking exactly the same HTTP/1.1
@@ -23,11 +24,7 @@
  * silently pretend it isn't there.
  * ============================================================ */
 
-#define HTTPS_RESPONSE_BUF_SIZE 4096   /* matches http.h's own scale --
-                                        * https.h's caller (web_go() in
-                                        * kernel.c) only ever wants to
-                                        * show the first chunk of a
-                                        * response anyway */
+#define HTTPS_PATH_MAX 320
 
 typedef enum {
     HTTPS_IDLE = 0,
@@ -38,33 +35,29 @@ typedef enum {
     HTTPS_FAILED,
 } https_state_t;
 
+/* Like http.h, the response lives in httpresp.h's shared buffer, not in here. */
 typedef struct {
     https_state_t state;
-    char host_header[64];
-    char path[128];
-    u8   response[HTTPS_RESPONSE_BUF_SIZE];
-    u16  response_len;
+    char host_header[80];
+    char path[HTTPS_PATH_MAX];
     int  request_sent;
 } https_client_t;
 
 static https_client_t https_client;
 
-/* Kicks off "GET path HTTP/1.1" against server_ip:443 over TLS. Same
- * division of labor as http_get(): connection is by raw IP (resolve a
- * hostname with kernel/dns.h's dns_resolve() first if needed), `host`
- * populates both TLS's SNI extension (so the server picks the right
- * certificate) and the HTTP Host: header (so it picks the right
- * virtual host) -- one hostname, two protocols that both need it for
- * unrelated reasons. `entropy_seed` is forwarded straight to
- * tls_connect() -- see that function's own comment for why it doesn't
- * need to be, and currently can't be, cryptographically strong. */
-static inline void https_get(u32 server_ip, const char *host, const char *path, const u8 entropy_seed[16]) {
+static inline void https_get(u32 server_ip, u16 port, const char *host, const char *path, const u8 entropy_seed[16]) {
     https_client.state = HTTPS_CONNECTING;
-    https_client.response_len = 0;
+    hr_reset();
     https_client.request_sent = 0;
 
     u32 i = 0;
-    for (; host[i] && i < sizeof(https_client.host_header) - 1; i++) https_client.host_header[i] = host[i];
+    for (; host[i] && i < sizeof(https_client.host_header) - 8; i++) https_client.host_header[i] = host[i];
+    if (port != 443) {
+        https_client.host_header[i++] = ':';
+        char digits[6]; int nd = 0; u32 pv = port;
+        do { digits[nd++] = (char)('0' + pv % 10); pv /= 10; } while (pv && nd < 5);
+        while (nd) https_client.host_header[i++] = digits[--nd];
+    }
     https_client.host_header[i] = 0;
     for (i = 0; path[i] && i < sizeof(https_client.path) - 1; i++) https_client.path[i] = path[i];
     https_client.path[i] = 0;
@@ -75,19 +68,9 @@ static inline void https_get(u32 server_ip, const char *host, const char *path, 
     net_log_ip(server_ip);
     serial_putc('\n');
 
-    tls_connect(server_ip, 443, host, entropy_seed);
+    tls_connect(server_ip, port, host, entropy_seed);   /* SNI / name check use the bare host, not host:port */
 }
 
-static inline u32 https_strlen(const char *s) { u32 n = 0; while (s[n]) n++; return n; }
-static inline void https_strcat(char *dst, u32 *pos, const char *src) {
-    for (u32 i = 0; src[i]; i++) dst[(*pos)++] = src[i];
-}
-
-/* Call once per main-loop iteration while a request is outstanding,
- * same poll()-style contract as http_poll(). `now_packed` is forwarded
- * to tls_poll() for certificate validity-date checking -- see
- * tls_pack_datetime() and kernel.c's integration code for where this
- * comes from (the CMOS RTC). */
 static inline https_state_t https_poll(u64 now_packed) {
     switch (https_client.state) {
         case HTTPS_CONNECTING: {
@@ -106,26 +89,12 @@ static inline https_state_t https_poll(u64 now_packed) {
         case HTTPS_SENDING_REQUEST:
             tls_poll(now_packed);
             if (!https_client.request_sent) {
-                char req[256];
-                u32 pos = 0;
-                https_strcat(req, &pos, "GET ");
-                https_strcat(req, &pos, https_client.path);
-                https_strcat(req, &pos, " HTTP/1.1\r\nHost: ");
-                https_strcat(req, &pos, https_client.host_header);
-                https_strcat(req, &pos, "\r\nConnection: close\r\n\r\n");
-
-                if (tls_send_app_data((const u8*)req, pos)) {
+                char req[1024];
+                u32 n = hr_build_request(req, https_client.host_header, https_client.path);
+                if (tls_send_app_data((const u8 *)req, n)) {
                     https_client.request_sent = 1;
                     https_client.state = HTTPS_AWAITING_RESPONSE;
                 }
-                /* TLS records are sent whole (tls_write_record() doesn't
-                 * have a CBC/TCP-style "still waiting on a retransmit
-                 * slot" concept the way tcp_send_data() does -- the
-                 * underlying TCP layer handles its own retransmission
-                 * transparently underneath tls_send_app_data()), so
-                 * unlike http.h there's no separate "was it ACKed yet"
-                 * wait state to poll through here; a successful send
-                 * moves straight to awaiting the response. */
             }
             break;
 
@@ -138,24 +107,21 @@ static inline https_state_t https_poll(u64 now_packed) {
                 https_client.state = HTTPS_FAILED;
                 break;
             }
-            u16 room = (u16)(HTTPS_RESPONSE_BUF_SIZE - https_client.response_len);
-            if (room > 0) {
-                u16 n = tls_poll_recv_app_data(https_client.response + https_client.response_len, room);
-                https_client.response_len = (u16)(https_client.response_len + n);
+            u8 tmp[4096];
+            for (int rounds = 0; rounds < 8 && !hr.complete; rounds++) {
+                u16 n = tls_poll_recv_app_data(tmp, sizeof(tmp));
+                if (n == 0) break;
+                hr_feed(tmp, n);
             }
-            /* Done when the peer has said it's finished (TCP FIN, or a TLS
-             * close_notify -- whichever comes first) and every buffer between here and the raw
-             * socket is empty -- TCP's own recv queue, TLS's raw
-             * (not-yet-a-complete-record) buffer, and TLS's decrypted
-             * application-data buffer. All three empty is what proves
-             * there's truly nothing left to read, not just nothing
-             * left *right now*. Mirrors http.h's own completion check
-             * one layer up. */
-            if ((tcp_conn.peer_fin_seen || tls_conn.peer_close_notify) && tcp_conn.recv_len == 0 &&
-                tls_conn.rx_raw_len == 0 && tls_conn.app_recv_len == 0) {
-                serial_puts("[HTTPS] response complete, ");
-                serial_put_dec(https_client.response_len);
-                serial_puts(" bytes\n");
+            int peer_done = (tcp_conn.peer_fin_seen || tls_conn.peer_close_notify || tcp_conn.state == TCP_CLOSED) &&
+                            tcp_conn.recv_len == 0 && tls_conn.rx_raw_len == 0 && tls_conn.app_recv_len == 0;
+            if (hr.complete || peer_done) {
+                hr_finish();
+                serial_puts("[HTTPS] response complete: status=");
+                serial_put_dec((u32)hr.status);
+                serial_puts(" bytes=");
+                serial_put_dec(hr.len);
+                serial_putc('\n');
                 tls_close();
                 https_client.state = HTTPS_DONE;
             }

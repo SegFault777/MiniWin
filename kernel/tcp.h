@@ -163,9 +163,15 @@ static u16 tcp_next_port = 49152;
 
 /* How much room the peer may still fill -- exactly what we advertise as
  * our window. */
+/* ...but never more than TCP_ADV_WINDOW_MAX. The receive BUFFER is 32KB, but the NIC's own receive
+ * ring (rtl8139.h: 32KB) has to hold everything the peer is allowed to have in flight, because the
+ * driver is only polled once per main-loop pass. 20KB is ~15 full frames (~22KB on the wire), which
+ * fits with room to spare. Advertising the full 32KB let a burst overrun the ring and lose frames. */
+#define TCP_ADV_WINDOW_MAX 20480
 static inline u16 tcp_recv_window(void) {
     u32 room = TCP_RECV_BUF_SIZE - tcp_conn.recv_len;
-    return (u16)(room > 0xFFFF ? 0xFFFF : room);
+    if (room > TCP_ADV_WINDOW_MAX) room = TCP_ADV_WINDOW_MAX;
+    return (u16)room;
 }
 
 /* How many more bytes tcp_send_data() will accept right now. */
@@ -434,6 +440,13 @@ static inline void tcp_handle_packet(const ip_packet_t *ip) {
             break;
 
         case TCP_ESTABLISHED:
+#ifdef MW_TCP_DEBUG
+            if (data_len > 0 && seq != tcp_conn.rcv_nxt) {   /* anything but the next expected bytes is worth a line */
+                serial_puts("[TCPDBG] seg seq-rcv_nxt="); serial_put_dec((u32)(i32)(seq - tcp_conn.rcv_nxt));
+                serial_puts(" len="); serial_put_dec(data_len);
+                serial_puts(" recv_len="); serial_put_dec(tcp_conn.recv_len); serial_putc('\n');
+            }
+#endif
             if (data_len > 0) {
                 i32 already = (i32)(tcp_conn.rcv_nxt - seq);   /* bytes of this segment we already hold */
                 if (already >= 0 && (u32)already < data_len) {

@@ -1,2 +1,4 @@
 __pycache__/
 *.pyc
+# build outputs are NOT tracked: each version's image is attached to its GitHub Release instead
+build/
