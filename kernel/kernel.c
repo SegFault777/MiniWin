@@ -1686,6 +1686,7 @@ static char web_last_path[WEB_PATH_MAX];
 static u16  web_last_port = 0;
 static int  web_redirects_left = 0;         /* a fetch may follow this many more redirects */
 static int  web_page_ready = 0;             /* the finished response has been turned into the on-screen page */
+static int  web_waiting_net = 0;             /* a load was requested before DHCP gave us an IP; it starts when the lease arrives */
 static u32  web_view_cols = 0;              /* the column count the page was last laid out for */
 #define WEB_SB_W 12                         /* scrollbar width, px */
 static void web_start_fetch(int https, const char *host, u16 port, const char *path);
@@ -2007,10 +2008,21 @@ static void web_connect(u32 ip) {
     }
 }
 
+static void web_begin_transport(void) {
+    u32 ip;
+    if (web_parse_ipv4(web_last_host, &ip)) {
+        web_connect(ip);                       /* an IP literal has nothing to resolve */
+    } else {
+        web_resolving = 1;
+        dns_resolve(web_last_host);
+    }
+}
+
 /* The ONE place a page load starts -- from the URL bar, a bookmark, a clicked link, or a redirect. */
 static void web_start_fetch(int https, const char *host, u16 port, const char *path) {
     web_dns_failed = 0;
     web_resolving = 0;
+    web_waiting_net = 0;
     web_page_ready = 0;
     http_client.state = HTTP_IDLE;
     https_client.state = HTTPS_IDLE;
@@ -2021,13 +2033,13 @@ static void web_start_fetch(int https, const char *host, u16 port, const char *p
     hv_render_message("");
     web_view_cols = 0;
 
-    u32 ip;
-    if (web_parse_ipv4(web_last_host, &ip)) {
-        web_connect(ip);                       /* an IP literal has nothing to resolve */
-    } else {
-        web_resolving = 1;
-        dns_resolve(web_last_host);
+    if (!net_cfg.ready) {
+        /* No IP address yet (DHCP hasn't been answered). Don't fire a DNS query from 0.0.0.0 at a
+         * server that doesn't exist -- wait for the lease; web_poll() starts the load when it arrives. */
+        web_waiting_net = 1;
+        return;
     }
+    web_begin_transport();
 }
 
 /* Follows a link (or anything else carrying an href) from the current page. */
@@ -2127,6 +2139,12 @@ static void web_page_complete(void) {
 }
 
 static void web_poll(void) {
+    if (web_waiting_net) {
+        if (!net_cfg.ready) return;            /* still no lease; dhcp_poll() keeps retrying in the background */
+        web_waiting_net = 0;
+        web_begin_transport();
+        return;
+    }
     if (web_resolving) {
         if (dns_client.state == DNS_RESOLVED) {
             web_resolving = 0;
@@ -2168,7 +2186,9 @@ static u32 mw_at_started_tick = 0;
 
 static void mw_autotest_step(void) {
     if (mw_at_state == 0) {
+#ifndef MW_AUTOTEST_EARLY
         if (!net_cfg.ready) return;
+#endif
         if (++mw_at_settle < 300) return;           /* let ARP/DNS settle for a moment */
         kstrcpy(web_urlbar_buf, MW_AUTOTEST_URL, sizeof(web_urlbar_buf));
         web_urlbar_len = 0;
@@ -2360,6 +2380,16 @@ static void web_draw_wrapped(int *row, const char *text, u32 color) {
 static void draw_web_failure(void) {
     int row = 0;
     char head[140]; u32 hl = 0;
+    if (web_waiting_net) {
+        web_draw_wrapped(&row, "This computer has no IP address yet, so the page cannot be requested.", COL_BLACK);
+        row++;
+        web_draw_wrapped(&row, "MiniWin is asking the network's DHCP server for one and will keep retrying; the page loads by itself as soon as the answer arrives.", COL_BLACK);
+        if (dhcp_tries >= 2) {
+            row++;
+            web_draw_wrapped(&row, "Still no answer. Make sure the virtual machine's network adapter is connected and supported (e1000 or rtl8139), e.g. QEMU: -netdev user,id=n0 -device e1000,netdev=n0", COL_DGRAY);
+        }
+        return;
+    }
     if (web_dns_failed) {
         append_str(head, &hl, sizeof(head), "Could not find \"");
         append_str(head, &hl, sizeof(head), web_last_host);
@@ -2570,6 +2600,8 @@ static void draw_web_window(void) {
          * indices (0, 1) all mean "something's been requested" and
          * fall through to the resolving/connecting states below. */
         status_text = "Type a URL or search, then GO.";
+    } else if (web_waiting_net) {
+        status_text = "Waiting for an IP address (DHCP)...";
     } else if (web_resolving) {
         char buf[128]; u32 blen = 0;
         append_str(buf, &blen, sizeof(buf), "Resolving ");

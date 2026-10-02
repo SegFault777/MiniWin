@@ -5,6 +5,7 @@
 #include "udp.h"
 #include "nic.h"
 #include "serial.h"
+#include "netclock.h"
 
 /* ============================================================
  * dhcp.h -- DHCP: the reason this OS can plug into literally any modern
@@ -62,6 +63,10 @@ typedef enum {
 static dhcp_state_t dhcp_state = DHCP_STATE_IDLE;
 static u32 dhcp_offered_ip = 0;
 static u32 dhcp_server_id = 0;
+static u32 dhcp_last_sent_wall = 0;   /* RTC seconds-of-day of the last DISCOVER/REQUEST we sent */
+static u32 dhcp_last_sent_tick = 0;
+static int dhcp_tries = 0;            /* how many times we've had to resend in this conversation */
+static int dhcp_started = 0;
 static u32 dhcp_xid = 0x1234ABCD; /* transaction ID -- fixed is fine, we only ever run one at a time */
 
 /* A DHCP packet is BOOTP's fixed 236-byte layout (mostly zeroed fields
@@ -118,9 +123,25 @@ static inline u16 dhcp_build_packet(u8 *out, u8 msg_type, u32 requested_ip, u32 
 static inline void dhcp_send_discover(void) {
     u8 pkt[300];
     u16 len = dhcp_build_packet(pkt, DHCP_MSG_DISCOVER, 0, 0);
+#ifdef MW_TEST_DHCP_DROP
+    /* TEST ONLY: pretend the first N DISCOVERs were lost on the wire (compile with -DMW_TEST_DHCP_DROP=N) */
+    {
+        static int dropped = 0;
+        if (dropped < MW_TEST_DHCP_DROP) {
+            dropped++;
+            serial_puts("[DHCP] -> DISCOVER (dropped on purpose by the test hook)\n");
+            dhcp_state = DHCP_STATE_DISCOVER_SENT;
+            dhcp_last_sent_wall = net_wall_seconds();
+            dhcp_last_sent_tick = net_ticks;
+            return;
+        }
+    }
+#endif
     serial_puts("[DHCP] -> DISCOVER\n");
     udp_send(0, DHCP_CLIENT_PORT, NET_IP4_BROADCAST, DHCP_SERVER_PORT, pkt, len);
     dhcp_state = DHCP_STATE_DISCOVER_SENT;
+    dhcp_last_sent_wall = net_wall_seconds();
+    dhcp_last_sent_tick = net_ticks;
 }
 
 static inline void dhcp_send_request(u32 requested_ip, u32 server_id) {
@@ -134,6 +155,8 @@ static inline void dhcp_send_request(u32 requested_ip, u32 server_id) {
      * instead of thinking we ghosted them. */
     udp_send(0, DHCP_CLIENT_PORT, NET_IP4_BROADCAST, DHCP_SERVER_PORT, pkt, len);
     dhcp_state = DHCP_STATE_REQUEST_SENT;
+    dhcp_last_sent_wall = net_wall_seconds();
+    dhcp_last_sent_tick = net_ticks;
 }
 
 /* Walks the TLV option list looking for `want_opt`. Returns 1 and fills
@@ -200,6 +223,7 @@ static inline void dhcp_handle_reply(u32 src_ip, u16 src_port, const u8 *data, u
         net_cfg.dns_ip = dns;
         net_cfg.ready = 1;
         dhcp_state = DHCP_STATE_BOUND;
+        dhcp_tries = 0;
 
         serial_puts("[DHCP] <- ACK, bound to ");
         net_log_ip(net_cfg.my_ip);
@@ -216,7 +240,9 @@ static inline void dhcp_handle_reply(u32 src_ip, u16 src_port, const u8 *data, u
          * else already snapped up). Simplest correct response: start
          * the whole DORA dance over from scratch. */
         serial_puts("[DHCP] <- NAK, restarting\n");
-        dhcp_state = DHCP_STATE_IDLE;
+        dhcp_state = DHCP_STATE_IDLE;                 /* dhcp_poll() starts a fresh DISCOVER a second from now */
+        dhcp_last_sent_wall = net_wall_seconds();
+        dhcp_last_sent_tick = net_ticks;
     }
     (void)src_ip;
 }
@@ -226,14 +252,57 @@ static inline void dhcp_handle_reply(u32 src_ip, u16 src_port, const u8 *data, u
  * net_stack_init() in net_stack.h for the actual bring-up order. */
 static inline void dhcp_start(void) {
     udp_listen(DHCP_CLIENT_PORT, dhcp_handle_reply);
+    dhcp_started = 1;
     dhcp_send_discover();
 }
 
-/* No timeout/retry logic yet -- if the DISCOVER or REQUEST gets lost,
- * we just sit in that state forever. A real client would set a timer
- * and retransmit; this one trusts QEMU's SLIRP (and most home routers)
- * to answer the first time, which they overwhelmingly do. A fine
- * enhancement for a future session, noted here instead of pretended
- * away. */
+/* Retransmission. Call once per main-loop pass (net_stack_poll does).
+ *
+ * This client used to send ONE DISCOVER at boot and then wait forever -- its own closing comment
+ * admitted "if the DISCOVER or REQUEST gets lost, we just sit in that state forever". And a lost
+ * first packet is genuinely common: the NIC's link can still be coming up when the kernel's first
+ * broadcast goes out, and a hardware-accelerated guest boots far faster than the virtual network
+ * behind it. The result was a machine with NO IP address, NO gateway and NO DNS server for the
+ * entire session, which the browser could only report as "DNS Lookup Failed ... Tried: 0.0.0.0".
+ *
+ * Now: an unanswered DISCOVER is resent after 3s, 3s, then every 6s, then every 12s, for as long as
+ * it takes (the same transaction id each time, as RFC 2131 permits); an unanswered REQUEST is
+ * resent twice and then the whole conversation starts over from DISCOVER; a NAK really does
+ * restart. Time is the RTC, not loop passes (netclock.h). */
+static inline void dhcp_poll(void) {
+    if (!dhcp_started || dhcp_state == DHCP_STATE_BOUND) return;
+    u32 waited = net_wall_elapsed(dhcp_last_sent_wall);
+    int tick_stale = (net_ticks - dhcp_last_sent_tick) > 200000u;   /* backstop for a stopped RTC */
+
+    if (dhcp_state == DHCP_STATE_IDLE) {
+        if (waited >= 1 || tick_stale) {
+            dhcp_xid = 0x1234ABCDu ^ (net_ticks * 2654435761u);
+            dhcp_tries = 0;
+            dhcp_send_discover();
+        }
+        return;
+    }
+
+    u32 interval = dhcp_tries < 2 ? 3u : dhcp_tries < 4 ? 6u : 12u;
+    if (waited < interval && !tick_stale) return;
+    dhcp_tries++;
+
+    if (dhcp_state == DHCP_STATE_DISCOVER_SENT) {
+        serial_puts("[DHCP] no OFFER yet, resending DISCOVER (retry ");
+        serial_put_dec((u32)dhcp_tries);
+        serial_puts(")\n");
+        dhcp_send_discover();
+    } else if (dhcp_state == DHCP_STATE_REQUEST_SENT) {
+        if (dhcp_tries >= 3) {
+            serial_puts("[DHCP] no ACK, starting over\n");
+            dhcp_xid = 0x1234ABCDu ^ (net_ticks * 2654435761u);
+            dhcp_tries = 0;
+            dhcp_send_discover();
+        } else {
+            serial_puts("[DHCP] no ACK yet, resending REQUEST\n");
+            dhcp_send_request(dhcp_offered_ip, dhcp_server_id);
+        }
+    }
+}
 
 #endif

@@ -4,7 +4,7 @@
 #include "net.h"
 #include "udp.h"
 #include "serial.h"
-#include "rtc.h"
+#include "netclock.h"
 
 /* ============================================================
  * dns.h -- DNS, or: the phone book that finally lets this kernel type
@@ -62,6 +62,7 @@ typedef struct {
     u32 query_wall;                 /* RTC seconds-of-day when the current attempt was sent */
     u32 servers[DNS_MAX_ATTEMPTS];  /* who each attempt is sent to */
     int attempt;                    /* 0-based index of the attempt in flight */
+    int nattempts;                  /* how many attempts this lookup will make (<= DNS_MAX_ATTEMPTS) */
     char fail[96];                  /* WHY the lookup failed, in words -- shown on the page */
     char hostname[DNS_MAX_NAME];   /* kept purely so a timeout/response
                                     * can be logged with a human-readable
@@ -128,11 +129,7 @@ static inline u16 dns_skip_name(const u8 *data, u16 len, u16 offset) {
     return 0; /* ran off the end -- truncated packet */
 }
 
-static inline u32 dns_wall_seconds(void) {
-    rtc_time_t t;
-    rtc_read(&t);
-    return (u32)t.hour * 3600u + (u32)t.minute * 60u + (u32)t.second;
-}
+static inline u32 dns_wall_seconds(void) { return net_wall_seconds(); }
 
 static inline void dns_ip_str(u32 ip, char *out) {   /* dotted quad, `out` >= 16 bytes */
     u32 n = 0;
@@ -184,7 +181,7 @@ static inline void dns_send_attempt(void) {
 /* This attempt didn't work out (no reply, or a server-side error): move on to the next server, or give
  * up with `why` as the reason if there are none left. */
 static inline void dns_next_attempt_or_fail(const char *why) {
-    if (dns_client.attempt + 1 < DNS_MAX_ATTEMPTS) {
+    if (dns_client.attempt + 1 < dns_client.nattempts) {
         dns_client.attempt++;
         dns_send_attempt();
         return;
@@ -192,7 +189,7 @@ static inline void dns_next_attempt_or_fail(const char *why) {
     dns_client.fail[0] = 0;
     dns_fail_append(why);
     dns_fail_append(" Tried:");
-    for (int i = 0; i < DNS_MAX_ATTEMPTS; i++) {
+    for (int i = 0; i < dns_client.nattempts; i++) {
         int seen = 0;
         for (int k = 0; k < i; k++) if (dns_client.servers[k] == dns_client.servers[i]) seen = 1;
         if (seen) continue;
@@ -218,10 +215,14 @@ static inline void dns_resolve(const char *host) {
     dns_client.result_ip = 0;
     dns_client.fail[0] = 0;
     dns_client.attempt = 0;
-    dns_client.servers[0] = net_cfg.dns_ip;
-    dns_client.servers[1] = net_cfg.dns_ip;
-    dns_client.servers[2] = net_cfg.gateway_ip ? net_cfg.gateway_ip : 0x08080808u;
-    dns_client.servers[3] = 0x08080808u;
+    /* candidate order; any 0.0.0.0 (a DHCP lease with no DNS option, or no lease at all) is skipped,
+     * because a query "sent to 0.0.0.0" goes nowhere and just burns an attempt */
+    u32 want[5] = { net_cfg.dns_ip, net_cfg.dns_ip, net_cfg.gateway_ip, 0x08080808u, 0x01010101u };
+    dns_client.nattempts = 0;
+    for (int i = 0; i < 5 && dns_client.nattempts < DNS_MAX_ATTEMPTS; i++) {
+        if (want[i] == 0) continue;
+        dns_client.servers[dns_client.nattempts++] = want[i];
+    }
     u16 i = 0;
     for (; host[i] && i < sizeof(dns_client.hostname) - 1; i++) dns_client.hostname[i] = host[i];
     dns_client.hostname[i] = 0;
@@ -239,7 +240,7 @@ static inline void dns_handle_reply(u32 src_ip, u16 src_port, const u8 *data, u1
     (void)src_port;
     if (dns_client.state != DNS_QUERYING) return;
     int asked = 0;                         /* only believe a server we have actually asked */
-    for (int k = 0; k <= dns_client.attempt; k++) if (dns_client.servers[k] == src_ip) asked = 1;
+    for (int k = 0; k <= dns_client.attempt && k < dns_client.nattempts; k++) if (dns_client.servers[k] == src_ip) asked = 1;
     if (!asked) return;
     if (len < 12) return;
 

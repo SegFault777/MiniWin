@@ -95,6 +95,7 @@ static inline void net_stack_poll(void) {
     while (nic.recv(buf, sizeof(buf), &len)) {
         net_stack_handle_frame(buf, len);
     }
+    dhcp_poll();
     tcp_poll_retransmit();
     dns_poll();
 }
