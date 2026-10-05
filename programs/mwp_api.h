@@ -31,7 +31,7 @@ typedef struct {
     u32  screen_h;
 } mwp_syscalls_t;
 
-#define MWP_SYSCALL_TABLE_ADDR 0x84C00u /* must match kernel/mwp.h exactly */
+#define MWP_SYSCALL_TABLE_ADDR 0x8F0000u /* must match kernel/memmap.h's MW_MWP_SYSCALL_ADDR exactly */
 #define sys (*(mwp_syscalls_t *)MWP_SYSCALL_TABLE_ADDR)
 
 /* A few colors in the same 0x00RRGGBB truecolor format kernel/vga.h's

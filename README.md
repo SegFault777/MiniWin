@@ -11,7 +11,7 @@ system with no libc, no bootloader framework, and no borrowed kernel code.
 
 - **Boot**: a 512-byte MBR bootloader (`boot/boot.asm`) that sets a real
   VBE (VESA) video mode via a genuine BIOS call, switches to protected
-  mode, and loads the kernel via BIOS INT13h extended (LBA) reads, 448KB
+  mode, and loads the kernel via BIOS INT13h extended (LBA) reads, 512KB
   budget, all real addressing under 1MB so it works with no A20
   shenanigans during load. Split into two stages (`boot/boot.asm`, an
   exactly-512-byte MBR, and `boot/stage2.asm`, everything else) once
@@ -70,9 +70,36 @@ system with no libc, no bootloader framework, and no borrowed kernel code.
   address bar. Click PYPI.ORG and watch a real DNS lookup, a real TLS
   1.2 handshake with full certificate chain validation, and an
   HTTP/1.1 GET all happen for real, then the decrypted response --
-  headers and all, as raw text, no HTML rendering -- appear in the
-  window. GATEWAY stays on plain HTTP, deliberately, as a fast
+  rendered as an actual web page by MiniWeb's own **HTML5 engine** (see
+  below). GATEWAY stays on plain HTTP, deliberately, as a fast
   demonstration of TCP's connection-refused handling).
+![MiniWeb rendering an HTML5 page: flex nav, CSS grid cards, form controls, lists](screenshots/20-html5-rendering.png)
+
+- **HTML5 rendering** (`kernel/dom.h`, `css.h`, `layout.h`, `render.h`): a
+  from-scratch browser engine, no libc, no malloc. `dom.h` is a spec-style
+  tokenizer + a simplified tree builder (implied `<html>/<head>/<body>`,
+  implied end tags for `<p> <li> <dd> <tr> <td> <option>`, void elements,
+  raw-text elements, character references, scope-aware end tags). `css.h` parses
+  `<style>` blocks and `style=""` (selectors with combinators, attributes,
+  `:nth-child` / `:not` / `:first-child`..., `@media`, `var()`, `calc()`,
+  `min()/max()/clamp()`, `!important`, specificity + source order) over a
+  built-in user-agent stylesheet, honours the old presentational attributes
+  (`bgcolor`, `<font>`, `cellpadding`, `align`...) and converts every length
+  at an 11/16 "zoom" so 16px body text is exactly one 11x11 glyph cell and a
+  960px-wide page design fits a 640px screen. `layout.h` does block and inline
+  formatting (margin collapsing, auto-margin centring, wrapping with glued
+  inline pieces kept together, baselines, `text-align`, `white-space`),
+  lists, tables (auto layout, `colspan`/`rowspan`, collapsed borders), flexbox
+  (wrap, grow/shrink, `justify-content`, `align-items`, gaps), grid
+  (`grid-template-columns` with `px`/`fr`/`%`/`repeat()`/`auto-fit`),
+  `<details>/<summary>` that open and close, and form controls. `render.h`
+  paints the resulting display list with the 11x11 bitmap fonts (scaled for
+  headings, smeared for bold, sheared for italic), hit-tests links, and keeps
+  the little bit of state a static page needs to be usable: a text field with
+  the keyboard, ticked boxes, the `<option>` showing -- and submits forms as
+  a real GET or POST. Not here yet: images (they are placeholder boxes with
+  their alt text), external stylesheets, JavaScript, floats that text wraps
+  around, absolute/fixed positioning.
 - **Loadable programs (.mwp)**: a from-scratch, no-paging, no-ELF
   program loader (`kernel/mwp.h`) -- a `.mwp` is a small flat binary,
   built completely separately from the kernel (`tools/build_mwp.sh`,
@@ -197,7 +224,13 @@ kernel/x509.h       X.509 certificate parsing + chain/signature verification
 kernel/pkcs1.h      PKCS#1 v1.5 padding (encrypt + signature verify)
 kernel/trusted_roots.h  embedded trust anchors (41 RSA roots from Mozilla's CA bundle)
 kernel/tls.h        TLS 1.2 (ECDHE-RSA-AES128-GCM-SHA256 only)
-kernel/https.h      HTTP/1.1 GET client on top of tls.h
+kernel/https.h      HTTP/1.1 GET/POST client on top of tls.h
+kernel/httpresp.h   HTTP response parser (status, headers, chunked, redirects) + request builder
+kernel/dom.h        HTML5 tokenizer + tree builder (nodes, attributes, text pool)
+kernel/css.h        CSS parser, selectors, cascade, computed style, UA stylesheet
+kernel/layout.h     block/inline/table/flex/grid layout -> a pixel-positioned display list
+kernel/render.h     paints the display list, hit-tests, form state + submission, page loaders
+kernel/memmap.h     every fixed physical address in one place (net arena, HTML arena, MWP slot)
 kernel/net_stack.h  wires all of the above into one init()/poll() pair
 programs/           .mwp source, built independently of the kernel (see tools/build_mwp.sh)
 programs/mwp_api.h  the syscall-table contract a .mwp includes to talk to the OS
@@ -208,6 +241,9 @@ tools/bdf_common.py        shared BDF-parsing logic both generators above use
 tools/build_mwp.sh         compiles one programs/*.c into a loadable build/*.mwp
 tools/install_mwp.py       writes a built .mwp into an os-image.img program slot
 tools/install_icons.py     writes the icon bundle into an os-image.img icon catalog
+tools/test/         host-side tests: run_host_engine.sh (HTML engine + fuzzer), run_host_web.sh (HTTP),
+                    run_host_crypto.sh; plus host_render.c (HTML -> PPM) and qemu_shot.sh/qemu_mon.py
+                    (boot the OS, click, type, screenshot)
 third_party/        bundled font/icon source + each one's own license/notice
 build.sh            nasm + gcc + ld pipeline -> build/os-image.img
 screenshots/        yep
@@ -352,11 +388,10 @@ asks:
   (this kernel's own DNS resolver is plain UDP, unencrypted -- fine for
   finding an IP address, not itself a privacy guarantee).
 - **File Manager**: not built yet.
-- Full HTML4/5/XHTML rendering and "SSE3 support" are not realistic
-  targets for a 640x480, truecolor, no-libc kernel like this one --
-  MiniWeb (WEB.MWP) is an honestly-scoped raw-response viewer, not a
-  general-purpose browser engine, and that's staying true even as it
-  grows an address bar and (eventually) basic HTML rendering.
+- MiniWeb renders HTML5 + CSS (see above) but is not a general-purpose
+  browser: no JavaScript, no images yet, no external stylesheets, no
+  floats-with-text-wrap, and "SSE3 support" is not a realistic target for a
+  640x480, truecolor, no-libc kernel like this one.
 - No dynamic program loading/execution exists (everything is compiled
   into the one kernel binary) -- a real "install and run third-party
   .MPI programs" system would need a loader and some kind of process

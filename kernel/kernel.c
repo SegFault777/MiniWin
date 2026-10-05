@@ -25,7 +25,7 @@
 #include "tls.h"
 #include "http.h"
 #include "https.h"
-#include "htmlview.h"
+#include "render.h"        /* the HTML5 engine: dom.h + css.h + layout.h + painter */
 #include "net_stack.h"
 #include "mwp.h"
 
@@ -297,7 +297,8 @@ static inline const char *t(ui_str_id id) {
 #define ICONC_COUNT   5
 
 static const char *const icon_cache_names[ICONC_COUNT] = { "NOTEPAD", "SETTING", "WEB", "DOCX", "TERMINAL" };
-static u32 icon_cache[ICONC_COUNT][32 * 32];
+/* 20KB: lives in memmap.h's MISC area, not .bss (always filled by icon_cache_init() before it is read) */
+#define icon_cache ((u32 (*)[32 * 32])MW_ICON_CACHE_ADDR)
 static u8  icon_cache_ok[ICONC_COUNT];
 
 static void icon_cache_init(void) {
@@ -1687,7 +1688,9 @@ static u16  web_last_port = 0;
 static int  web_redirects_left = 0;         /* a fetch may follow this many more redirects */
 static int  web_page_ready = 0;             /* the finished response has been turned into the on-screen page */
 static int  web_waiting_net = 0;             /* a load was requested before DHCP gave us an IP; it starts when the lease arrives */
-static u32  web_view_cols = 0;              /* the column count the page was last laid out for */
+static int  web_scroll_px = 0;              /* how far the page is scrolled, in pixels */
+static int  web_doc_h = 0;                  /* the laid-out page's height, in pixels */
+static char web_title[100];                 /* the page's <title>, for the status line */
 #define WEB_SB_W 12                         /* scrollbar width, px */
 static void web_start_fetch(int https, const char *host, u16 port, const char *path);
 
@@ -2030,8 +2033,10 @@ static void web_start_fetch(int https, const char *host, u16 port, const char *p
     web_last_port = port ? port : (u16)(https ? 443 : 80);
     kstrcpy(web_last_host, host, sizeof(web_last_host));
     kstrcpy(web_last_path, path, sizeof(web_last_path));
-    hv_render_message("");
-    web_view_cols = 0;
+    rd_load_message("", "", "");
+    web_title[0] = 0;
+    web_scroll_px = 0;
+    hr_post_active = 0;             /* a POST is a one-shot: whatever starts next is a plain GET unless the form code re-arms it */
 
     if (!net_cfg.ready) {
         /* No IP address yet (DHCP hasn't been answered). Don't fire a DNS query from 0.0.0.0 at a
@@ -2047,6 +2052,20 @@ static void web_navigate_ref(const char *ref) {
     int https; u16 port;
     char host[WEB_URLBAR_MAXLEN + 1], path[WEB_PATH_MAX];
     if (!web_resolve_ref(ref, &https, host, sizeof(host), &port, path, sizeof(path))) return;
+    {   /* show where we are going in the address bar (what a browser does when you click a link) */
+        u32 n = 0; web_urlbar_buf[0] = 0;
+        append_str(web_urlbar_buf, &n, sizeof(web_urlbar_buf), https ? "https://" : "http://");
+        append_str(web_urlbar_buf, &n, sizeof(web_urlbar_buf), host);
+        if (port && port != (https ? 443 : 80)) {
+            char d[8]; int nd = 0; u32 v = port;
+            do { d[nd++] = (char)('0' + v % 10); v /= 10; } while (v && nd < 6);
+            if (n + 1 < sizeof(web_urlbar_buf)) web_urlbar_buf[n++] = ':';
+            while (nd && n + 1 < sizeof(web_urlbar_buf)) web_urlbar_buf[n++] = d[--nd];
+            web_urlbar_buf[n] = 0;
+        }
+        append_str(web_urlbar_buf, &n, sizeof(web_urlbar_buf), path);
+        web_urlbar_len = n;
+    }
     web_current_site = WEB_SOURCE_URLBAR;
     web_redirects_left = 5;
     web_start_fetch(https, host, port, path);
@@ -2098,6 +2117,37 @@ static int web_ct_has(const char *ct, const char *word) {
     return 0;
 }
 
+/* ---- little queries over the parsed page (the self-test and link following use them) ---- */
+static int web_node_is_link(u32 n) { return RD_NODES[n].kind == RDK_ELEM && RD_NODES[n].tag == TG_A && dom_has_attr(n, AT_HREF); }
+static u32 web_link_count(void) {
+    u32 c = 0;
+    for (u32 n = 1; n < dom_node_count; n++) if (web_node_is_link(n)) c++;
+    return c;
+}
+/* copies an attribute into a C string (empty if absent) */
+static void web_attr_copy(u32 node, u32 id, char *out, u32 cap) {
+    u32 len; const u8 *v = dom_attr(node, id, &len);
+    u32 i = 0;
+    if (v) for (; i < len && i + 1 < cap; i++) out[i] = (char)v[i];
+    out[i] = 0;
+}
+static const char *web_nth_href(u32 nth) {
+    static char buf[WEB_PATH_MAX];
+    buf[0] = 0;
+    for (u32 n = 1; n < dom_node_count; n++) {
+        if (!web_node_is_link(n)) continue;
+        if (nth-- == 0) { web_attr_copy(n, AT_HREF, buf, sizeof(buf)); break; }
+    }
+    return buf;
+}
+static u32 web_text_bytes(void) {
+    rd_relayout(620, 400, 1);                       /* (the real window re-lays out on its next draw) */
+    u32 t = 0;
+    for (u32 i = 0; i < L.n; i++) if (RD_ITEMS[i].kind == DL_TEXT) t += RD_ITEMS[i].len;
+    rd_invalidate();
+    return t;
+}
+
 /* The response has fully arrived: follow a redirect, or turn the body into the page to show. */
 static void web_page_complete(void) {
     web_page_ready = 1;
@@ -2115,16 +2165,16 @@ static void web_page_complete(void) {
     const u8 *body = HR_BUF + hr.body_start;
     u32 n = hr.body_len;
     if (hr.encoded) {
-        hv_render_message("This page is compressed (Content-Encoding) and MiniWeb cannot decompress it.");
+        rd_load_message("Page not shown", "This page is compressed (Content-Encoding) and MiniWeb cannot decompress it.", "");
     } else if (hr_is_redirect()) {
-        hv_render_message("Too many redirects.");
+        rd_load_message("Too many redirects.", "", "");
     } else if (hr.content_type[0] == 0 ? (n > 0 && body[0] == '<') : web_ct_has(hr.content_type, "html")) {
-        hv_render_html(body, n);
+        rd_load_html(body, n);
     } else if (hr.content_type[0] == 0 || web_ct_has(hr.content_type, "text/") ||
                web_ct_has(hr.content_type, "json") || web_ct_has(hr.content_type, "xml")) {
-        hv_render_plain(body, n);
+        rd_load_plain(body, n);
     } else {
-        hv_render_message("MiniWeb can't display this kind of content.");
+        rd_load_message("MiniWeb can't display this kind of content.", "", "");
     }
     if (n == 0 && !hr.encoded) {
         char m[48]; u32 ml = 0;
@@ -2133,9 +2183,11 @@ static void web_page_complete(void) {
         do { d[nd++] = (char)('0' + st % 10); st /= 10; } while (st && nd < 6);
         while (nd) { char one[2] = { d[--nd], 0 }; append_str(m, &ml, sizeof(m), one); }
         append_str(m, &ml, sizeof(m), ")");
-        hv_render_message(m);
+        rd_load_message(m, "", "");
     }
-    web_view_cols = 0;      /* force a fresh layout at the current window width */
+    dom_title(web_title, sizeof(web_title));
+    web_scroll_px = 0;
+    rd_invalidate();        /* force a fresh layout at the current window width */
 }
 
 static void web_poll(void) {
@@ -2259,15 +2311,23 @@ static void mw_autotest_step(void) {
             for (u32 i = 0; i < hr.body_len; i++) h = h * 31u + HR_BUF[hr.body_start + i];
             serial_puts("\n[AUTOTEST] body-hash=0x"); serial_put_hex32(h);
         }
-        serial_puts("\n[AUTOTEST] title=["); serial_puts(hv.title);
-        serial_puts("] links="); serial_put_dec(hv.link_count);
-        serial_puts(" text-bytes="); serial_put_dec(hv.text_len);
+        serial_puts("\n[AUTOTEST] title=["); serial_puts(web_title);
+        serial_puts("] links="); serial_put_dec(web_link_count());
+        serial_puts(" text-bytes="); serial_put_dec(web_text_bytes());
+        serial_puts(" doc-h="); serial_put_dec((u32)L.doc_h); serial_puts(" items="); serial_put_dec(L.n);
         serial_puts("\n");
 #ifdef MW_AUTOTEST_DUMP
         serial_puts("[AUTOTEST] text-begin\n");
-        for (u32 i = 0; i < hv.text_len && i < MW_AUTOTEST_DUMP; i++) {
-            char c = (char)HV_TEXT[i];
-            serial_putc((c == '\n' || (c >= 32 && c < 127)) ? c : '.');
+        {   /* the page's text runs in reading order, one line per distinct y */
+            int last_y = -1; u32 shown = 0;
+            for (u32 i = 0; i < L.n && shown < MW_AUTOTEST_DUMP; i++) {
+                if (RD_ITEMS[i].kind != DL_TEXT) continue;
+                if (RD_ITEMS[i].y != last_y) { serial_putc('\n'); last_y = RD_ITEMS[i].y; shown++; } else { serial_putc(' '); shown++; }
+                for (u32 k = 0; k < RD_ITEMS[i].len; k++) {
+                    u8 c = RD_POOL[RD_ITEMS[i].off + k];
+                    serial_putc((c >= 32 && c < 127) ? (char)c : (dom_is_ws(c) ? ' ' : '.')); shown++;
+                }
+            }
         }
         serial_puts("\n[AUTOTEST] text-end\n");
 #endif
@@ -2276,14 +2336,14 @@ static void mw_autotest_step(void) {
         /* then "click" link number MW_AUTOTEST_FOLLOW on the page, exactly as a mouse click would, and
          * report the page that loads (a link on DuckDuckGo Lite goes through a redirector first) */
         static int followed = 0;
-        if (!followed && (int)hv.link_count > MW_AUTOTEST_FOLLOW) {
+        if (!followed && (int)web_link_count() > MW_AUTOTEST_FOLLOW) {
             followed = 1;
             serial_puts("[AUTOTEST] follow link ");
             serial_put_dec(MW_AUTOTEST_FOLLOW);
             serial_puts(" -> ");
-            serial_puts(HV_URLS + HV_LINKS[MW_AUTOTEST_FOLLOW].url_off);
+            serial_puts(web_nth_href(MW_AUTOTEST_FOLLOW));
             serial_putc('\n');
-            web_navigate_ref(HV_URLS + HV_LINKS[MW_AUTOTEST_FOLLOW].url_off);
+            web_navigate_ref(web_nth_href(MW_AUTOTEST_FOLLOW));
             mw_at_state = 1;
             mw_at_started_tick = net_ticks;
         }
@@ -2309,31 +2369,27 @@ static void web_body_geom(int *bx, int *by, int *bw, int *bh) {
     *bw = web_win.w - 6 - WEB_SB_W;
     *bh = web_win.y + web_win.h - *by - 3;
 }
-#define WEB_LINE_H (FONT_CELL + 1)
-static int web_visible_lines(void) {
+#define WEB_LINE_H (FONT_CELL + 1)             /* the failure screens still draw plain text lines */
+#define WEB_SCROLL_STEP (3 * 14)                /* one arrow-key press: three body-text lines, in pixels */
+static int web_view_h(void) {
     int bx, by, bw, bh;
     web_body_geom(&bx, &by, &bw, &bh);
-    int v = bh / WEB_LINE_H;
-    return v < 1 ? 1 : v;
+    return bh < 1 ? 1 : bh;
 }
-static void web_scroll_by(int lines) {
-    int vis = web_visible_lines();
-    int max = (int)hv.line_count > vis ? (int)hv.line_count - vis : 0;
-    int s = (int)hv.scroll + lines;
-    if (s < 0) s = 0;
-    if (s > max) s = max;
-    hv.scroll = (u32)s;
+static void web_scroll_by(int px) {
+    int bh = web_view_h();
+    int max = web_doc_h > bh ? web_doc_h - bh : 0;
+    int sc = web_scroll_px + px;
+    if (sc < 0) sc = 0;
+    if (sc > max) sc = max;
+    web_scroll_px = sc;
 }
 /* Keeps the layout in step with the window's width (the window can be resized or maximized). */
 static void web_ensure_layout(void) {
     int bx, by, bw, bh;
     web_body_geom(&bx, &by, &bw, &bh);
-    u32 cols = (u32)(bw / FONT_CELL);
-    if (cols != web_view_cols) {
-        hv_layout(cols);
-        web_view_cols = cols;
-        web_scroll_by(0);        /* re-clamp */
-    }
+    web_doc_h = rd_relayout(bw, bh, 0);
+    web_scroll_by(0);        /* re-clamp */
 }
 
 /* ---- explaining a failed page load, in words ---- */
@@ -2430,80 +2486,85 @@ static void draw_web_failure(void) {
     }
 }
 
-/* Draws the rendered page: wrapped text lines from hv.scroll down, links in blue and underlined,
- * Hangul syllables via the Korean font, plus a scrollbar. */
+/* Draws the rendered page into the window body (the engine clips to it), then the scrollbar. */
 static void draw_web_page(void) {
     web_ensure_layout();
     int bx, by, bw, bh;
     web_body_geom(&bx, &by, &bw, &bh);
-    int vis = web_visible_lines();
-
-    /* first link that could still be on screen (links are stored in text order) */
-    u32 first_off = hv.scroll < hv.line_count ? HV_LINES[hv.scroll] : 0;
-    u32 lk = 0;
-    while (lk < hv.link_count && HV_LINKS[lk].tend <= first_off) lk++;
-
-    for (int row = 0; row < vis; row++) {
-        u32 li = hv.scroll + (u32)row;
-        if (li >= hv.line_count) break;
-        int cy = by + row * WEB_LINE_H;
-        int cx = bx;
-        u32 e = hv_line_end(li);
-        for (u32 p = HV_LINES[li]; p < e; ) {
-            while (lk < hv.link_count && HV_LINKS[lk].tend <= p) lk++;
-            int in_link = (lk < hv.link_count && p >= HV_LINKS[lk].tstart);
-            u32 color = in_link ? COL_BLUE : COL_BLACK;
-            u8 c = HV_TEXT[p];
-            if (c >= 0xE0) {
-                int cp = ko_utf8_decode3((const char *)&HV_TEXT[p]);
-                if (cp > 0) ko_font_draw_codepoint(cx, cy, cp, color);
-                p += 3;
-            } else {
-                if (c != ' ') font_draw_char(cx, cy, (char)((c >= 0x20 && c < 0x7F) ? c : '?'), color);
-                p += 1;
-            }
-            if (in_link) bb_fillrect(cx, cy + FONT_CELL, FONT_CELL, 1, COL_BLUE);
-            cx += FONT_CELL;
-        }
-    }
+    rd_paint(bx, by, bw, bh, web_scroll_px);
 
     /* scrollbar: a track, and a thumb sized/placed by how much of the page is in view */
     int sx = web_win.x + web_win.w - 3 - WEB_SB_W;
     bb_fillrect(sx, by, WEB_SB_W, bh, COL_DGRAY);
-    if (hv.line_count > 0) {
-        int total = (int)hv.line_count;
-        int thumb_h = total <= vis ? bh : (bh * vis) / total;
-        if (thumb_h < 10) thumb_h = 10;
-        int travel = bh - thumb_h;
-        int max_scroll = total > vis ? total - vis : 0;
-        int thumb_y = by + (max_scroll > 0 ? (travel * (int)hv.scroll) / max_scroll : 0);
-        bb_fillrect(sx + 1, thumb_y, WEB_SB_W - 2, thumb_h, COL_LGRAY);
-    }
+    int total = web_doc_h > 0 ? web_doc_h : 1;
+    int thumb_h = total <= bh ? bh : (bh * bh) / total;
+    if (thumb_h < 10) thumb_h = 10;
+    int travel = bh - thumb_h;
+    int max_scroll = total > bh ? total - bh : 0;
+    int thumb_y = by + (max_scroll > 0 ? (travel * web_scroll_px) / max_scroll : 0);
+    bb_fillrect(sx + 1, thumb_y, WEB_SB_W - 2, thumb_h, COL_LGRAY);
 }
 
-/* A mouse click somewhere in the page area: on the scrollbar it scrolls, on a link it follows it.
- * Returns 1 if the click landed in the body region at all (so the caller doesn't treat it as a click on nothing). */
+/* A form was submitted (a button clicked, or Enter pressed in a text field): build the query string and
+ * GET (or POST) the form's action. */
+#define WEB_QUERY_MAX 480
+static void web_submit_form(u32 form, u32 submitter) {
+    char q[WEB_QUERY_MAX], method[8], action[WEB_PATH_MAX], ref[WEB_PATH_MAX];
+    rd_form_query(form, submitter, q, sizeof(q));
+    web_attr_copy(form, AT_METHOD, method, sizeof(method));
+    web_attr_copy(form, AT_ACTION, action, sizeof(action));
+    int post = (method[0] == 'p' || method[0] == 'P');
+    if (action[0] == 0) kstrcpy(action, web_last_path, sizeof(action));       /* no action="": the page itself */
+    for (u32 i = 0; action[i]; i++) if (action[i] == '?' || action[i] == '#') { action[i] = 0; break; }
+    u32 rl = 0; ref[0] = 0;
+    append_str(ref, &rl, sizeof(ref), action);
+    if (!post) { append_str(ref, &rl, sizeof(ref), "?"); append_str(ref, &rl, sizeof(ref), q); }
+    web_navigate_ref(ref);
+    if (post) hr_set_post(q);                    /* armed AFTER web_start_fetch() disarmed it; the request is built later */
+}
+
+/* A mouse click somewhere in the page area: on the scrollbar it scrolls; on the page it follows a link,
+ * pokes a form control, or opens/closes a <details>. Returns 1 if the click landed in the body region at all
+ * (so the caller doesn't treat it as a click on nothing). */
 static int web_page_click(int mx, int my) {
     int bx, by, bw, bh;
     web_body_geom(&bx, &by, &bw, &bh);
     if (!in_rect(mx, my, bx, by, bw + WEB_SB_W, bh)) return 0;
-    if (mx >= bx + bw) {                              /* the scrollbar: click above/below the thumb pages, else jumps */
-        int vis = web_visible_lines();
-        int total = (int)hv.line_count;
-        int max_scroll = total > vis ? total - vis : 0;
+    if (mx >= bx + bw) {                              /* the scrollbar: a click jumps to that proportional spot */
+        int max_scroll = web_doc_h > bh ? web_doc_h - bh : 0;
         if (max_scroll > 0) {
             int target = ((my - by) * max_scroll) / (bh > 0 ? bh : 1);
-            hv.scroll = (u32)(target < 0 ? 0 : target > max_scroll ? max_scroll : target);
+            web_scroll_px = 0; web_scroll_by(target);
         }
         return 1;
     }
     if (!web_page_ready) return 1;
-    u32 col = (u32)((mx - bx) / FONT_CELL);
-    u32 line = hv.scroll + (u32)((my - by) / WEB_LINE_H);
-    int off = hv_offset_at(line, col);
-    if (off >= 0) {
-        int link = hv_link_at((u32)off);
-        if (link >= 0) web_navigate_ref(HV_URLS + HV_LINKS[link].url_off);
+    u32 node;
+    int hit = rd_hit(mx - bx, my - by + web_scroll_px, &node);
+    rd_focus = 0;
+    if (hit == HIT_LINK) {
+        char href[WEB_PATH_MAX];
+        web_attr_copy(node, AT_HREF, href, sizeof(href));
+        if (href[0]) web_navigate_ref(href);
+    } else if (hit == HIT_TOGGLE) {
+        u32 d = RD_NODES[node].parent;                /* the <details> that owns this <summary> */
+        if (d) { rd_toggle_flip(d); rd_invalidate(); }
+    } else if (hit == HIT_CTL) {
+        rd_node_t *e = &RD_NODES[node];
+        if (e->tag == TG_SELECT) { rd_select_next(node); }
+        else if (e->tag == TG_TEXTAREA) { rd_ctl_focus(node); }
+        else if (e->tag == TG_INPUT || e->tag == TG_BUTTON) {
+            int k = e->tag == TG_INPUT ? lay_input_kind(node) : CTL_BUTTON;
+            u32 tl; const u8 *ty = dom_attr(node, AT_TYPE, &tl);
+            if (k == CTL_TEXT || k == CTL_PASSWORD) rd_ctl_focus(node);
+            else if (k == CTL_CHECK) rd_ctl_set_checked(node, !rd_ctl_is_checked(node));
+            else if (k == CTL_RADIO) rd_radio_select(node);
+            else {                                    /* a button: submit unless it says otherwise */
+                int plain = ty && (css_kw(ty, tl, "button") || css_kw(ty, tl, "reset"));
+                u32 f = rd_find_form(node);
+                if (f && !plain) web_submit_form(f, node);
+            }
+        }
     }
     return 1;
 }
@@ -2631,13 +2692,13 @@ static void draw_web_window(void) {
         }
     }
     if (status_text) font_draw_string(wx + 3, web_content_y(), status_text, COL_BLUE);
-    if (status_text && web_page_ready && hv.title[0]) {
+    if (status_text && web_page_ready && web_title[0]) {
         /* the page's <title>, after the status, clipped to the window's width */
         u32 sl = 0; while (status_text[sl]) sl++;
         int room = (ww - 6) / FONT_CELL - (int)sl - 2;
         if (room > 3) {
             char t[100]; u32 tl = 0;
-            while (hv.title[tl] && (int)tl < room && tl + 1 < sizeof(t)) { t[tl] = hv.title[tl]; tl++; }
+            while (web_title[tl] && (int)tl < room && tl + 1 < sizeof(t)) { t[tl] = web_title[tl]; tl++; }
             t[tl] = 0;
             font_draw_string(wx + 3 + (int)(sl + 2) * FONT_CELL, web_content_y(), t, COL_BLACK);
         }
@@ -3808,6 +3869,7 @@ void kmain(void) {
                             pressed_btn_win = WIN_ID_WEB;
                         } else if (web_urlbar_hit(mx, my)) {
                             web_urlbar_focused = 1;
+                            rd_focus = 0;
                         } else if (web_go_btn_hit(mx, my)) {
                             pressed_btn_kind = BTN_WEB_GO;
                             pressed_btn_win = WIN_ID_WEB;
@@ -4130,10 +4192,15 @@ void kmain(void) {
          * down and B pages up (the same keys every text-mode browser uses). The keys are consumed here
          * so they don't also reach the URL bar's text entry below. */
         if (focused_id == WIN_ID_WEB && k != KEY_NONE) {
-            int page = web_visible_lines() - 1;
-            if (page < 1) page = 1;
-            if (k == KEY_UP)        { web_scroll_by(-3); k = KEY_NONE; }
-            else if (k == KEY_DOWN) { web_scroll_by(3);  k = KEY_NONE; }
+            int page = web_view_h() - 28;
+            if (page < 14) page = 14;
+            if (!web_urlbar_focused && rd_focus && k > 0) {       /* a text field on the page has the keyboard */
+                int r = rd_ctl_key(k);
+                if (r == 2) { u32 f = rd_find_form(rd_focus); if (f) web_submit_form(f, 0); }
+                k = KEY_NONE;
+            }
+            else if (k == KEY_UP)   { web_scroll_by(-WEB_SCROLL_STEP); k = KEY_NONE; }
+            else if (k == KEY_DOWN) { web_scroll_by(WEB_SCROLL_STEP);  k = KEY_NONE; }
             else if (!web_urlbar_focused && k == ' ')                { web_scroll_by(page);  k = KEY_NONE; }
             else if (!web_urlbar_focused && (k == 'b' || k == 'B'))  { web_scroll_by(-page); k = KEY_NONE; }
         }

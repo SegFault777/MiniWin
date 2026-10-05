@@ -97,7 +97,7 @@ static inline http_state_t http_poll(void) {
 
         case HTTP_SENDING_REQUEST:
             if (!http_client.request_sent) {
-                char req[1024];
+                char req[2048];
                 u32 n = hr_build_request(req, http_client.host_header, http_client.path);
                 if (tcp_send_data((const u8 *)req, (u16)n)) http_client.request_sent = 1;
             } else {

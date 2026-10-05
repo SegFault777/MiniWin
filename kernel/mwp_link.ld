@@ -23,7 +23,7 @@ ENTRY(mwp_entry)
 
 SECTIONS
 {
-    . = 0x85000; /* must match kernel/mwp.h's MWP_LOAD_ADDR exactly */
+    . = 0x8F1000; /* must match kernel/memmap.h's MW_MWP_LOAD_ADDR exactly */
 
     .text : {
         *(.text.mwp_entry) /* entry point first, so byte 0 of the

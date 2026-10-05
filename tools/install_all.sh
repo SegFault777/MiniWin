@@ -11,7 +11,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 IMG="${1:-build/os-image.img}"
-[ -f build/greeter.mwp ] || tools/build_mwp.sh programs/greeter.c
+# Always rebuild: a .mwp is linked for ONE fixed load address (kernel/mwp_link.ld), so a stale build/greeter.mwp
+# from before that address moved would load fine and then jump into garbage. It takes a fraction of a second.
+tools/build_mwp.sh programs/greeter.c
 python3 tools/install_mwp.py "$IMG" 0 GREETER.MWP build/greeter.mwp
 python3 tools/install_icons.py "$IMG" third_party/icon-bundle
 echo "install_all: GREETER.MWP + icon catalog written to $IMG"

@@ -11,6 +11,7 @@ real site does and a plain `http.server` never will.
   /ddg?q=...      a DuckDuckGo-Lite-shaped results page: table layout, single-quoted attributes,
                   protocol-relative //HOST/l/?uddg=... links, entities, Korean text, script/style
   /l/?uddg=...    the "click tracker": 302 to the decoded target (like duckduckgo.com/l/)
+  /form           echoes the method and the form fields it received (GET query or POST body) as a page
   /target         a plain target page
   /plain          text/plain
   /bin            application/octet-stream
@@ -91,6 +92,7 @@ class H(http.server.SimpleHTTPRequestHandler):
         if u.path == "/l/":
             tgt = urllib.parse.parse_qs(u.query).get("uddg", ["/target"])[0]
             return self.redirect(tgt)
+        if u.path == "/form": return self.echo_form("GET", u.query)
         if u.path == "/target": return self.send_body(b"<html><head><title>Target</title></head><body><h1>You arrived</h1><p>This is the target page.</p></body></html>")
         if u.path == "/plain": return self.send_body(b"plain line 1\nplain line 2\n", "text/plain")
         if u.path == "/bin": return self.send_body(bytes(range(256)) * 4, "application/octet-stream")
@@ -101,6 +103,17 @@ class H(http.server.SimpleHTTPRequestHandler):
             self.close_connection = True; return
         return super().do_GET()
     do_HEAD = do_GET
+    def echo_form(self, method, data):
+        f = urllib.parse.parse_qs(data, keep_blank_values=True)
+        rows = "".join("<tr><td>%s</td><td>[%s]</td></tr>" % (k, ",".join(v)) for k, v in sorted(f.items()))
+        self.send_body(("<html><head><title>Form %s</title></head><body><h1>Form via %s</h1><table border=1>%s</table>"
+                        "<p><a href='/t3.html'>back</a></p></body></html>" % (method, method, rows)).encode())
+    def do_POST(self):
+        n = int(self.headers.get("Content-Length", "0")); body = self.rfile.read(n).decode("latin-1")
+        sys.stderr.write("WEB POSTBODY %r ctype=%s\n" % (body, self.headers.get("Content-Type")))
+        u = urllib.parse.urlsplit(self.path)
+        if u.path == "/form": return self.echo_form("POST", body)
+        self.send_body(b"<html><body>post ok</body></html>")
 
 class S(socketserver.ThreadingMixIn, http.server.HTTPServer):
     allow_reuse_address = True; daemon_threads = True

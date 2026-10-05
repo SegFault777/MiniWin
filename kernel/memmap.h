@@ -57,10 +57,6 @@
 #define MW_E1000_TX_SIZE  0x00004000u   /* 16KB  e1000 transmit DMA buffers (8 x 2048) */
 #define MW_RTL_RX_SIZE    0x00009000u   /* 36KB  rtl8139 receive ring (32KB ring + 16 + one frame of WRAP overrun) */
 #define MW_RTL_TX_SIZE    0x00001800u   /* 6KB   rtl8139 transmit slots (4 x 1536) */
-#define MW_HV_TEXT_SIZE   0x00030000u   /* 192KB the rendered page as plain text (htmlview.h) */
-#define MW_HV_URLS_SIZE   0x00010000u   /* 64KB  link targets (hrefs) of the rendered page */
-#define MW_HV_LINKS_SIZE  0x00003000u   /* 12KB  link table: 1024 entries x 12 bytes */
-#define MW_HV_LINES_SIZE  0x00008000u   /* 32KB  wrapped-line start offsets: 8192 lines x 4 bytes */
 
 #define MW_TCP_RECV_ADDR  (MW_NETMEM_BASE)
 #define MW_TCP_SEND_ADDR  (MW_TCP_RECV_ADDR + MW_TCP_RECV_SIZE)
@@ -73,14 +69,60 @@
 #define MW_E1000_TX_ADDR  (MW_E1000_RX_ADDR + MW_E1000_RX_SIZE)
 #define MW_RTL_RX_ADDR    (MW_E1000_TX_ADDR + MW_E1000_TX_SIZE)
 #define MW_RTL_TX_ADDR    (MW_RTL_RX_ADDR   + MW_RTL_RX_SIZE)
-#define MW_HV_TEXT_ADDR   (MW_RTL_TX_ADDR + MW_RTL_TX_SIZE)
-#define MW_HV_URLS_ADDR   (MW_HV_TEXT_ADDR + MW_HV_TEXT_SIZE)
-#define MW_HV_LINKS_ADDR  (MW_HV_URLS_ADDR + MW_HV_URLS_SIZE)
-#define MW_HV_LINES_ADDR  (MW_HV_LINKS_ADDR + MW_HV_LINKS_SIZE)
-#define MW_NETMEM_USED_END (MW_HV_LINES_ADDR + MW_HV_LINES_SIZE)
+#define MW_NETMEM_USED_END (MW_RTL_TX_ADDR + MW_RTL_TX_SIZE)
 
 /* Compile-time proof the arena is big enough (negative array size =
  * build error, no libc's static_assert needed). */
 typedef char mw_assert_netmem_fits[(MW_NETMEM_USED_END <= MW_NETMEM_END) ? 1 : -1];
+
+/* ---- the HTML engine's arena (kernel/dom.h, css.h, layout.h, render.h) ----
+ * Lives ABOVE the video backbuffer (0x400000 + 640*480*4 = 0x52C000) so it can't collide with the net arena or
+ * the stack, and BELOW the program slot at 0x8F0000. vga_verify_memory_safe() already insists on >= ~9.4MB of RAM
+ * (0x92C000), so all of it is real memory on any machine that gets this far. Sizes are in ELEMENTS where an
+ * element size is implied by the engine's structs -- the asserts below make a struct that outgrows its slot a
+ * COMPILE error instead of a corrupted neighbour. */
+#define MW_RD_BASE          0x00530000u
+#define MW_RD_NODE_MAX      16384u                   /* DOM nodes (32 bytes each) */
+#define MW_RD_ATTR_MAX      24576u                   /* kept attributes (8 bytes each) */
+#define MW_RD_POOL_SIZE     0x00040000u              /* 256KB text + attribute values + stylesheet copies */
+#define MW_RD_CSS_RULE_MAX  3072u                    /* rules (slot: 32 bytes each) */
+#define MW_RD_CSS_COMP_MAX  6144u                    /* selector compounds (slot: 40 bytes each) */
+#define MW_RD_CSS_DECL_MAX  12288u                   /* declarations (12 bytes each) */
+#define MW_RD_ITEM_MAX      24576u                   /* display-list items (32 bytes each) */
+#define MW_RD_FRAG_MAX      1024u                    /* line-builder fragments (slot: 24 bytes each) */
+#define MW_RD_SCRATCH_SIZE  0x00060000u              /* 384KB bump arena for tables / flex / grid */
+
+#define MW_RD_NODES_ADDR    (MW_RD_BASE)
+#define MW_RD_ATTRS_ADDR    (MW_RD_NODES_ADDR  + MW_RD_NODE_MAX * 32u)
+#define MW_RD_POOL_ADDR     (MW_RD_ATTRS_ADDR  + MW_RD_ATTR_MAX * 8u)
+#define MW_RD_CSS_RULES_ADDR (MW_RD_POOL_ADDR  + MW_RD_POOL_SIZE)
+#define MW_RD_CSS_COMPS_ADDR (MW_RD_CSS_RULES_ADDR + MW_RD_CSS_RULE_MAX * 32u)
+#define MW_RD_CSS_DECLS_ADDR (MW_RD_CSS_COMPS_ADDR + MW_RD_CSS_COMP_MAX * 40u)
+#define MW_RD_ITEMS_ADDR    (MW_RD_CSS_DECLS_ADDR + MW_RD_CSS_DECL_MAX * 12u)
+#define MW_RD_FRAGS_ADDR    (MW_RD_ITEMS_ADDR  + MW_RD_ITEM_MAX * 32u)
+#define MW_RD_SCRATCH_ADDR  (MW_RD_FRAGS_ADDR  + MW_RD_FRAG_MAX * 24u)
+#define MW_RD_END           (MW_RD_SCRATCH_ADDR + MW_RD_SCRATCH_SIZE)
+
+/* ---- the program (.MWP) slot: the syscall table and the code a program is loaded to ----
+ * These USED to sit at 0x84C00/0x85000, "comfortably above .bss" -- until .bss grew past 0x85000 (pre-23) and every
+ * program launch silently overwrote tls_conn, tcp_conn, dhcp_*, dns_client, net_cfg and the NIC state. A fixed spot
+ * in high memory can't be walked into by a growing kernel. Hand-kept copies live in programs/mwp_api.h and
+ * kernel/mwp_link.ld (a linker script can't read this header); mwp.h asserts they agree. */
+#define MW_MWP_SYSCALL_ADDR 0x008F0000u
+#define MW_MWP_LOAD_ADDR    0x008F1000u
+#define MW_MWP_END          0x00900000u
+
+/* ---- big kernel statics that used to live in .bss ----
+ * .bss sits just above the kernel image and must stay under the stack's guard band (build.sh checks the margin);
+ * every KB the engine's own state costs there is a KB the rest of the kernel can't have. So the biggest
+ * pure-cache arrays get a fixed home out here instead (they are always initialised before they are read). */
+#define MW_MISC_BASE        0x007C0000u
+#define MW_ICON_CACHE_ADDR  (MW_MISC_BASE)               /* 5 icons x 32x32 x u32 = 20KB */
+#define MW_ICON_CACHE_SIZE  0x00005000u
+
+typedef char mw_assert_rd_fits[(MW_RD_END <= MW_MISC_BASE) ? 1 : -1];
+typedef char mw_assert_misc_fits[((MW_MISC_BASE + MW_ICON_CACHE_SIZE) <= MW_MWP_SYSCALL_ADDR) ? 1 : -1];
+typedef char mw_assert_rd_above_backbuf[(MW_RD_BASE >= 0x0052C000u) ? 1 : -1];
+typedef char mw_assert_mwp_in_ram[(MW_MWP_END <= 0x0092C000u) ? 1 : -1];
 
 #endif

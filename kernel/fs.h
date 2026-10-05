@@ -31,22 +31,22 @@
  *                  real 640x480x32bpp VBE mode by actually walking the
  *                  BIOS's own mode list, instead of just requesting a
  *                  fixed mode number, stopped fitting in a 512-byte MBR)
- *   LBA 5-900    - the kernel (448KB budget; see boot/stage2.asm's
+ *   LBA 5-1028   - the kernel (512KB budget, grown from 448KB for the HTML5 engine; see boot/stage2.asm's
  *                  KERNEL_CHUNKS for the loader side of this same
  *                  number)
- *   LBA 901-936  - the four document slots, 9 sectors each (1 header + 8 data):
- *                    slot 0: LBA 901-909 -> "NEWDOC.TXT"
- *                    slot 1: LBA 910-918 -> "NEWDOC_2.TXT"
- *                    slot 2: LBA 919-927 -> "NEWDOC_3.TXT"
- *                    slot 3: LBA 928-936 -> "NEWDOC_4.TXT"
- *   LBA 937-1132 - the four loadable-program slots, 49 sectors each (1
+ *   LBA 1029-1064 - the four document slots, 9 sectors each (1 header + 8 data):
+ *                    slot 0: LBA 1029-1037 -> "NEWDOC.TXT"
+ *                    slot 1: LBA 1038-1046 -> "NEWDOC_2.TXT"
+ *                    slot 2: LBA 1047-1055 -> "NEWDOC_3.TXT"
+ *                    slot 3: LBA 1056-1064 -> "NEWDOC_4.TXT"
+ *   LBA 1065-1260 - the four loadable-program slots, 49 sectors each (1
  *                  header + 48 data) -- see kernel/mwp.h for the loader
  *                  that reads these:
- *                    slot 0: LBA 937-985
- *                    slot 1: LBA 986-1034
- *                    slot 2: LBA 1035-1083
- *                    slot 3: LBA 1084-1132
- *   LBA 1133-1627 - the icon catalog, 11 sectors per icon x 45 icons (1
+ *                    slot 0: LBA 1065-1113
+ *                    slot 1: LBA 1114-1162
+ *                    slot 2: LBA 1163-1211
+ *                    slot 3: LBA 1212-1260
+ *   LBA 1261-1755 - the icon catalog, 11 sectors per icon x 45 icons (1
  *                  header + 8 data sectors for a 32x32 RGBA bitmap + 2
  *                  data sectors for a 16x16 RGBA bitmap) -- see this
  *                  file's ICON_* constants and tools/install_icons.py,
@@ -57,18 +57,18 @@
  *                  the installer and the kernel agree on one write
  *                  path instead of the installer poking the header
  *                  format directly).
- *   LBA 1628-2047 - unused headroom (~210KB) -- room for the kernel,
+ *   LBA 1756-2047 - unused headroom (~146KB) -- room for the kernel,
  *                  the document area, the program area, or the icon
  *                  catalog to grow without immediately forcing the
  *                  image past the 1024KB line; see build.sh's size
  *                  check, which fails loudly if any of them ever does.
  * (Each area starts the sector immediately after the one before it ends
- * -- no gaps. Every sector between LBA 1 and LBA 1627 is now spoken for
+ * -- no gaps. Every sector between LBA 1 and LBA 1755 is now spoken for
  * on purpose.)
  */
 
 #define FS_MAGIC           0x31573154u
-#define FS_BASE_LBA        901
+#define FS_BASE_LBA        1029
 #define FS_SLOT_SECTORS    9      /* 1 header + 8 data sectors per slot */
 #define FS_DATA_SECTORS    8
 #define FS_MAX_FILE_BYTES  (FS_DATA_SECTORS * 512)  /* 4096 bytes, don't write a novel */
@@ -211,7 +211,7 @@ static inline int fs_find_empty_slot(void) {
  * slot to a program-sized one for no reason; a second, differently-
  * sized set of slots is the honest fix.
  * ============================================================ */
-#define PROG_BASE_LBA       937
+#define PROG_BASE_LBA       1065
 #define PROG_SLOT_SECTORS   49     /* 1 header + 48 data sectors per slot */
 #define PROG_DATA_SECTORS   48
 #define PROG_MAX_BYTES      (PROG_DATA_SECTORS * 512)  /* 24576 bytes -- see
@@ -384,7 +384,7 @@ static inline int prog_find_empty_slot(void) {
  * than needing a save function this file would otherwise have to
  * expose and maintain for a single external caller.
  * ============================================================ */
-#define ICON_BASE_LBA        1133
+#define ICON_BASE_LBA        1261
 #define ICON_SLOT_SECTORS    11    /* 1 header + 8 data (32x32) + 2 data (16x16) */
 #define ICON_MAX_SLOTS       45
 #define ICON_NAME_MAXLEN     24    /* e.g. "TYPESCRIPT_CODE" -- room to spare */

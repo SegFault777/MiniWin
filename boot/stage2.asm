@@ -29,7 +29,10 @@ BOOT_DRIVE_ADDR equ 0x0500      ; fixed, low-memory scratch address both
                                  ; the other's internal layout.
 
 KERNEL_LOAD_SEG   equ 0x1000      ; kernel lands at physical 0x10000 (seg 0x1000, off 0)
-KERNEL_CHUNKS             equ 14  ; 14 x 64 sectors = 896 sectors = 448KB budget --
+KERNEL_CHUNKS             equ 16  ; 16 x 64 sectors = 1024 sectors = 512KB budget -- grown from 448KB for
+                                  ; the HTML5 engine (kernel/dom.h, css.h, layout.h, render.h). It ends at
+                                  ; 0x10000 + 512KB = 0x90000, still under the 0x9FC00 stack/EBDA line.
+                                  ; (history:
                                   ; bumped up from 160KB now that the UI's bitmap
                                   ; fonts (kernel/font_latin_data.h, font_ko_data.h)
                                   ; are baked from Galmuri11 at 11x11 instead of the
@@ -41,7 +44,7 @@ KERNEL_CHUNKS             equ 14  ; 14 x 64 sectors = 896 sectors = 448KB budget
                                   ; 1MB mark (0x10000 + 448KB = 0x80000) so this still
                                   ; doesn't need the A20 line enabled to load safely.
                                   ; See kernel/fs.h for how this budget lines up with
-                                  ; where the file-storage slots start.
+                                  ; where the file-storage slots start.)
 KERNEL_SECTORS_PER_CHUNK  equ 64
 KERNEL_START_LBA equ (1 + STAGE2_SECTORS)   ; LBA 0 is stage 1, then
                                             ; STAGE2_SECTORS sectors of

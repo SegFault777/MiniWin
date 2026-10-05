@@ -89,7 +89,7 @@ static inline https_state_t https_poll(u64 now_packed) {
         case HTTPS_SENDING_REQUEST:
             tls_poll(now_packed);
             if (!https_client.request_sent) {
-                char req[1024];
+                char req[2048];
                 u32 n = hr_build_request(req, https_client.host_header, https_client.path);
                 if (tls_send_app_data((const u8 *)req, n)) {
                     https_client.request_sent = 1;

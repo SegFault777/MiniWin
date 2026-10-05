@@ -228,21 +228,41 @@ static inline int hr_is_redirect(void) {
            && hr.location[0] != 0;
 }
 
-/* Builds the request text into `out` (which must hold at least 1024 bytes); returns its length.
+/* A form submitted with method="post": the next request built is a POST carrying this urlencoded body. The
+ * browser UI sets it right after starting the fetch and web_start_fetch() clears it, so a redirect (303 -> GET)
+ * or any later navigation goes back to plain GETs by itself. */
+#define HR_POST_MAX 400
+static char hr_post_body[HR_POST_MAX + 1];
+static u32  hr_post_len;
+static int  hr_post_active;
+
+static inline void hr_set_post(const char *body) {
+    u32 n = 0;
+    while (body[n] && n < HR_POST_MAX) { hr_post_body[n] = body[n]; n++; }
+    hr_post_body[n] = 0; hr_post_len = n; hr_post_active = 1;
+}
+
+/* Builds the request text into `out` (which must hold at least 2048 bytes); returns its length.
  * Headers a real server expects from a browser -- and some (DuckDuckGo among them) reject a request
  * without a plausible User-Agent. "Accept-Encoding: identity" because we cannot decompress. */
 static inline u32 hr_build_request(char *out, const char *host_header, const char *path) {
     u32 pos = 0;
+    char clen[12]; u32 cl = 0;
+    if (hr_post_active) { char d[12]; int nd = 0; u32 v = hr_post_len; do { d[nd++] = (char)('0' + v % 10); v /= 10; } while (v && nd < 10); while (nd) clen[cl++] = d[--nd]; }
+    clen[cl] = 0;
     const char *parts[] = {
-        "GET ", path, " HTTP/1.1\r\nHost: ", host_header,
+        hr_post_active ? "POST " : "GET ", path, " HTTP/1.1\r\nHost: ", host_header,
         "\r\nUser-Agent: Mozilla/5.0 (compatible; MiniWin/1.0; +https://github.com/SegFault777/MiniWin)"
         "\r\nAccept: text/html,text/plain;q=0.9,*/*;q=0.5"
         "\r\nAccept-Language: en-US,en;q=0.9,ko;q=0.8"
-        "\r\nAccept-Encoding: identity"
-        "\r\nConnection: close\r\n\r\n"
+        "\r\nAccept-Encoding: identity",
+        hr_post_active ? "\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: " : "",
+        hr_post_active ? clen : "",
+        "\r\nConnection: close\r\n\r\n",
+        hr_post_active ? hr_post_body : ""
     };
     for (unsigned k = 0; k < sizeof(parts) / sizeof(parts[0]); k++) {
-        for (u32 i = 0; parts[k][i] && pos < 1000; i++) out[pos++] = parts[k][i];
+        for (u32 i = 0; parts[k][i] && pos < 1900; i++) out[pos++] = parts[k][i];
     }
     out[pos] = 0;
     return pos;

@@ -1,6 +1,7 @@
 #ifndef MWP_H
 #define MWP_H
 #include "io.h"
+#include "memmap.h"
 #include "vga.h"
 #include "font.h"
 #include "font_ko.h"
@@ -57,14 +58,11 @@
  * at all.
  * ============================================================ */
 
-/* Where a .mwp gets copied to and jumped into. Sits comfortably in the
- * gap between the kernel's own .bss (which build.sh's guard-band check
- * confirms ends well before this) and the stack (which starts at
- * 0x9FC00 and grows down) -- see kernel/fs.h's disk-layout comment and
- * build.sh's own bss/stack printout for the numbers this was chosen
- * against. Page-aligned-looking (ends in 0x000) purely for readability;
- * there's no paging here for it to actually align to. */
-#define MWP_LOAD_ADDR         0x85000u
+/* Where a .mwp gets copied to and jumped into: a FIXED spot in high memory (memmap.h explains why -- the old
+ * 0x85000 was inside the kernel's own .bss once .bss outgrew it, and every program launch scribbled over the
+ * network state). The program linker script (kernel/mwp_link.ld) and programs/mwp_api.h carry hand-kept copies
+ * of these two numbers; the asserts below make a mismatch with memmap.h a build error on this side. */
+#define MWP_LOAD_ADDR         MW_MWP_LOAD_ADDR
 
 /* One syscall table, filled in once at boot (see mwp_init() below) and
  * read-only from every .mwp's point of view after that. A single
@@ -74,8 +72,8 @@
  * windows-being-dragged concept); if that ever changes, this table
  * would need to move to per-slot storage, but building that speculatively
  * now would just be dead weight. */
-#define MWP_SYSCALL_TABLE_ADDR 0x84C00u /* just below MWP_LOAD_ADDR, comfortably
-                                         * above .bss's end */
+#define MWP_SYSCALL_TABLE_ADDR MW_MWP_SYSCALL_ADDR    /* 0x8F0000: one page below the load address */
+typedef char mw_assert_mwp_addrs[(MWP_LOAD_ADDR == 0x8F1000u && MWP_SYSCALL_TABLE_ADDR == 0x8F0000u) ? 1 : -1];
 
 typedef struct {
     void (*put_pixel)(int x, int y, u32 color);
