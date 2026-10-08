@@ -6,6 +6,7 @@
    type TEXT       sendkey for each character
    move X Y        absolute mouse position in screen pixels (640x480 screen)
    click           left click at the current position
+   drag X1 Y1 X2 Y2  press at (X1,Y1), move RELATIVELY to (X2,Y2) with the button down, release
    raw CMD...      any monitor command
 usage: qemu_mon.py SOCKET "wait 20" "shot /tmp/a.ppm" ..."""
 import socket, sys, time
@@ -36,6 +37,8 @@ for a in sys.argv[2:]:
         for ch in arg:
             cmd("sendkey " + KEYS.get(ch, ("shift-" + ch.lower()) if ch.isupper() else ch))
     elif c == "move": x, y = map(int, arg.split()); absmove(x, y); cur[:] = [x, y]
+    elif c == "drag":
+        x1, y1, x2, y2 = map(int, arg.split()); absmove(x1, y1); cmd("mouse_button 1"); time.sleep(0.2); rel(x2 - x1, y2 - y1); time.sleep(0.2); cmd("mouse_button 0")
     elif c == "click": cmd("mouse_button 1"); time.sleep(0.15); cmd("mouse_button 0")
     elif c == "raw": cmd(arg)
     time.sleep(0.1)

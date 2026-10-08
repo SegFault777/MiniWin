@@ -5,6 +5,8 @@ cd "$(dirname "$0")"
 # Two escape hatches for test builds (never used for committed builds):
 #   BUILD=/tmp/mwtest ./build.sh   -- put every artifact somewhere other
 #                                     than the git-tracked build/ dir
+#   THEME=dark ./build.sh                -- build with another look (kernel/ui/themes/<name>.h;
+#                                           default: classic, the original gray-on-cyan)
 #   EXTRA_CFLAGS="-DMW_..." ./build.sh -- extra compiler flags, e.g. the
 #                                     MW_AUTOTEST_* hooks in kernel.c (it goes
 #                                     through `eval`, so a string value is
@@ -57,6 +59,8 @@ echo "  stage2: $STAGE2_ACTUAL_BYTES / $STAGE2_MAX_BYTES bytes" \
 echo "[2/5] Assembling kernel entry stub..."
 nasm -f elf32 kernel/kentry.asm -o $BUILD/kentry.o
 
+THEME_FLAG="-DMW_THEME_FILE=\\\"ui/themes/${THEME:-classic}.h\\\""   # (the compile line below goes through eval, which eats one level of quotes)
+[ -f "kernel/ui/themes/${THEME:-classic}.h" ] || { echo "ERROR: no such theme: kernel/ui/themes/${THEME:-classic}.h"; exit 1; }
 echo "[3/5] Compiling C kernel..."
 # -Os over -O1: this kernel's bottleneck has never been CPU cycles (it's
 # a GUI polling a mouse a few thousand times a second, not folding
@@ -67,7 +71,7 @@ echo "[3/5] Compiling C kernel..."
 # the ones nothing calls (see the comment in kernel/link.ld for why the
 # wildcard patterns there matter just as much as these two flags do).
 eval gcc -m32 -ffreestanding -fno-pie -fno-stack-protector -nostdlib -nostdinc \
-    -Wall -Wextra -Os -ffunction-sections -fdata-sections $EXTRA_CFLAGS -c kernel/kernel.c -o $BUILD/kernel.o
+    -Wall -Wextra -Os -Ikernel -ffunction-sections -fdata-sections $THEME_FLAG $EXTRA_CFLAGS -c kernel/kernel.c -o $BUILD/kernel.o
 
 echo "[4/5] Linking kernel..."
 ld -m elf_i386 -T kernel/link.ld -nostdlib --gc-sections \

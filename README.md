@@ -139,6 +139,7 @@ you're on a 64-bit host), and `ld`.
 
 ```bash
 ./build.sh && tools/install_all.sh   # the second step puts GREETER.MWP and the icons back
+THEME=dark ./build.sh && tools/install_all.sh   # the same OS in another look (kernel/ui/themes/<name>.h)
 ```
 
 **Don't want to build it?** Every version's ready-made image is attached to its
@@ -231,6 +232,12 @@ kernel/css.h        CSS parser, selectors, cascade, computed style, UA styleshee
 kernel/layout.h     block/inline/table/flex/grid layout -> a pixel-positioned display list
 kernel/render.h     paints the display list, hit-tests, form state + submission, page loaders
 kernel/memmap.h     every fixed physical address in one place (net arena, HTML arena, MWP slot)
+kernel/kernel.c     entry: the layer map (include order = dependency order) + the boot/loop skeleton
+kernel/ui/          the desktop shell: theme.h + themes/ (the whole look), widgets.h (all chrome),
+                    window/taskbar/startmenu/clock/icons/cursor/compose, input.h (mouse + keyboard dispatch)
+kernel/apps/        the apps: notepad/*, setting, web/* (state, address, fetch, page, view), terminal
+kernel/sys/         util, lang (language + IME), power, boot (everything before the main loop)
+docs/ARCHITECTURE.md  how the layers fit, the design module's rules, how to add a theme/widget/app
 kernel/net_stack.h  wires all of the above into one init()/poll() pair
 programs/           .mwp source, built independently of the kernel (see tools/build_mwp.sh)
 programs/mwp_api.h  the syscall-table contract a .mwp includes to talk to the OS
@@ -242,8 +249,9 @@ tools/build_mwp.sh         compiles one programs/*.c into a loadable build/*.mwp
 tools/install_mwp.py       writes a built .mwp into an os-image.img program slot
 tools/install_icons.py     writes the icon bundle into an os-image.img icon catalog
 tools/test/         host-side tests: run_host_engine.sh (HTML engine + fuzzer), run_host_web.sh (HTTP),
-                    run_host_crypto.sh; plus host_render.c (HTML -> PPM) and qemu_shot.sh/qemu_mon.py
-                    (boot the OS, click, type, screenshot)
+                    run_host_crypto.sh; ui_golden.sh (boots QEMU, drives the desktop, compares 15 screenshots
+                    pixel-for-pixel against golden/ and golden_dark/); host_render.c (HTML -> PPM);
+                    qemu_shot.sh/qemu_mon.py (boot, click, drag, type, screenshot)
 third_party/        bundled font/icon source + each one's own license/notice
 build.sh            nasm + gcc + ld pipeline -> build/os-image.img
 screenshots/        yep

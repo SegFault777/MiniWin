@@ -275,7 +275,8 @@ static inline u32 css_blend_white(u32 rgb, int a255) {          /* alpha over a 
 static inline int css_clamp255(int v) { return v < 0 ? 0 : v > 255 ? 255 : v; }
 
 static inline int css_hsl_comp(int t, int m1, int m2) {          /* t in 0..360*, m in 0..1000 */
-    if (t < 0) t += 360; if (t >= 360) t -= 360;
+    if (t < 0) t += 360;
+    if (t >= 360) t -= 360;
     if (t < 60) return m1 + (m2 - m1) * t / 60;
     if (t < 180) return m2;
     if (t < 240) return m1 + (m2 - m1) * (240 - t) / 60;
@@ -320,7 +321,10 @@ static inline int css_parse_color(const u8 *s, u32 n, u32 *out) {
             r = pctf[0] ? v[0] * 255 / 10000 : v[0] / 100; g = pctf[1] ? v[1] * 255 / 10000 : v[1] / 100; b = pctf[2] ? v[2] * 255 / 10000 : v[2] / 100;
         } else {
             int h = v[0] / 100; int sat = v[1] / 10; int l = v[2] / 10;       /* 0..1000 */
-            if (sat < 0) sat = 0; if (sat > 1000) sat = 1000; if (l < 0) l = 0; if (l > 1000) l = 1000;
+            if (sat < 0) sat = 0;
+            if (sat > 1000) sat = 1000;
+            if (l < 0) l = 0;
+            if (l > 1000) l = 1000;
             int m2 = l <= 500 ? l * (1000 + sat) / 1000 : l + sat - l * sat / 1000;
             int m1 = 2 * l - m2;
             r = css_hsl_comp(h + 120, m1, m2) * 255 / 1000; g = css_hsl_comp(h, m1, m2) * 255 / 1000; b = css_hsl_comp(h - 120, m1, m2) * 255 / 1000;
@@ -1060,15 +1064,22 @@ static inline int css_cell_for(int fpx) {
     return c < CSS_MIN_CELL ? CSS_MIN_CELL : c > CSS_MAX_CELL ? CSS_MAX_CELL : c;
 }
 static inline void css_set_fpx(css_style_t *s, int fpx) {
-    if (fpx < 1) fpx = 1; if (fpx > 400) fpx = 400;
+    if (fpx < 1) fpx = 1;
+    if (fpx > 400) fpx = 400;
     s->fpx = (short)fpx; s->cell = (u8)css_cell_for(fpx);
 }
 /* font-size value -> CSS px, or -1 */
 static inline int css_parse_fontsize(const u8 *v, u32 n, int parfpx) {
-    if (css_kw(v, n, "xx-small")) return 9;   if (css_kw(v, n, "x-small")) return 10;  if (css_kw(v, n, "small")) return 13;
-    if (css_kw(v, n, "medium")) return 16;    if (css_kw(v, n, "large")) return 18;    if (css_kw(v, n, "x-large")) return 24;
-    if (css_kw(v, n, "xx-large")) return 32;  if (css_kw(v, n, "xxx-large")) return 48;
-    if (css_kw(v, n, "smaller")) return parfpx * 5 / 6; if (css_kw(v, n, "larger")) return parfpx * 6 / 5;
+    if (css_kw(v, n, "xx-small")) return 9;
+    if (css_kw(v, n, "x-small")) return 10;
+    if (css_kw(v, n, "small")) return 13;
+    if (css_kw(v, n, "medium")) return 16;
+    if (css_kw(v, n, "large")) return 18;
+    if (css_kw(v, n, "x-large")) return 24;
+    if (css_kw(v, n, "xx-large")) return 32;
+    if (css_kw(v, n, "xxx-large")) return 48;
+    if (css_kw(v, n, "smaller")) return parfpx * 5 / 6;
+    if (css_kw(v, n, "larger")) return parfpx * 6 / 5;
     int x; u32 c = css_num(v, n, &x);
     if (!c) return -1;
     const u8 *u = v + c; u32 un = n - c;
@@ -1101,10 +1112,14 @@ static inline int css_parse_sides(const u8 *v, u32 n, css_len_t out[4], int fpx,
 
 static inline int css_border_style_kw(const u8 *v, u32 n) {
     if (css_kw(v, n, "none") || css_kw(v, n, "hidden")) return BS_NONE;
-    if (css_kw(v, n, "solid")) return BS_SOLID;   if (css_kw(v, n, "dashed")) return BS_DASHED;
-    if (css_kw(v, n, "dotted")) return BS_DOTTED; if (css_kw(v, n, "double")) return BS_DOUBLE;
-    if (css_kw(v, n, "inset")) return BS_INSET;   if (css_kw(v, n, "outset")) return BS_OUTSET;
-    if (css_kw(v, n, "groove")) return BS_GROOVE; if (css_kw(v, n, "ridge")) return BS_RIDGE;
+    if (css_kw(v, n, "solid")) return BS_SOLID;
+    if (css_kw(v, n, "dashed")) return BS_DASHED;
+    if (css_kw(v, n, "dotted")) return BS_DOTTED;
+    if (css_kw(v, n, "double")) return BS_DOUBLE;
+    if (css_kw(v, n, "inset")) return BS_INSET;
+    if (css_kw(v, n, "outset")) return BS_OUTSET;
+    if (css_kw(v, n, "groove")) return BS_GROOVE;
+    if (css_kw(v, n, "ridge")) return BS_RIDGE;
     return -1;
 }
 static inline int css_border_width_tok(const u8 *v, u32 n, int fpx) {
@@ -1136,12 +1151,14 @@ static inline void css_apply_border(css_style_t *s, int mask, const u8 *v, u32 n
 
 static inline int css_list_style_kw(const u8 *v, u32 n) {
     if (css_kw(v, n, "none")) return LS_NONE;
-    if (css_kw(v, n, "disc")) return LS_DISC;       if (css_kw(v, n, "circle")) return LS_CIRCLE;
+    if (css_kw(v, n, "disc")) return LS_DISC;
+    if (css_kw(v, n, "circle")) return LS_CIRCLE;
     if (css_kw(v, n, "square")) return LS_SQUARE;
     if (css_kw(v, n, "decimal") || css_kw(v, n, "decimal-leading-zero")) return LS_DECIMAL;
     if (css_kw(v, n, "lower-alpha") || css_kw(v, n, "lower-latin")) return LS_LOWER_ALPHA;
     if (css_kw(v, n, "upper-alpha") || css_kw(v, n, "upper-latin")) return LS_UPPER_ALPHA;
-    if (css_kw(v, n, "lower-roman")) return LS_LOWER_ROMAN; if (css_kw(v, n, "upper-roman")) return LS_UPPER_ROMAN;
+    if (css_kw(v, n, "lower-roman")) return LS_LOWER_ROMAN;
+    if (css_kw(v, n, "upper-roman")) return LS_UPPER_ROMAN;
     if (css_kw(v, n, "korean-hangul-formal") || css_kw(v, n, "hangul") || css_kw(v, n, "cjk-decimal")) return LS_DECIMAL;
     return -1;
 }
@@ -1490,7 +1507,8 @@ static inline void css_hints(u32 node, css_style_t *s, const css_style_t *par) {
                     int x, lvl;
                     if (v[0] == '+' || v[0] == '-') { if (!css_num(v + 1, vl - 1, &x)) break; lvl = 3 + (v[0] == '-' ? -(x / 100) : (x / 100)); }
                     else { if (!css_num(v, vl, &x)) break; lvl = x / 100; }
-                    if (lvl < 1) lvl = 1; if (lvl > 7) lvl = 7;
+                    if (lvl < 1) lvl = 1;
+                    if (lvl > 7) lvl = 7;
                     css_set_fpx(s, map[lvl]);
                 }
                 break;

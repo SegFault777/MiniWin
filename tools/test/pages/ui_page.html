@@ -1,0 +1,40 @@
+<!DOCTYPE html><html><head><meta charset=utf-8><title>복합 테스트</title><style>
+body{font-family:sans-serif;background:#fafafa;margin:0}
+header{background:#234;color:#fff;padding:8px 12px}
+nav{display:flex;gap:10px;margin-top:4px}
+nav a{color:#9cf;text-decoration:none;padding:2px 6px;border:1px solid #9cf}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:8px}
+.card{background:#fff;border:1px solid #ccc;padding:6px}
+.card h3{margin:0 0 4px;font-size:14px}
+.row{display:flex;justify-content:space-between;align-items:center;padding:6px 10px;background:#eee}
+.btn{display:inline-block;background:#06c;color:#fff;padding:3px 10px;border-radius:3px}
+main{padding:0 10px}
+blockquote{border-left:3px solid #999;margin:8px 0;padding-left:8px;color:#444}
+code{background:#eee;padding:0 3px}
+</style></head><body>
+<header><b>MiniWeb 테스트</b> — 한글도 나옵니다
+<nav><a href="#">Home</a><a href="#">About</a><a href="#">Docs</a></nav></header>
+<div class="grid"><div class="card"><h3>Card One</h3>Some text in the first card.</div>
+<div class="card"><h3>Card Two</h3>Second card, a little longer text to wrap around inside.</div>
+<div class="card"><h3>카드 셋</h3>한글 문장이 줄바꿈 되는지 확인합니다.</div></div>
+<div class="row"><span>Left</span><span class="btn">Button</span><span>Right</span></div>
+<main>
+<h2>Forms &amp; lists</h2>
+<form action="/s" method="get">
+<input type="text" name="q" value="mini" size="16"> <select name="k"><option>One<option selected>Two</select>
+<input type="checkbox" name="c" checked> check <input type="radio" name="r"> radio
+<button type="submit">Go</button> <input type="submit" value="Search">
+<br><textarea name="t" cols="20" rows="2">hello
+world</textarea>
+</form>
+<ol><li>first<li>second<ol type="a"><li>sub a<li>sub b</ol><li>third</ol>
+<blockquote>A quoted paragraph with <code>inline code</code> inside it.</blockquote>
+<details open><summary>Open details</summary><p>Hidden content shown.</p></details>
+<details><summary>Closed details</summary><p>Should not show.</p></details>
+<pre>pre   formatted
+	tab line</pre>
+<hr>
+<table width="100%" border="1" cellpadding="3"><tr><th>H1<th>H2<th>H3</tr>
+<tr><td>a<td rowspan=2>span2<td>c</tr><tr><td>d<td>f</tr></table>
+<p>Image: <img src="x.png" alt="logo"> and <img src="y.png" width=40 height=20></p>
+</main></body></html>
