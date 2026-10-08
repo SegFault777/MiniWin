@@ -307,25 +307,30 @@ static inline int prog_save_slot(int slot, const char *name, const u8 *data, u32
 
 /* Reads a program's bytes into dst (must have room for PROG_MAX_BYTES --
  * callers pass the fixed load-region buffer from kernel/mwp.h, never
- * something smaller). Returns how many bytes actually came back, or 0
- * if that slot's empty. */
+ * something smaller). All-or-nothing: returns the program's full length
+ * once EVERY byte has come back, and 0 if the slot's empty, the buffer
+ * is too small for the whole thing, or any sector read fails along the
+ * way. It used to return however many bytes it had managed before a
+ * failing sector, and mwp_run() happily jumped into a half-loaded
+ * program -- the unloaded tail being whatever garbage RAM held. A short
+ * read is not "a smaller program", it's a broken one. */
 static inline u32 prog_load_slot(int slot, u8 *dst, u32 maxlen) {
     u32 len = 0;
     if (!prog_check_slot(slot, &len, 0, 0)) return 0;
-    if (len > maxlen) len = maxlen;
+    if (len == 0 || len > maxlen) return 0;   /* truncating a program to fit is just a slower crash */
 
     u32 remaining = len;
     u8 *dstp = dst;
     u32 data_lba = prog_slot_data_lba(slot);
     for (int s = 0; s < PROG_DATA_SECTORS && remaining > 0; s++) {
         u8 sector[512];
-        if (!ata_read_sector(data_lba + s, sector)) break;
+        if (!ata_read_sector(data_lba + s, sector)) return 0;   /* partial program: refuse the whole thing */
         u32 chunk = remaining > 512 ? 512 : remaining;
         for (u32 i = 0; i < chunk; i++) dstp[i] = sector[i];
         dstp += chunk;
         remaining -= chunk;
     }
-    return len - remaining;
+    return remaining == 0 ? len : 0;   /* ran out of slot sectors before running out of program */
 }
 
 /* Looks a program up by name (case-sensitive, exact match against

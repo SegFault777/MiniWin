@@ -374,6 +374,25 @@ static inline void tcp_parse_syn_options(const u8 *seg, u16 hdr_len) {
     }
 }
 
+/* Verifies the TCP checksum of an incoming segment: sum the same
+ * pseudo-header tcp_send_segment() builds (source IP, destination IP,
+ * zero, protocol 6, segment length) plus the whole segment, checksum
+ * field included -- a segment that survived the trip intact folds to
+ * all-ones, i.e. net_checksum_finish() returns 0. Without this, a frame
+ * mangled on the wire (or a lazily forged one) went straight into the
+ * state machine as if it were gospel. Returns 1 if the checksum is good. */
+static inline int tcp_checksum_ok(const ip_packet_t *ip) {
+    u8 pseudo[12];
+    net_put32_be(&pseudo[0], ip->src_ip);
+    net_put32_be(&pseudo[4], ip->dst_ip);
+    pseudo[8] = 0;
+    pseudo[9] = IP_PROTO_TCP;
+    net_put16_be(&pseudo[10], ip->payload_len);
+    u32 sum = net_checksum_add(0, pseudo, sizeof(pseudo));
+    sum = net_checksum_add(sum, ip->payload, ip->payload_len);
+    return net_checksum_finish(sum) == 0;
+}
+
 /* Called by the IP dispatcher for every incoming segment addressed to
  * our one live connection's port. Walks the textbook TCP state
  * transitions for exactly the states this kernel implements (see the
@@ -395,6 +414,7 @@ static inline void tcp_handle_packet(const ip_packet_t *ip) {
     if (tcp_conn.state == TCP_CLOSED) return;
     if (ip->src_ip != tcp_conn.remote_ip || src_port != tcp_conn.remote_port ||
         dst_port != tcp_conn.local_port) return; /* not our connection */
+    if (!tcp_checksum_ok(ip)) return;            /* corrupted or forged in transit: drop it silently, the peer will retransmit */
 
     u32 seq = net_get32_be(&seg[4]);
     u32 ack = net_get32_be(&seg[8]);
@@ -428,7 +448,14 @@ static inline void tcp_handle_packet(const ip_packet_t *ip) {
 
     switch (tcp_conn.state) {
         case TCP_SYN_SENT:
-            if ((flags & TCP_FLAG_SYN) && (flags & TCP_FLAG_ACK)) {
+            /* A SYN-ACK only counts if its ACK number is exactly our ISN
+             * + 1 -- i.e. it actually acknowledges the SYN we sent. The
+             * 4-tuple matching isn't proof of anything on its own (ports
+             * are guessable, and a stale SYN-ACK from an earlier attempt
+             * to the same server carries the OLD number). Anything else
+             * is dropped without a reply; our SYN is still in the
+             * retransmit slot, so the real SYN-ACK gets another chance. */
+            if ((flags & TCP_FLAG_SYN) && (flags & TCP_FLAG_ACK) && ack == tcp_conn.snd_nxt) {
                 tcp_conn.rcv_nxt = seq + 1; /* SYN consumes a sequence number, same as ours did */
                 tcp_parse_syn_options(seg, hdr_len);
                 tcp_conn.state = TCP_ESTABLISHED;

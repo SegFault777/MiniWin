@@ -148,7 +148,12 @@ static inline int mwp_run(int slot) {
 
     u8 *dst = (u8 *)MWP_LOAD_ADDR;
     u32 got = prog_load_slot(slot, dst, PROG_MAX_BYTES);
-    if (got == 0) return 0;
+    /* Exactly the whole program or no program at all: the entry point
+     * lives somewhere inside `len` bytes, and jumping into a region that
+     * was only partly filled is how you execute whatever RAM happened to
+     * contain. (prog_load_slot() already returns 0 for any short read;
+     * this check is the belt to that function's suspenders.) */
+    if (got == 0 || got != len) return 0;
 
     mwp_entry_fn entry = (mwp_entry_fn)(MWP_LOAD_ADDR + entry_offset);
     entry();

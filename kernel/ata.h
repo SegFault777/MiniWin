@@ -28,22 +28,41 @@
 #define ATA_SR_BSY  0x80
 #define ATA_SR_DRQ  0x08
 #define ATA_SR_ERR  0x01
+#define ATA_SR_DF   0x20   /* drive fault: the drive itself says it's broken */
 
-static inline void ata_wait_bsy_clear(void) {
-    /* The drive's basically saying "hold on, I'm doing a thing." Wait
-     * for it to shut up about being busy. */
-    while (inb(ATA_STATUS) & ATA_SR_BSY) { }
+/* How many times we poll a status register before declaring the drive
+ * dead. There's no clock this low in the stack (no PIT/RTC yet when the
+ * first sectors are read), so the budget is a plain iteration count: an
+ * inb() on legacy IDE costs on the order of a microsecond, which makes
+ * this roughly half a second to a few seconds depending on the machine
+ * -- generously longer than any healthy drive ever stays busy, and
+ * still a rounding error next to "forever", which is what this loop
+ * used to wait for when a disk went missing mid-command. */
+#define ATA_POLL_LIMIT  2000000u
+
+/* The drive's basically saying "hold on, I'm doing a thing." Wait for it
+ * to shut up about being busy -- but not forever. Returns 1 once BSY is
+ * clear, 0 if the drive was still busy when patience ran out. A bus with
+ * nothing on it floats to 0xFF (every bit set, BSY included), so a
+ * missing disk lands here too instead of hanging the whole kernel's
+ * one-and-only main loop. */
+static inline int ata_wait_bsy_clear(void) {
+    for (u32 i = 0; i < ATA_POLL_LIMIT; i++) {
+        if (!(inb(ATA_STATUS) & ATA_SR_BSY)) return 1;
+    }
+    return 0;
 }
 
 /* Wait for the drive to either say "ready for data" (DRQ) or "nope,
- * something broke" (ERR). Returns 1 for the good outcome. */
+ * something broke" (ERR). Returns 1 for the good outcome, 0 for ERR, a
+ * drive fault (DF, bit 5), or silence until the poll budget runs out. */
 static inline int ata_wait_drq(void) {
-    u8 status;
-    while (1) {
-        status = inb(ATA_STATUS);
-        if (status & ATA_SR_ERR) return 0;
-        if (status & ATA_SR_DRQ) return 1;
+    for (u32 i = 0; i < ATA_POLL_LIMIT; i++) {
+        u8 status = inb(ATA_STATUS);
+        if (status & (ATA_SR_ERR | ATA_SR_DF)) return 0;
+        if (!(status & ATA_SR_BSY) && (status & ATA_SR_DRQ)) return 1;
     }
+    return 0;
 }
 
 static inline void ata_select_lba(u32 lba) {
@@ -58,7 +77,8 @@ static inline void ata_select_lba(u32 lba) {
 }
 
 /* Reads one 512-byte sector at `lba` into `buf`. Returns 1 if it worked,
- * 0 if the drive threw a tantrum after every retry.
+ * 0 if the drive reported an error, a fault, or stopped answering
+ * (every status wait is bounded by ATA_POLL_LIMIT -- see above).
  *
  * The retry loop below exists because of a real, reproducible failure
  * found while building kernel/mwp.h's program loader: several
@@ -83,10 +103,10 @@ static inline void ata_select_lba(u32 lba) {
  * success but the data looks impossible" case. */
 static inline int ata_read_sector(u32 lba, void *buf) {
     for (int attempt = 0; attempt < 4; attempt++) {
-        ata_wait_bsy_clear();
+        if (!ata_wait_bsy_clear()) return 0; /* drive never settled -- retrying a dead drive 4x just makes the wait 4x longer */
         ata_select_lba(lba);
         outb(ATA_COMMAND, ATA_CMD_READ_SECTORS);
-        if (!ata_wait_drq()) return 0; /* real ERR status -- not what the retry is for, fail now */
+        if (!ata_wait_drq()) return 0; /* real ERR status (or silence) -- not what the retry is for, fail now */
 
         u16 *p = (u16*)buf;
         for (int i = 0; i < 256; i++) {
@@ -105,14 +125,16 @@ static inline int ata_read_sector(u32 lba, void *buf) {
               * for that themselves */
 }
 
-/* Writes one 512-byte sector at `lba` from `buf`. Returns 1 on success.
+/* Writes one 512-byte sector at `lba` from `buf`. Returns 1 on success,
+ * 0 on any error/fault/timeout (the old version could only ever say 1 or
+ * hang).
  * Flushes the drive's write cache afterward so the data actually lands
  * in the image file for real, instead of vanishing into a volatile
  * cache the moment someone yanks the power (or, more realistically,
  * closes the QEMU window). This is the difference between "persistent
  * storage" and "storage that just got your hopes up." */
 static inline int ata_write_sector(u32 lba, const void *buf) {
-    ata_wait_bsy_clear();
+    if (!ata_wait_bsy_clear()) return 0;
     ata_select_lba(lba);
     outb(ATA_COMMAND, ATA_CMD_WRITE_SECTORS);
     if (!ata_wait_drq()) return 0;
@@ -122,10 +144,10 @@ static inline int ata_write_sector(u32 lba, const void *buf) {
         outw(ATA_DATA, p[i]);
     }
 
-    ata_wait_bsy_clear();
+    if (!ata_wait_bsy_clear()) return 0;   /* the sector never finished landing */
     outb(ATA_COMMAND, ATA_CMD_CACHE_FLUSH);
-    ata_wait_bsy_clear();
-    return 1;
+    if (!ata_wait_bsy_clear()) return 0;   /* ...or the flush never finished -- either way, don't claim success */
+    return (inb(ATA_STATUS) & (ATA_SR_ERR | ATA_SR_DF)) ? 0 : 1;
 }
 
 #endif
