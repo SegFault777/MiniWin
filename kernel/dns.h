@@ -32,6 +32,7 @@
                                  * so there's nothing for it to collide
                                  * with */
 #define DNS_TYPE_A   1
+#define DNS_TYPE_CNAME 5
 #define DNS_CLASS_IN 1
 /* TIMEOUTS ARE IN REAL TIME, not loop iterations. The original gave up after 4000 "ticks" -- but a
  * tick is one pass of the main loop, whose speed depends entirely on the machine: ~45 passes/second
@@ -127,6 +128,52 @@ static inline u16 dns_skip_name(const u8 *data, u16 len, u16 offset) {
         pos = (u16)(pos + 1 + b); /* skip this label's length-prefixed bytes */
     }
     return 0; /* ran off the end -- truncated packet */
+}
+
+/* Decodes the (possibly compressed) domain name at `pos` into lowercase dotted text in `out` (cap bytes,
+ * NUL-terminated). Returns the text length, or -1 for anything malformed: a label running past the
+ * packet, a reserved label type, a compression pointer that does not point strictly BACKWARD (which also
+ * rules out loops), or a name that will not fit. This is what lets a reply's names be COMPARED with what we
+ * asked instead of merely skipped over. */
+static inline int dns_decode_name(const u8 *data, u16 len, u16 pos, char *out, u16 cap) {
+    u16 n = 0, p = pos;
+    int hops = 0;
+    for (;;) {
+        if (p >= len) return -1;
+        u8 b = data[p];
+        if ((b & 0xC0) == 0xC0) {
+            if (p + 1 >= len) return -1;
+            u16 ptr = (u16)(((b & 0x3F) << 8) | data[p + 1]);
+            if (ptr >= p || ++hops > 16) return -1;      /* must point backward; bounded hops */
+            p = ptr;
+            continue;
+        }
+        if (b & 0xC0) return -1;                          /* 0x40 / 0x80 label types are reserved */
+        if (b == 0) break;
+        if ((u16)(p + 1 + b) > len) return -1;
+        if (n != 0) { if (n + 1 >= cap) return -1; out[n++] = '.'; }
+        if ((u16)(n + b) >= cap) return -1;
+        for (u8 i = 0; i < b; i++) {
+            char c = (char)data[p + 1 + i];
+            if (c >= 'A' && c <= 'Z') c = (char)(c + 32);
+            out[n++] = c;
+        }
+        p = (u16)(p + 1 + b);
+    }
+    out[n] = 0;
+    return (int)n;
+}
+
+/* Case-insensitive name comparison (DNS names are), tolerating one trailing dot on either side. */
+static inline int dns_name_eq(const char *a, const char *b) {
+    for (;;) {
+        char ca = *a, cb = *b;
+        if (ca >= 'A' && ca <= 'Z') ca = (char)(ca + 32);
+        if (cb >= 'A' && cb <= 'Z') cb = (char)(cb + 32);
+        if ((ca == 0 || (ca == '.' && a[1] == 0)) && (cb == 0 || (cb == '.' && b[1] == 0))) return 1;
+        if (ca != cb) return 0;
+        a++; b++;
+    }
 }
 
 static inline u32 dns_wall_seconds(void) { return net_wall_seconds(); }
@@ -237,8 +284,8 @@ static inline void dns_resolve(const char *host) {
  * response that leads with a CNAME before the real A record still
  * resolves correctly. */
 static inline void dns_handle_reply(u32 src_ip, u16 src_port, const u8 *data, u16 len) {
-    (void)src_port;
     if (dns_client.state != DNS_QUERYING) return;
+    if (src_port != DNS_SERVER_PORT) return;   /* an answer comes FROM port 53 */
     int asked = 0;                         /* only believe a server we have actually asked */
     for (int k = 0; k <= dns_client.attempt && k < dns_client.nattempts; k++) if (dns_client.servers[k] == src_ip) asked = 1;
     if (!asked) return;
@@ -248,9 +295,32 @@ static inline void dns_handle_reply(u32 src_ip, u16 src_port, const u8 *data, u1
     if (id != dns_client.query_id) return; /* stale or unrelated reply */
 
     u16 flags = net_get16_be(&data[2]);
+    if (!(flags & 0x8000)) return;         /* QR=0: that is a QUERY, not a response */
+    if ((flags >> 11) & 0x0F) return;      /* opcode must echo our standard query (0) */
     u8 rcode = (u8)(flags & 0x0F);
     u16 qdcount = net_get16_be(&data[4]);
     u16 ancount = net_get16_be(&data[6]);
+
+    /* Bind the response to OUR question. We sent exactly one -- the hostname, type A, class IN -- and a
+     * genuine server echoes it back. Until now the ID was the only thing tying a reply to a query, so any
+     * packet carrying the right 16-bit ID was believed no matter what it was an answer about. A reply
+     * with no question, several, or a different one is ignored (not "failed": the real answer may still
+     * be on its way). A bare NOERROR/NXDOMAIN with no echoed question is not accepted either: NXDOMAIN
+     * in particular is a denial of service if a forgery can produce it. */
+    u16 pos = 12;
+    if (qdcount > 1) return;
+    if (qdcount == 1) {
+        char qname[256];
+        if (dns_decode_name(data, len, pos, qname, sizeof(qname)) < 0) return;
+        u16 nlen = dns_skip_name(data, len, pos);
+        if (nlen == 0 || pos + nlen + 4 > len) return;
+        u16 qtype = net_get16_be(&data[pos + nlen]);
+        u16 qclass = net_get16_be(&data[pos + nlen + 2]);
+        if (!dns_name_eq(qname, dns_client.hostname) || qtype != DNS_TYPE_A || qclass != DNS_CLASS_IN) return;
+        pos = (u16)(pos + nlen + 4);
+    } else if (rcode == 0 || rcode == 3) {
+        return;
+    }
 
     if (rcode != 0) {
         char ip[16]; dns_ip_str(src_ip, ip);
@@ -275,16 +345,20 @@ static inline void dns_handle_reply(u32 src_ip, u16 src_port, const u8 *data, u1
         return;
     }
 
-    u16 pos = 12;
-    for (u16 q = 0; q < qdcount; q++) {
-        u16 nlen = dns_skip_name(data, len, pos);
-        if (nlen == 0 || pos + nlen + 4 > len) { dns_client.state = DNS_FAILED; return; }
-        pos = (u16)(pos + nlen + 4); /* + QTYPE(2) + QCLASS(2) */
-    }
-
+    /* Answers. A record only counts if its OWNER NAME is the name we are following: the queried hostname
+     * at first, and after a CNAME (owner == the name so far) the CNAME's target. A response that "answers"
+     * with records for some other name -- the classic way to slip an address in next to a plausible
+     * header -- therefore resolves nothing. Record boundaries are checked against the datagram as
+     * before. */
+    char want[256];   /* a full-length (253) CNAME target must fit, hence not DNS_MAX_NAME */
+    {   u16 hi = 0; while (dns_client.hostname[hi] && hi < DNS_MAX_NAME) { char c = dns_client.hostname[hi]; want[hi] = (c >= 'A' && c <= 'Z') ? (char)(c + 32) : c; hi++; } want[hi] = 0; }
+    int saw_foreign = 0;   /* a record owned by some name that is not on our CNAME chain */
     for (u16 a = 0; a < ancount; a++) {
         u16 nlen = dns_skip_name(data, len, pos);
         if (nlen == 0 || pos + nlen + 10 > len) { dns_client.state = DNS_FAILED; return; }
+        char owner[256];
+        int owner_ok = dns_decode_name(data, len, pos, owner, sizeof(owner)) >= 0 && dns_name_eq(owner, want);
+        if (!owner_ok) saw_foreign = 1;
         pos = (u16)(pos + nlen);
         u16 rtype = net_get16_be(&data[pos]);
         u16 rclass = net_get16_be(&data[pos + 2]);
@@ -292,7 +366,12 @@ static inline void dns_handle_reply(u32 src_ip, u16 src_port, const u8 *data, u1
         pos += 10; /* TYPE(2) + CLASS(2) + TTL(4) + RDLENGTH(2) */
         if (pos + rdlength > len) { dns_client.state = DNS_FAILED; return; }
 
-        if (rtype == DNS_TYPE_A && rclass == DNS_CLASS_IN && rdlength == 4) {
+        if (owner_ok && rtype == DNS_TYPE_CNAME && rclass == DNS_CLASS_IN) {
+            char target[256];
+            if (dns_decode_name(data, len, pos, target, sizeof(target)) >= 0) {
+                u16 ti = 0; while (target[ti] && ti < 255) { want[ti] = target[ti]; ti++; } want[ti] = 0;
+            }
+        } else if (owner_ok && rtype == DNS_TYPE_A && rclass == DNS_CLASS_IN && rdlength == 4) {
             dns_client.result_ip = net_get32_be(&data[pos]);
             dns_client.state = DNS_RESOLVED;
             serial_puts("[DNS] ");
@@ -304,6 +383,11 @@ static inline void dns_handle_reply(u32 src_ip, u16 src_port, const u8 *data, u1
         }
         pos = (u16)(pos + rdlength); /* not the record we want -- skip its data and keep looking */
     }
+
+    /* Records were present but none belonged to our name: that is not "the name has no address", it is a
+     * response that does not answer our question. Ignore it (stay QUERYING) rather than let such a packet
+     * end the lookup; the real answer, or the timeout, will. */
+    if (saw_foreign) return;
 
     /* Ran out of answers without finding an A record -- e.g. the name
      * only has an AAAA record, or resolves to nothing. */

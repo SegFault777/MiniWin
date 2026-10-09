@@ -52,6 +52,8 @@ static const char *web_tls_fail_text(void) {
         case TLS_FAIL_SERVER_FINISHED:         return "The server's Finished message did not verify.";
         case TLS_FAIL_BUFFER_OVERFLOW:         return "A handshake message was larger than MiniWin can handle.";
         case TLS_FAIL_PEER_ALERT:              return "The server refused the connection with a TLS alert (see the number below).";
+        case TLS_FAIL_BAD_RECORD:              return "The server sent a malformed or oversized secure record.";
+        case TLS_FAIL_PROTOCOL_VERSION:        return "The server chose a TLS version MiniWin did not offer (MiniWin speaks TLS 1.2).";
         default:                               return "The secure connection failed.";
     }
 }

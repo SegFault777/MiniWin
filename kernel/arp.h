@@ -24,7 +24,10 @@
 #define ARP_ENTRY_EMPTY  0
 #define ARP_ENTRY_PENDING 1     /* request sent, no reply yet */
 #define ARP_ENTRY_RESOLVED 2
-
+/* A who-has that gets no answer must not block that neighbor forever: after this many main-loop ticks
+ * the PENDING mark stops counting, so the next ip_send() asks again (a single lost request used to mean
+ * "never resolves", since a still-pending entry suppresses new requests). */
+#define ARP_PENDING_TIMEOUT_TICKS 2000
 typedef struct {
     u32 ip;
     u8  mac[6];
@@ -70,12 +73,23 @@ static inline int arp_lookup(u32 ip, u8 mac_out[6]) {
     return 0;
 }
 
-static inline int arp_is_pending(u32 ip) {
+/* Index of the cache slot holding an UNANSWERED request for `ip` (answered or not, however old), or -1.
+ * Only such a slot may be turned into a resolved entry by an incoming reply -- that is the whole
+ * "we asked, they answered" check. */
+static inline int arp_find_pending_slot(u32 ip) {
     if (!arp_cache_initialized) arp_cache_init();
     for (int i = 0; i < ARP_CACHE_SIZE; i++) {
-        if (arp_cache[i].ip == ip && arp_cache[i].state == ARP_ENTRY_PENDING) return 1;
+        if (arp_cache[i].ip == ip && arp_cache[i].state == ARP_ENTRY_PENDING) return i;
     }
-    return 0;
+    return -1;
+}
+
+/* True while a request for `ip` is out and still within its timeout (see ARP_PENDING_TIMEOUT_TICKS);
+ * `age` holds the net_ticks stamp (low 16 bits) of the moment the request went out. */
+static inline int arp_is_pending(u32 ip) {
+    int i = arp_find_pending_slot(ip);
+    if (i < 0) return 0;
+    return (u16)((u16)net_ticks - arp_cache[i].age) < ARP_PENDING_TIMEOUT_TICKS;
 }
 
 /* Finds a slot to (re)use for `ip`: an existing entry for that IP if one
@@ -118,7 +132,7 @@ static inline void arp_send_request(u32 sender_ip, u32 target_ip) {
     int slot = arp_find_or_alloc_slot(target_ip);
     arp_cache[slot].ip = target_ip;
     arp_cache[slot].state = ARP_ENTRY_PENDING;
-    arp_cache[slot].age = 0;
+    arp_cache[slot].age = (u16)net_ticks;   /* request timestamp: see arp_is_pending() */
 
     serial_puts("[ARP] who-has ");
     net_log_ip(target_ip);
@@ -163,22 +177,41 @@ static inline int arp_handle_frame(const u8 *frame, u16 len) {
     if (ethertype != ETHERTYPE_ARP) return 0;
     if (!arp_cache_initialized) arp_cache_init();
 
+    /* From here on the frame IS ARP (return 1 = "handled, don't offer it to IP"), but whether it
+     * changes anything is decided by the checks below. The old code trusted every field and learned the
+     * sender's IP->MAC mapping from any ARP packet whatsoever -- a request, a reply nobody asked for, a
+     * "gratuitous" announcement -- which is exactly how ARP spoofing redirects a victim's traffic. */
+    if (net_get16_be(&frame[14]) != 1 || net_get16_be(&frame[16]) != ETHERTYPE_IPV4 ||
+        frame[18] != 6 || frame[19] != 4) return 1;                    /* not Ethernet/IPv4 ARP */
+
     u16 opcode = net_get16_be(&frame[20]);
+    if (opcode != 1 && opcode != 2) return 1;
     u8 sender_mac[6];
     for (int i = 0; i < 6; i++) sender_mac[i] = frame[22 + i];
     u32 sender_ip = net_get32_be(&frame[28]);
     u32 target_ip = net_get32_be(&frame[38]);
 
-    /* Learn the sender's mapping regardless of opcode -- a gratuitous
-     * ARP or a request tells us just as much about "IP X lives at MAC Y"
-     * as an actual reply does. Free information; take it. */
-    int slot = arp_find_or_alloc_slot(sender_ip);
-    arp_cache[slot].ip = sender_ip;
-    for (int i = 0; i < 6; i++) arp_cache[slot].mac[i] = sender_mac[i];
-    arp_cache[slot].state = ARP_ENTRY_RESOLVED;
-    arp_cache[slot].age = 0;
+    if (sender_ip == 0 || sender_ip == NET_IP4_BROADCAST) return 1;   /* nobody lives at those addresses */
+    if (sender_mac[0] & 1) return 1;                                  /* a multicast/broadcast MAC is never a host */
+    for (int i = 0; i < 6; i++) if (frame[6 + i] != sender_mac[i]) return 1;   /* Ethernet source != ARP sender: forged or confused */
+    if (net_cfg.ready && sender_ip == net_cfg.my_ip) {               /* someone claims OUR address */
+        serial_puts("[ARP] ignoring a packet that claims our own IP\n");
+        return 1;
+    }
 
-    if (opcode == 2) { /* reply */
+    if (opcode == 2) {
+        /* A reply is believed only if (a) it is addressed to us -- target IP and MAC are ours -- and
+         * (b) it answers a question we actually have outstanding for that very IP. Unsolicited replies
+         * (including gratuitous ones) are ignored: they can neither create nor change an entry. */
+        if (target_ip != net_cfg.my_ip) return 1;
+        for (int i = 0; i < 6; i++) if (frame[32 + i] != nic.mac[i]) return 1;
+        int slot = arp_find_pending_slot(sender_ip);
+        if (slot < 0) return 1;
+        arp_cache[slot].ip = sender_ip;
+        for (int i = 0; i < 6; i++) arp_cache[slot].mac[i] = sender_mac[i];
+        arp_cache[slot].state = ARP_ENTRY_RESOLVED;
+        arp_cache[slot].age = 0;
+
         serial_puts("[ARP] ");
         net_log_ip(sender_ip);
         serial_puts(" is at ");
@@ -188,8 +221,31 @@ static inline int arp_handle_frame(const u8 *frame, u16 len) {
         }
         serial_putc('\n');
         if (arp_resolved_cb) arp_resolved_cb(sender_ip, sender_mac);
-    } else if (opcode == 1 && net_cfg.ready && target_ip == net_cfg.my_ip) {
-        /* someone's asking who-has us -- tell them */
+    } else if (net_cfg.ready && target_ip == net_cfg.my_ip) {
+        /* Someone asks who-has US -- answer (the reply is built from the request's own sender fields,
+         * no cache entry needed for that). Also remember the asker, but conservatively: a NEW entry only
+         * in a genuinely free slot, a refresh only if the MAC is the same one we already have. A request
+         * is exactly what a spoofer sends, so it must never rewrite a mapping we hold -- a differing MAC
+         * for a known IP is a conflict, logged and ignored. */
+        int existing = -1, empty = -1;
+        for (int i = 0; i < ARP_CACHE_SIZE; i++) {
+            if (arp_cache[i].state == ARP_ENTRY_EMPTY) { if (empty < 0) empty = i; }
+            else if (arp_cache[i].ip == sender_ip) existing = i;
+        }
+        if (existing >= 0) {
+            int same = 1;
+            for (int i = 0; i < 6; i++) if (arp_cache[existing].mac[i] != sender_mac[i]) same = 0;
+            if (arp_cache[existing].state == ARP_ENTRY_RESOLVED && !same) {
+                serial_puts("[ARP] conflicting MAC for a known IP ignored: ");
+                net_log_ip(sender_ip);
+                serial_putc('\n');
+            }
+        } else if (empty >= 0) {
+            arp_cache[empty].ip = sender_ip;
+            for (int i = 0; i < 6; i++) arp_cache[empty].mac[i] = sender_mac[i];
+            arp_cache[empty].state = ARP_ENTRY_RESOLVED;
+            arp_cache[empty].age = 0;
+        }
         serial_puts("[ARP] replying to who-has-us from ");
         net_log_ip(sender_ip);
         serial_putc('\n');

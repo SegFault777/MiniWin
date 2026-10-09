@@ -5,6 +5,7 @@
 #include "ip.h"
 #include "serial.h"
 #include "memmap.h"
+#include "netclock.h"
 
 /* ============================================================
  * tcp.h -- TCP, or: the protocol that promises the things UDP refuses
@@ -86,8 +87,11 @@
 #define TCP_SEND_BUF ((u8 *)MW_TCP_SEND_ADDR)
 
 #define TCP_MAX_RETRIES 5
-#define TCP_TX_FAIL_BACKOFF_TICKS 200   /* wait this long before offering a refused segment to the NIC again */
-#define TCP_MAX_TX_FAILS          20    /* ...and give the connection up after this many refusals in a row (~ the same total wait as the retransmit budget) */
+#define TCP_TX_FAIL_BACKOFF_TICKS 100   /* wait this long (main-loop passes) before offering a refused segment to the NIC again */
+#define TCP_TX_FAIL_GIVEUP_SECS   8     /* ...and give the connection up once the NIC has refused for this many REAL seconds (netclock.h:
+                                         * loop passes per second differ wildly between machines, so a count of passes is not a duration) */
+#define TCP_TX_FAIL_MIN_COUNT     3     /* ...but never on fewer refusals than this, whatever the clock says */
+#define TCP_TX_FAIL_BACKSTOP      4000  /* a stopped RTC never advances the clock: this many refusals in a row ends it regardless */
 #define TCP_RETRANSMIT_TICKS 800   /* roughly a couple hundred main-loop
                                     * iterations' worth of patience --
                                     * see net_stack_tick() in net.h for
@@ -149,6 +153,7 @@ typedef struct {
      * dead, the connection is dropped instead of waiting forever on a segment that never left. */
     int tx_fail_count;
     u32 tx_next_tick;
+    u32 tx_first_fail_wall;     /* RTC seconds-of-day of the first refusal in the current run */
 
     /* Inbound bytes: written at recv_len by tcp_handle_packet(), drained
      * from the front by tcp_poll_recv() -- which slides the rest down.
@@ -301,13 +306,16 @@ static inline void tcp_connect(u32 remote_ip, u16 remote_port) {
                          * yes, even though it carries no data */
 }
 
-/* Books one refused transmission: back off before the next try, and after TCP_MAX_TX_FAILS in a row
- * conclude the transmit path is dead and drop the connection (callers see TCP_CLOSED and report it)
+/* Books one refused transmission: back off before the next try, and once refusals have lasted
+ * TCP_TX_FAIL_GIVEUP_SECS real seconds conclude the transmit path is dead and drop the connection (callers see TCP_CLOSED and report it)
  * instead of leaving the UI waiting on bytes that can never leave. */
 static inline void tcp_tx_refused(void) {
+    if (tcp_conn.tx_fail_count == 0) tcp_conn.tx_first_fail_wall = net_wall_seconds();
     tcp_conn.tx_fail_count++;
     tcp_conn.tx_next_tick = net_ticks + TCP_TX_FAIL_BACKOFF_TICKS;
-    if (tcp_conn.tx_fail_count >= TCP_MAX_TX_FAILS) {
+    if ((tcp_conn.tx_fail_count >= TCP_TX_FAIL_MIN_COUNT &&
+         net_wall_elapsed(tcp_conn.tx_first_fail_wall) >= TCP_TX_FAIL_GIVEUP_SECS) ||
+        tcp_conn.tx_fail_count >= TCP_TX_FAIL_BACKSTOP) {
         serial_puts("[TCP] transmit path keeps failing, giving up\n");
         tcp_conn.state = TCP_CLOSED;
         tcp_clear_retransmit();
@@ -472,6 +480,25 @@ static inline void tcp_handle_packet(const ip_packet_t *ip) {
     u16 data_len = (u16)(ip->payload_len - hdr_len);
 
     if (flags & TCP_FLAG_RST) {
+        /* A RST ends the connection on the spot, so anyone who can guess the 4-tuple could kill it
+         * with one forged packet -- unless we check that the RST is plausibly from our peer
+         * (RFC 793 3.4 / RFC 5961 3.2):
+         *   - SYN_SENT: only a RST that ACKs our SYN (ack == snd_nxt) counts; a RST with no/wrong ACK is
+         *     ignored. The ACK number is the proof the sender saw our SYN.
+         *   - any synchronized state: the RST's sequence number must be EXACTLY rcv_nxt to reset. One that
+         *     merely falls inside the receive window gets a "challenge ACK" (the real peer answers a
+         *     challenge by re-sending a RST with the right number; an attacker who is blind cannot),
+         *     and anything outside the window is ignored. */
+        if (tcp_conn.state == TCP_SYN_SENT) {
+            if (!(flags & TCP_FLAG_ACK) || ack != tcp_conn.snd_nxt) return;
+        } else {
+            if (seq != tcp_conn.rcv_nxt) {
+                u32 wnd = tcp_recv_window();
+                if (wnd == 0) wnd = 1;
+                if ((u32)(seq - tcp_conn.rcv_nxt) < wnd) tcp_send_segment(TCP_FLAG_ACK, 0, 0);   /* challenge ACK */
+                return;
+            }
+        }
         serial_puts("[TCP] connection reset by peer\n");
         tcp_conn.state = TCP_CLOSED;
         tcp_clear_retransmit();

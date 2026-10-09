@@ -91,6 +91,9 @@ static inline int tls_suite_key_len(u16 s)   { return tls_suite_is_sha384(s) ? 3
 #define TLS_GROUP_X25519    0x001D
 
 #define TLS_MAX_RECORD_PLAINTEXT 16384   /* TLS spec's own per-record cap */
+/* RFC 5246 6.2.3: a ciphertext fragment may exceed the plaintext cap by at most 2048 bytes (MAC/padding/nonce/tag
+ * expansion). Anything longer than this is not a TLS 1.2 record, whatever its header claims. */
+#define TLS_MAX_RECORD_CIPHERTEXT (TLS_MAX_RECORD_PLAINTEXT + 2048)
 /* rx_raw MUST be able to hold one complete record even at the maximum
  * legal size -- 5-byte header + 8-byte explicit nonce + up to 16384
  * bytes of plaintext + 16-byte GCM tag = 16413 bytes worst case. A
@@ -190,6 +193,11 @@ typedef enum {
                                           * appended at the END of this enum
                                           * so every older reason code keeps
                                           * its number */
+    TLS_FAIL_BAD_RECORD,                 /* a record header that no honest TLS 1.2 peer sends: unknown
+                                          * content type, impossible version, or a length that cannot fit
+                                          * the receive buffer (also appended at the end, same reason) */
+    TLS_FAIL_PROTOCOL_VERSION,           /* ServerHello chose a protocol version this client never
+                                          * offered (it offers TLS 1.2 and nothing else) */
 } tls_fail_reason_t;
 
 typedef struct {
@@ -551,25 +559,61 @@ static inline void tls_send_client_hello(void) {
  * whose response it needs to act on (no ALPN, no session tickets). */
 static inline int tls_parse_server_hello(const u8 *body, u32 len) {
     if (len < 2 + 32 + 1) return 0;
-    u32 pos = 2; /* skip version */
+
+    /* Version: this client offers TLS 1.2 (and only 1.2) in its ClientHello, so that is the only
+     * answer a conforming server may give. A TLS 1.3 server that negotiated down has to say 1.2 here;
+     * anything else (an old 1.0/1.1, or a 1.3 hello we cannot parse) used to be logged and ignored and
+     * the handshake carried on under parameters we never agreed to. */
+    u16 version = (u16)((body[0] << 8) | body[1]);
+    if (version != TLS_VERSION_1_2) {
+        serial_puts("[TLS] server chose protocol version 0x");
+        serial_put_hex16(version);
+        serial_puts(", we offered only TLS 1.2\n");
+        tls_conn.fail_reason = TLS_FAIL_PROTOCOL_VERSION;
+        return 0;
+    }
+    u32 pos = 2;
     for (int i = 0; i < 32; i++) tls_conn.server_random[i] = body[pos + i];
     pos += 32;
     u8 session_id_len = body[pos++];
+    if (session_id_len > 32) { tls_conn.fail_reason = TLS_FAIL_UNEXPECTED_MESSAGE; return 0; }   /* the spec's own cap */
     pos += session_id_len;
-    if (pos + 3 > len) return 0;
+    if (pos + 3 > len) { tls_conn.fail_reason = TLS_FAIL_UNEXPECTED_MESSAGE; return 0; }       /* suite + compression must fit */
     u16 cipher_suite = (u16)((body[pos] << 8) | body[pos+1]);
     pos += 2;
-    /* pos now at compression_method (1 byte), then extensions -- skip both, unread */
-    (void)pos;
+    u8 compression = body[pos++];
 
+    /* The suite must be one of the four WE offered (tls_suite_supported() is exactly that set: see the
+     * `offered` table in tls_send_client_hello()). */
     if (!tls_suite_supported(cipher_suite)) {
         serial_puts("[TLS] server picked unsupported cipher suite 0x");
         serial_put_hex16(cipher_suite);
         serial_puts(" (version bytes 0x");
-        serial_put_hex16((u16)((body[0] << 8) | body[1]));
+        serial_put_hex16(version);
         serial_puts(")\n");
         tls_conn.fail_reason = TLS_FAIL_UNSUPPORTED_CIPHER_SUITE;
         return 0;
+    }
+    /* We offered null compression only; a server that picks anything else is selecting something we
+     * cannot decode (and compression under TLS is a known attack surface -- CRIME). */
+    if (compression != 0) { tls_conn.fail_reason = TLS_FAIL_UNEXPECTED_MESSAGE; return 0; }
+
+    /* Extensions, if any: not interpreted (this client offers no extension whose answer it must act on),
+     * but the framing must be exactly right -- a 2-byte total, then {type, 2-byte length, body}
+     * entries that end precisely at the end of the message. A truncated or overlong block means the
+     * message is not what it claims to be. */
+    if (pos < len) {
+        if (pos + 2 > len) { tls_conn.fail_reason = TLS_FAIL_UNEXPECTED_MESSAGE; return 0; }
+        u32 ext_total = ((u32)body[pos] << 8) | body[pos + 1];
+        pos += 2;
+        if (pos + ext_total != len) { tls_conn.fail_reason = TLS_FAIL_UNEXPECTED_MESSAGE; return 0; }
+        while (pos < len) {
+            if (pos + 4 > len) { tls_conn.fail_reason = TLS_FAIL_UNEXPECTED_MESSAGE; return 0; }
+            u32 elen = ((u32)body[pos + 2] << 8) | body[pos + 3];
+            pos += 4;
+            if (pos + elen > len) { tls_conn.fail_reason = TLS_FAIL_UNEXPECTED_MESSAGE; return 0; }
+            pos += elen;
+        }
     }
     tls_conn.cipher_suite = cipher_suite;
     return 1;
@@ -1102,6 +1146,25 @@ static inline void tls_process_raw_buffer(u64 now_packed) {
         u8 content_type = TLS_RX_RAW[0];
         u32 rec_len = ((u32)TLS_RX_RAW[3] << 8) | TLS_RX_RAW[4];
         u32 total = 5 + rec_len;
+
+        /* Judge the HEADER the moment its five bytes are here, before waiting for the body. A header
+         * that declares a record this connection can never hold (bigger than the spec allows, or than
+         * TLS_RX_RAW can buffer) used to just make us wait for "the rest of the record" -- which can
+         * never fit, so the raw buffer filled up, TCP's window closed, and the page hung. Likewise a
+         * content type / version no TLS 1.2 peer would send is a broken or hostile stream, not
+         * something to keep parsing. All of these end the connection now, with a reason. */
+        if (!(content_type >= TLS_CONTENT_CHANGE_CIPHER_SPEC && content_type <= TLS_CONTENT_APPLICATION_DATA) ||
+            TLS_RX_RAW[1] != 3 || TLS_RX_RAW[2] < 1 || TLS_RX_RAW[2] > 3 ||
+            rec_len > TLS_MAX_RECORD_CIPHERTEXT || total > TLS_RX_RAW_BUF_SIZE) {
+            serial_puts("[TLS] rejecting record header: type=");
+            serial_put_dec(content_type);
+            serial_puts(" len=");
+            serial_put_dec(rec_len);
+            serial_putc('\n');
+            tls_conn.fail_reason = TLS_FAIL_BAD_RECORD;
+            tls_conn.state = TLS_FAILED;
+            return;
+        }
         if (tls_conn.rx_raw_len < total) break;
 
         /* BACKPRESSURE: if this is application data and the reader hasn't yet drained enough of

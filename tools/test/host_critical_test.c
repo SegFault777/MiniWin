@@ -37,7 +37,19 @@ static u8       wr_sector[512];
 static int      flush_done;
 static unsigned long io_polls;      /* every status read, to show the loops are bounded */
 
+static u32 fake_wall = 36000;      /* RTC seconds-of-day the fake CMOS reports (tests advance it) */
+static u8  cmos_reg;
 static u8 inb(u16 port) {
+    if (port == 0x71) {                                   /* CMOS data: a binary-mode, 24h RTC reading fake_wall */
+        switch (cmos_reg) {
+            case 0x00: return (u8)(fake_wall % 60);
+            case 0x02: return (u8)((fake_wall / 60) % 60);
+            case 0x04: return (u8)((fake_wall / 3600) % 24);
+            case 0x07: return 1; case 0x08: return 1; case 0x09: return 26;
+            case 0x0B: return 0x06;                       /* binary + 24-hour */
+            default:   return 0;                          /* incl. 0x0A: no update in progress */
+        }
+    }
     if (port != 0x1F7) return 0xFF;                       /* COM1 line status etc: "ready" */
     io_polls++;
     switch (ata_mode) {
@@ -54,6 +66,7 @@ static u8 inb(u16 port) {
     return 0x40;
 }
 static void outb(u16 port, u8 val) {
+    if (port == 0x70) { cmos_reg = val; return; }
     if (port == 0x1F7) {
         if (val == 0x20 || val == 0x30) { cur_cmd = val; xfer_words = 0; }
         else if (val == 0xE7) { cur_cmd = 0; flush_done = 1; }
@@ -80,6 +93,9 @@ static void io_wait(void) {}
 #include "../../kernel/fs.h"
 #include "../../kernel/tcp.h"
 #include "../../kernel/udp.h"
+#include "../../kernel/dns.h"
+#include "../../kernel/dhcp.h"
+#include "../../kernel/tls.h"
 
 static int checks = 0, failures = 0;
 #define CHECK(c, ...) do { checks++; if (!(c)) { failures++; printf("FAIL: "); printf(__VA_ARGS__); printf("\n"); } } while (0)
@@ -387,14 +403,381 @@ static void test_send_failures(void) {
 
     /* NIC stays dead: connection is given up instead of hanging forever */
     establish(); fake_send_ok = 0; tcp_send_data((const u8 *)"x", 1);
-    for (int k = 0; k < TCP_MAX_TX_FAILS + 2 && tcp_conn.state == TCP_ESTABLISHED; k++) { net_ticks += TCP_TX_FAIL_BACKOFF_TICKS; tcp_poll_retransmit(); }
-    CHECK(tcp_conn.state == TCP_CLOSED, "a permanently refusing NIC ends in CLOSED, not an endless wait (state %d)", (int)tcp_conn.state);
+    for (int k = 0; k < 60; k++) { net_ticks += TCP_TX_FAIL_BACKOFF_TICKS; tcp_poll_retransmit(); }   /* many refusals, but within the same RTC second */
+    CHECK(tcp_conn.state == TCP_ESTABLISHED && tcp_conn.tx_fail_count >= 60, "refusals inside one real second do NOT drop the connection (a fast CPU racks up passes quickly)");
+    for (int k = 0; k < 10 && tcp_conn.state == TCP_ESTABLISHED; k++) { fake_wall += 3; net_ticks += TCP_TX_FAIL_BACKOFF_TICKS; tcp_poll_retransmit(); }
+    CHECK(tcp_conn.state == TCP_CLOSED, "a NIC that keeps refusing for %d real seconds ends in CLOSED, not an endless wait (state %d)", TCP_TX_FAIL_GIVEUP_SECS, (int)tcp_conn.state);
+    /* a stopped RTC must not mean "never give up" */
+    establish(); fake_send_ok = 0; tcp_send_data((const u8 *)"x", 1);
+    for (int k = 0; k < TCP_TX_FAIL_BACKSTOP + 2 && tcp_conn.state == TCP_ESTABLISHED; k++) { net_ticks += TCP_TX_FAIL_BACKOFF_TICKS; tcp_poll_retransmit(); }
+    CHECK(tcp_conn.state == TCP_CLOSED, "with a stopped RTC the refusal-count backstop still ends the connection");
 
     /* FIN refused: stays pending, state unchanged, goes out later */
     establish(); fake_send_ok = 0; net_ticks += 1000; tcp_close();
     CHECK(tcp_conn.state == TCP_ESTABLISHED && tcp_conn.fin_pending == 1, "refused FIN stays pending, state not advanced to FIN_WAIT_1");
     fake_send_ok = 1; net_ticks += TCP_TX_FAIL_BACKOFF_TICKS; tcp_poll_retransmit();
     CHECK(tcp_conn.state == TCP_FIN_WAIT_1 && tcp_conn.fin_pending == 0, "FIN is sent once the NIC accepts it");
+}
+
+/* ================================================================== rc-3 */
+/* ------------------------------------------------------------------ G-09 */
+static void test_rst(void) {
+    /* SYN_SENT: only a RST that ACKs our SYN counts */
+    new_conn(); u32 want = tcp_conn.snd_nxt;
+    deliver(build_seg(TCP_FLAG_RST, 0, 0, 0, 0, 0, 1));
+    CHECK(tcp_conn.state == TCP_SYN_SENT, "SYN_SENT: RST without ACK is ignored");
+    deliver(build_seg(TCP_FLAG_RST | TCP_FLAG_ACK, 0, want + 5, 0, 0, 0, 1));
+    CHECK(tcp_conn.state == TCP_SYN_SENT, "SYN_SENT: RST|ACK with a wrong ACK number is ignored");
+    deliver(build_seg(TCP_FLAG_RST | TCP_FLAG_ACK, 0, want, 0, 0, 0, 1));
+    CHECK(tcp_conn.state == TCP_CLOSED, "SYN_SENT: RST|ACK acknowledging our SYN closes the connection (connection refused)");
+
+    /* ESTABLISHED */
+    establish(); u32 rcv = tcp_conn.rcv_nxt;
+    deliver(build_seg(TCP_FLAG_RST, rcv + 100000, 0, 0, 0, 0, 1));
+    CHECK(tcp_conn.state == TCP_ESTABLISHED, "ESTABLISHED: RST far outside the receive window is ignored");
+    deliver(build_seg(TCP_FLAG_RST, rcv - 1, 0, 0, 0, 0, 1));
+    CHECK(tcp_conn.state == TCP_ESTABLISHED, "ESTABLISHED: RST with an old sequence number is ignored");
+    int fr = sent_frames;
+    deliver(build_seg(TCP_FLAG_RST, rcv + 10, 0, 0, 0, 0, 1));
+    CHECK(tcp_conn.state == TCP_ESTABLISHED && sent_frames == fr + 1, "ESTABLISHED: RST inside the window but not exact => challenge ACK, connection kept");
+    deliver(build_seg(TCP_FLAG_RST, rcv, 0, 0, 0, 0, 0));
+    CHECK(tcp_conn.state == TCP_ESTABLISHED, "ESTABLISHED: RST with a bad checksum is ignored");
+    deliver(build_seg(TCP_FLAG_RST, rcv, 0, 0, 0, 0, 1));
+    CHECK(tcp_conn.state == TCP_CLOSED, "ESTABLISHED: RST with seq == rcv_nxt resets");
+}
+
+/* ------------------------------------------------------------------ G-04 */
+static u8 arp_frame[64];
+static const u8 MAC_A[6] = { 0x52, 0x54, 0x00, 0x12, 0x35, 0x02 };
+static const u8 MAC_EVIL[6] = { 0x02, 0xEE, 0xEE, 0xEE, 0xEE, 0x01 };
+static void build_arp(u16 op, const u8 *smac, u32 sip, const u8 *tmac, u32 tip, const u8 *eth_src) {
+    memset(arp_frame, 0, sizeof arp_frame);
+    memset(arp_frame, 0xFF, 6); memcpy(arp_frame + 6, eth_src, 6);
+    arp_frame[12] = 0x08; arp_frame[13] = 0x06;
+    arp_frame[14] = 0; arp_frame[15] = 1; arp_frame[16] = 0x08; arp_frame[17] = 0; arp_frame[18] = 6; arp_frame[19] = 4;
+    arp_frame[20] = op >> 8; arp_frame[21] = (u8)op;
+    memcpy(arp_frame + 22, smac, 6);
+    for (int i = 0; i < 4; i++) { arp_frame[28 + i] = sip >> (24 - 8 * i); arp_frame[38 + i] = tip >> (24 - 8 * i); }
+    memcpy(arp_frame + 32, tmac, 6);
+}
+static int arp_has(u32 ip, u8 mac_out[6]) { return arp_lookup(ip, mac_out); }
+static void test_arp(void) {
+    u8 got[6]; const u32 H1 = 0x0A000250u, GW = 0x0A000202u;
+    net_setup(); arp_put(GW, 0);                          /* empty cache */
+
+    /* unsolicited reply (nobody asked) must not create an entry */
+    build_arp(2, MAC_EVIL, GW, nic.mac, MY_IP, MAC_EVIL); arp_handle_frame(arp_frame, 42);
+    CHECK(!arp_has(GW, got), "an unsolicited ARP reply creates no cache entry");
+
+    /* we ask; a reply naming a DIFFERENT host's address than we asked about is not accepted for the pending one */
+    arp_send_request(MY_IP, GW);
+    CHECK(arp_is_pending(GW), "request marks the entry pending");
+    build_arp(2, MAC_EVIL, H1, nic.mac, MY_IP, MAC_EVIL); arp_handle_frame(arp_frame, 42);
+    CHECK(!arp_has(GW, got) && !arp_has(H1, got), "reply for an address we did not ask about is ignored");
+    /* reply addressed to someone else */
+    build_arp(2, MAC_A, GW, MAC_EVIL, MY_IP, MAC_A); arp_handle_frame(arp_frame, 42);
+    CHECK(!arp_has(GW, got), "reply whose target MAC is not ours is ignored");
+    build_arp(2, MAC_A, GW, nic.mac, MY_IP + 1, MAC_A); arp_handle_frame(arp_frame, 42);
+    CHECK(!arp_has(GW, got), "reply whose target IP is not ours is ignored");
+    /* L2 source different from the ARP sender hardware address */
+    build_arp(2, MAC_A, GW, nic.mac, MY_IP, MAC_EVIL); arp_handle_frame(arp_frame, 42);
+    CHECK(!arp_has(GW, got), "reply whose Ethernet source != ARP sender MAC is ignored");
+    /* multicast sender MAC / sender 0.0.0.0 */
+    { u8 mc[6] = { 0x01, 0x00, 0x5E, 0, 0, 1 }; build_arp(2, mc, GW, nic.mac, MY_IP, mc); arp_handle_frame(arp_frame, 42); }
+    CHECK(!arp_has(GW, got), "reply from a multicast MAC is ignored");
+    /* the genuine, solicited reply */
+    build_arp(2, MAC_A, GW, nic.mac, MY_IP, MAC_A); arp_handle_frame(arp_frame, 42);
+    CHECK(arp_has(GW, got) && memcmp(got, MAC_A, 6) == 0 && !arp_is_pending(GW), "the solicited reply resolves the entry");
+
+    /* poisoning an EXISTING entry: unsolicited reply and request both leave it alone */
+    build_arp(2, MAC_EVIL, GW, nic.mac, MY_IP, MAC_EVIL); arp_handle_frame(arp_frame, 42);
+    arp_has(GW, got); CHECK(memcmp(got, MAC_A, 6) == 0, "unsolicited reply cannot overwrite a resolved entry");
+    build_arp(1, MAC_EVIL, GW, (u8 *)"\0\0\0\0\0\0", MY_IP, MAC_EVIL); arp_handle_frame(arp_frame, 42);
+    arp_has(GW, got); CHECK(memcmp(got, MAC_A, 6) == 0, "a who-has-us REQUEST cannot overwrite a resolved entry either");
+
+    /* a request that asks about US: we answer, and learn the asker in a free slot */
+    int fr = sent_frames;
+    build_arp(1, MAC_EVIL, H1, (u8 *)"\0\0\0\0\0\0", MY_IP, MAC_EVIL); arp_handle_frame(arp_frame, 42);
+    CHECK(sent_frames == fr + 1, "who-has-us request is answered");
+    CHECK(arp_has(H1, got) && memcmp(got, MAC_EVIL, 6) == 0, "asker is learned into a free slot");
+    /* a request about somebody else teaches us nothing (the old code learned from every packet) */
+    fr = sent_frames;
+    build_arp(1, MAC_EVIL, 0x0A000299u, (u8 *)"\0\0\0\0\0\0", 0x0A000298u, MAC_EVIL); arp_handle_frame(arp_frame, 42);
+    CHECK(!arp_has(0x0A000299u, got) && sent_frames == fr, "a request for another host is not learned from and not answered");
+    /* someone claiming OUR address */
+    build_arp(2, MAC_EVIL, MY_IP, nic.mac, MY_IP, MAC_EVIL); arp_handle_frame(arp_frame, 42);
+    CHECK(!arp_has(MY_IP, got), "a packet claiming our own IP is ignored");
+
+    /* a lost request must not block resolution forever */
+    net_setup(); arp_put(GW, 0); arp_send_request(MY_IP, GW);
+    CHECK(arp_is_pending(GW), "pending right after the request");
+    net_ticks += ARP_PENDING_TIMEOUT_TICKS + 5;
+    CHECK(!arp_is_pending(GW), "pending expires after ARP_PENDING_TIMEOUT_TICKS (so ip_send asks again)");
+    fr = sent_frames; { u8 b[8] = {0}; ip_send(GW, IP_PROTO_TCP, b, 8); }
+    CHECK(sent_frames == fr + 1 && arp_is_pending(GW), "ip_send re-issues the who-has once the old one expired");
+    /* a LATE genuine reply is still honored */
+    net_ticks += ARP_PENDING_TIMEOUT_TICKS + 5;
+    build_arp(2, MAC_A, GW, nic.mac, MY_IP, MAC_A); arp_handle_frame(arp_frame, 42);
+    CHECK(arp_has(GW, got), "a late reply to our (expired) request still resolves it");
+}
+
+/* ------------------------------------------------------------------ G-05 */
+static u8 dnsp[512]; static u16 dnsl;
+static void dns_begin(u16 id, u16 flags, const char *qname, u16 qtype, u16 qclass, int qd, int an) {
+    memset(dnsp, 0, sizeof dnsp);
+    dnsp[0] = id >> 8; dnsp[1] = (u8)id; dnsp[2] = flags >> 8; dnsp[3] = (u8)flags;
+    dnsp[4] = 0; dnsp[5] = (u8)qd; dnsp[6] = 0; dnsp[7] = (u8)an;
+    dnsl = 12;
+    if (qd) {
+        const char *p = qname;
+        while (*p) { const char *d = p; while (*d && *d != '.') d++; dnsp[dnsl++] = (u8)(d - p); memcpy(dnsp + dnsl, p, d - p); dnsl += (u16)(d - p); p = *d ? d + 1 : d; }
+        dnsp[dnsl++] = 0;
+        dnsp[dnsl++] = qtype >> 8; dnsp[dnsl++] = (u8)qtype; dnsp[dnsl++] = qclass >> 8; dnsp[dnsl++] = (u8)qclass;
+    }
+}
+static void dns_rr(const u8 *owner, u16 olen, u16 type, const u8 *rdata, u16 rlen) {
+    memcpy(dnsp + dnsl, owner, olen); dnsl += olen;
+    dnsp[dnsl++] = type >> 8; dnsp[dnsl++] = (u8)type; dnsp[dnsl++] = 0; dnsp[dnsl++] = 1;
+    dnsp[dnsl++] = 0; dnsp[dnsl++] = 0; dnsp[dnsl++] = 1; dnsp[dnsl++] = 0x2C;
+    dnsp[dnsl++] = rlen >> 8; dnsp[dnsl++] = (u8)rlen; memcpy(dnsp + dnsl, rdata, rlen); dnsl += rlen;
+}
+static void dns_new(void) { net_setup(); net_cfg.dns_ip = 0x0A000203u; arp_put(0x0A000203u, 1); dns_resolve("www.example.com"); }
+static void test_dns(void) {
+    const u32 SRV = 0x0A000203u; const u8 ptr_q[2] = { 0xC0, 0x0C }; const u8 ip1[4] = { 93, 184, 216, 34 };
+    u16 id;
+
+    dns_new(); id = dns_client.query_id;
+    dns_begin(id, 0x8180, "www.example.com", 1, 1, 1, 1); dns_rr(ptr_q, 2, 1, ip1, 4);
+    dns_handle_reply(SRV, 53, dnsp, dnsl);
+    CHECK(dns_client.state == DNS_RESOLVED && dns_client.result_ip == 0x5DB8D822u, "a well-formed answer resolves (ip %08X)", dns_client.result_ip);
+
+    dns_new(); id = dns_client.query_id;
+    dns_begin(id, 0x8180, "WWW.Example.COM", 1, 1, 1, 1); dns_rr(ptr_q, 2, 1, ip1, 4); dns_handle_reply(SRV, 53, dnsp, dnsl);
+    CHECK(dns_client.state == DNS_RESOLVED, "name comparison is case-insensitive");
+
+    dns_new(); id = dns_client.query_id;
+    dns_begin(id, 0x8180, "www.example.com", 1, 1, 1, 1); dns_rr(ptr_q, 2, 1, ip1, 4);
+    dns_handle_reply(SRV, 5353, dnsp, dnsl);
+    CHECK(dns_client.state == DNS_QUERYING, "answer from source port != 53 is ignored");
+    dns_begin(id, 0x0180, "www.example.com", 1, 1, 1, 1); dns_rr(ptr_q, 2, 1, ip1, 4); dns_handle_reply(SRV, 53, dnsp, dnsl);
+    CHECK(dns_client.state == DNS_QUERYING, "a packet with QR=0 (a query, not a response) is ignored");
+    dns_begin(id, 0x8180, "evil.example.org", 1, 1, 1, 1); { u8 ev[2] = {0xC0, 0x0C}; dns_rr(ev, 2, 1, ip1, 4); } dns_handle_reply(SRV, 53, dnsp, dnsl);
+    CHECK(dns_client.state == DNS_QUERYING, "right ID but the echoed question is a different name => ignored");
+    dns_begin(id, 0x8180, "www.example.com", 28, 1, 1, 1); dns_rr(ptr_q, 2, 1, ip1, 4); dns_handle_reply(SRV, 53, dnsp, dnsl);
+    CHECK(dns_client.state == DNS_QUERYING, "echoed QTYPE != A => ignored");
+    dns_begin(id, 0x8180, "www.example.com", 1, 3, 1, 1); dns_rr(ptr_q, 2, 1, ip1, 4); dns_handle_reply(SRV, 53, dnsp, dnsl);
+    CHECK(dns_client.state == DNS_QUERYING, "echoed QCLASS != IN => ignored");
+    dns_begin(id, 0x8180, "", 1, 1, 0, 1); { u8 o[2] = {0xC0, 0x0C}; dns_rr(o, 2, 1, ip1, 4); } dns_handle_reply(SRV, 53, dnsp, dnsl);
+    CHECK(dns_client.state == DNS_QUERYING, "NOERROR answer with no echoed question => ignored");
+    dns_begin(id, 0x8183, "", 1, 1, 0, 0); dns_handle_reply(SRV, 53, dnsp, dnsl);
+    CHECK(dns_client.state == DNS_QUERYING, "bare NXDOMAIN with no echoed question => ignored (cannot be used to deny service)");
+    dns_begin(id, 0x8183, "www.example.com", 1, 1, 1, 0); dns_handle_reply(SRV, 53, dnsp, dnsl);
+    CHECK(dns_client.state == DNS_FAILED, "NXDOMAIN that echoes our question still reports 'no such host'");
+
+    /* answers for a different owner name */
+    dns_new(); id = dns_client.query_id;
+    { u8 other[17] = { 3,'e','v','l', 3,'c','o','m', 0 }; dns_begin(id, 0x8180, "www.example.com", 1, 1, 1, 1); dns_rr(other, 9, 1, ip1, 4); }
+    dns_handle_reply(SRV, 53, dnsp, dnsl);
+    CHECK(dns_client.state == DNS_QUERYING && dns_client.result_ip == 0, "an A record owned by another name is not accepted (and does not end the lookup)");
+    { u8 other[9] = { 3,'e','v','l', 3,'c','o','m', 0 }; dns_begin(id, 0x8180, "www.example.com", 1, 1, 1, 2);
+      const u8 evil[4] = { 6, 6, 6, 6 }; dns_rr(other, 9, 1, evil, 4); dns_rr(ptr_q, 2, 1, ip1, 4); }
+    dns_handle_reply(SRV, 53, dnsp, dnsl);
+    CHECK(dns_client.state == DNS_RESOLVED && dns_client.result_ip == 0x5DB8D822u, "a foreign-owner record is skipped, the correctly-owned one is used");
+
+    /* CNAME chain: www.example.com -> cdn.example.net -> A */
+    dns_new(); id = dns_client.query_id;
+    { u8 target[] = { 3,'c','d','n', 7,'e','x','a','m','p','l','e', 3,'n','e','t', 0 };
+      dns_begin(id, 0x8180, "www.example.com", 1, 1, 1, 2); dns_rr(ptr_q, 2, 5, target, sizeof target);
+      u16 tgt_off = (u16)(dnsl - sizeof target);               /* where the CNAME target sits in the packet */
+      u8 own2[2] = { (u8)(0xC0 | (tgt_off >> 8)), (u8)tgt_off }; dns_rr(own2, 2, 1, ip1, 4); }
+    dns_handle_reply(SRV, 53, dnsp, dnsl);
+    CHECK(dns_client.state == DNS_RESOLVED && dns_client.result_ip == 0x5DB8D822u, "CNAME chain followed: A record owned by the CNAME target is accepted");
+    /* A record for the CNAME target's name WITHOUT the CNAME that links it to our question: foreign */
+    dns_new(); id = dns_client.query_id;
+    { u8 target[] = { 3,'c','d','n', 3,'n','e','t', 0 };
+      dns_begin(id, 0x8180, "www.example.com", 1, 1, 1, 1); dns_rr(target, sizeof target, 1, ip1, 4); }
+    dns_handle_reply(SRV, 53, dnsp, dnsl);
+    CHECK(dns_client.state == DNS_QUERYING, "an A record for an unrelated name (no CNAME linking it) is rejected");
+
+    /* malformed compression: a forward/self-referencing pointer in the owner name */
+    dns_new(); id = dns_client.query_id;
+    dns_begin(id, 0x8180, "www.example.com", 1, 1, 1, 1); { u16 self = dnsl; u8 loop[2] = { (u8)(0xC0 | (self >> 8)), (u8)self }; dns_rr(loop, 2, 1, ip1, 4); }
+    dns_handle_reply(SRV, 53, dnsp, dnsl);
+    CHECK(dns_client.state == DNS_QUERYING && dns_client.result_ip == 0, "a self-referencing compression pointer is rejected, not followed");
+}
+
+/* ------------------------------------------------------------------ G-10 / G-11 */
+static u8 dhp[400];
+static u16 build_dhcp(u8 op, u32 xid, const u8 *chaddr, u32 yiaddr, int msgtype, int sid, u32 server, u32 lease, int with_lease) {
+    memset(dhp, 0, sizeof dhp);
+    dhp[0] = op; dhp[1] = 1; dhp[2] = 6;
+    for (int i = 0; i < 4; i++) { dhp[4 + i] = xid >> (24 - 8 * i); dhp[16 + i] = yiaddr >> (24 - 8 * i); }
+    memcpy(dhp + 28, chaddr, 6);
+    u16 pos = 236; dhp[pos++] = 0x63; dhp[pos++] = 0x82; dhp[pos++] = 0x53; dhp[pos++] = 0x63;
+    dhp[pos++] = 53; dhp[pos++] = 1; dhp[pos++] = (u8)msgtype;
+    if (sid) { dhp[pos++] = 54; dhp[pos++] = 4; for (int i = 0; i < 4; i++) dhp[pos++] = server >> (24 - 8 * i); }
+    dhp[pos++] = 1; dhp[pos++] = 4; dhp[pos++] = 255; dhp[pos++] = 255; dhp[pos++] = 255; dhp[pos++] = 0;
+    dhp[pos++] = 3; dhp[pos++] = 4; dhp[pos++] = 10; dhp[pos++] = 0; dhp[pos++] = 2; dhp[pos++] = 2;
+    dhp[pos++] = 6; dhp[pos++] = 4; dhp[pos++] = 10; dhp[pos++] = 0; dhp[pos++] = 2; dhp[pos++] = 3;
+    if (with_lease) { dhp[pos++] = 51; dhp[pos++] = 4; for (int i = 0; i < 4; i++) dhp[pos++] = lease >> (24 - 8 * i); }
+    dhp[pos++] = 255;
+    return pos;
+}
+static void dhcp_poll_after(u32 secs) { fake_wall += secs; net_ticks += 100; dhcp_poll(); }
+static void test_dhcp(void) {
+    const u32 SRVIP = 0x0A000202u, YI = 0x0A00020Fu;
+    net_setup(); net_cfg.ready = 0; net_cfg.my_ip = 0; net_cfg.netmask = 0; net_cfg.gateway_ip = 0; net_cfg.dns_ip = 0;
+    dhcp_state = DHCP_STATE_IDLE; dhcp_started = 0; dhcp_lease_secs = 0;
+    udp_init(); dhcp_start();
+    CHECK(dhcp_state == DHCP_STATE_DISCOVER_SENT, "dhcp_start sends DISCOVER");
+    CHECK(dhcp_xid != 0x1234ABCDu, "the first conversation no longer uses the old constant xid");
+    u32 xids[64]; int distinct = 1;
+    for (int i = 0; i < 64; i++) { net_ticks += 7; xids[i] = dhcp_new_xid(); dhcp_xid = xids[i]; for (int k = 0; k < i; k++) if (xids[k] == xids[i]) distinct = 0; }
+    CHECK(distinct, "64 consecutive transaction ids are all different");
+    dhcp_xid = dhcp_new_xid(); u32 xid = dhcp_xid;
+    u16 n;
+
+    n = build_dhcp(2, xid, nic.mac, YI, 2, 1, SRVIP, 3600, 1);
+    dhcp_handle_reply(SRVIP, 68, dhp, n); CHECK(dhcp_state == DHCP_STATE_DISCOVER_SENT, "OFFER from source port 68 (not 67) is ignored");
+    n = build_dhcp(1, xid, nic.mac, YI, 2, 1, SRVIP, 3600, 1);
+    dhcp_handle_reply(SRVIP, 67, dhp, n); CHECK(dhcp_state == DHCP_STATE_DISCOVER_SENT, "a BOOTREQUEST (op=1) is not accepted as a reply");
+    n = build_dhcp(2, xid + 1, nic.mac, YI, 2, 1, SRVIP, 3600, 1);
+    dhcp_handle_reply(SRVIP, 67, dhp, n); CHECK(dhcp_state == DHCP_STATE_DISCOVER_SENT, "wrong xid is ignored");
+    n = build_dhcp(2, xid, MAC_EVIL, YI, 2, 1, SRVIP, 3600, 1);
+    dhcp_handle_reply(SRVIP, 67, dhp, n); CHECK(dhcp_state == DHCP_STATE_DISCOVER_SENT, "a reply for another client's MAC (chaddr) is ignored");
+    n = build_dhcp(2, xid, nic.mac, 0, 2, 1, SRVIP, 3600, 1);
+    dhcp_handle_reply(SRVIP, 67, dhp, n); CHECK(dhcp_state == DHCP_STATE_DISCOVER_SENT, "an OFFER of 0.0.0.0 is ignored");
+    n = build_dhcp(2, xid, nic.mac, YI, 2, 1, SRVIP, 3600, 1);
+    dhcp_handle_reply(SRVIP, 67, dhp, n);
+    CHECK(dhcp_state == DHCP_STATE_REQUEST_SENT && dhcp_offered_ip == YI && dhcp_server_id == SRVIP, "a valid OFFER is accepted and answered with a REQUEST");
+
+    /* ACK validation */
+    n = build_dhcp(2, xid, nic.mac, YI, 5, 1, 0x0A0002FEu, 3600, 1);
+    dhcp_handle_reply(0x0A0002FEu, 67, dhp, n); CHECK(dhcp_state == DHCP_STATE_REQUEST_SENT && !net_cfg.ready, "ACK from a different server than the one we asked is ignored");
+    n = build_dhcp(2, xid, nic.mac, YI + 1, 5, 1, SRVIP, 3600, 1);
+    dhcp_handle_reply(SRVIP, 67, dhp, n); CHECK(dhcp_state == DHCP_STATE_REQUEST_SENT && !net_cfg.ready, "ACK granting a different address than we requested is ignored");
+    n = build_dhcp(2, xid, nic.mac, YI, 6, 1, 0x0A0002FEu, 0, 0);
+    dhcp_handle_reply(0x0A0002FEu, 67, dhp, n); CHECK(dhcp_state == DHCP_STATE_REQUEST_SENT, "a NAK from a server we are not talking to is ignored");
+    n = build_dhcp(2, xid, nic.mac, YI, 5, 1, SRVIP, 1000, 1);
+    dhcp_handle_reply(SRVIP, 67, dhp, n);
+    CHECK(dhcp_state == DHCP_STATE_BOUND && net_cfg.ready && net_cfg.my_ip == YI && net_cfg.gateway_ip == 0x0A000202u && net_cfg.dns_ip == 0x0A000203u, "a valid ACK binds");
+    CHECK(dhcp_lease_secs == 1000, "the lease time (option 51) is kept (got %u)", dhcp_lease_secs);
+
+    /* a NAK while BOUND must not knock us off the network */
+    n = build_dhcp(2, dhcp_xid, nic.mac, 0, 6, 1, SRVIP, 0, 0);
+    dhcp_handle_reply(SRVIP, 67, dhp, n); CHECK(dhcp_state == DHCP_STATE_BOUND && net_cfg.ready, "a NAK while BOUND is ignored");
+
+    /* lease lifecycle: T1 = 500, T2 = 875, expiry = 1000 */
+    dhcp_poll_after(300); CHECK(dhcp_state == DHCP_STATE_BOUND, "before T1: still BOUND");
+    dhcp_poll_after(250);
+    CHECK(dhcp_state == DHCP_STATE_RENEWING, "at T1 (half the lease) the client starts RENEWING");
+    u32 renew_xid = dhcp_xid; CHECK(renew_xid != xid, "a renewal uses a fresh xid");
+    n = build_dhcp(2, renew_xid, nic.mac, YI, 5, 1, SRVIP, 1000, 1);
+    dhcp_handle_reply(SRVIP, 67, dhp, n);
+    CHECK(dhcp_state == DHCP_STATE_BOUND && dhcp_lease_age == 0 && net_cfg.my_ip == YI, "an ACK to the renewal extends the lease (age reset)");
+    dhcp_poll_after(520); CHECK(dhcp_state == DHCP_STATE_RENEWING, "renewing again at the next T1");
+    dhcp_poll_after(360); CHECK(dhcp_state == DHCP_STATE_REBINDING, "at T2 (7/8 of the lease) the client starts REBINDING");
+    CHECK(net_cfg.ready, "...still holding the address while it rebinds");
+    dhcp_poll_after(130);
+    CHECK(dhcp_state == DHCP_STATE_IDLE && !net_cfg.ready && net_cfg.my_ip == 0 && net_cfg.gateway_ip == 0 && net_cfg.dns_ip == 0,
+          "when the lease runs out the address, gateway and DNS are dropped (state %d)", (int)dhcp_state);
+    { u8 b[8] = {0}; CHECK(ip_send(PEER_IP, IP_PROTO_TCP, b, 8) == IP_SEND_FAILED, "...so nothing is sent from the expired address"); }
+
+    /* renewal refused */
+    net_setup(); net_cfg.ready = 0; dhcp_state = DHCP_STATE_IDLE; dhcp_started = 1;
+    dhcp_xid = dhcp_new_xid(); dhcp_send_discover(); xid = dhcp_xid;
+    n = build_dhcp(2, xid, nic.mac, YI, 2, 1, SRVIP, 200, 1); dhcp_handle_reply(SRVIP, 67, dhp, n);
+    n = build_dhcp(2, xid, nic.mac, YI, 5, 1, SRVIP, 200, 1); dhcp_handle_reply(SRVIP, 67, dhp, n);
+    CHECK(dhcp_state == DHCP_STATE_BOUND, "(setup) bound with a 200s lease");
+    dhcp_poll_after(110); CHECK(dhcp_state == DHCP_STATE_RENEWING, "(setup) renewing");
+    n = build_dhcp(2, dhcp_xid, nic.mac, 0, 6, 1, SRVIP, 0, 0); dhcp_handle_reply(SRVIP, 67, dhp, n);
+    CHECK(dhcp_state == DHCP_STATE_IDLE && !net_cfg.ready, "a NAK to a renewal drops the lease");
+
+    /* lease clock across midnight, and an infinite lease */
+    net_setup(); net_cfg.ready = 0; dhcp_state = DHCP_STATE_IDLE; dhcp_started = 1;
+    fake_wall = 86350; dhcp_xid = dhcp_new_xid(); dhcp_send_discover(); xid = dhcp_xid;
+    n = build_dhcp(2, xid, nic.mac, YI, 2, 1, SRVIP, 100, 1); dhcp_handle_reply(SRVIP, 67, dhp, n);
+    n = build_dhcp(2, xid, nic.mac, YI, 5, 1, SRVIP, 100, 1); dhcp_handle_reply(SRVIP, 67, dhp, n);
+    dhcp_poll_after(30); CHECK(dhcp_state == DHCP_STATE_BOUND, "(midnight) 30s into a 100s lease");
+    dhcp_poll_after(30); CHECK(net_wall_seconds() < 3600 && dhcp_state == DHCP_STATE_RENEWING, "(midnight) T1 reached although the RTC reading wrapped past 24:00:00 (now %u s into the day)", net_wall_seconds());
+    net_setup(); net_cfg.ready = 0; dhcp_state = DHCP_STATE_IDLE; dhcp_started = 1;
+    dhcp_xid = dhcp_new_xid(); dhcp_send_discover(); xid = dhcp_xid;
+    n = build_dhcp(2, xid, nic.mac, YI, 2, 1, SRVIP, 0xFFFFFFFFu, 1); dhcp_handle_reply(SRVIP, 67, dhp, n);
+    n = build_dhcp(2, xid, nic.mac, YI, 5, 1, SRVIP, 0xFFFFFFFFu, 1); dhcp_handle_reply(SRVIP, 67, dhp, n);
+    dhcp_poll_after(5000); dhcp_poll_after(5000);
+    CHECK(dhcp_state == DHCP_STATE_BOUND && net_cfg.ready, "an infinite lease never expires");
+}
+
+/* ------------------------------------------------------------------ G-06 / G-08 */
+static u8 shb[300];
+static u16 build_sh(u16 version, u8 sid_len, u16 suite, u8 comp, int ext_mode) {   /* ext_mode: 0 none, 1 valid reneg-info, 2 total-length mismatch, 3 truncated entry */
+    memset(shb, 0, sizeof shb);
+    u16 p = 0; shb[p++] = version >> 8; shb[p++] = (u8)version;
+    for (int i = 0; i < 32; i++) shb[p++] = (u8)(0x40 + i);
+    shb[p++] = sid_len; for (int i = 0; i < sid_len; i++) shb[p++] = (u8)i;
+    shb[p++] = suite >> 8; shb[p++] = (u8)suite; shb[p++] = comp;
+    if (ext_mode == 1) { shb[p++] = 0; shb[p++] = 5; shb[p++] = 0xFF; shb[p++] = 0x01; shb[p++] = 0; shb[p++] = 1; shb[p++] = 0; }
+    if (ext_mode == 2) { shb[p++] = 0; shb[p++] = 9; shb[p++] = 0xFF; shb[p++] = 0x01; shb[p++] = 0; shb[p++] = 1; shb[p++] = 0; }
+    if (ext_mode == 3) { shb[p++] = 0; shb[p++] = 6; shb[p++] = 0xFF; shb[p++] = 0x01; shb[p++] = 0; shb[p++] = 9; shb[p++] = 0; shb[p++] = 0; }
+    return p;
+}
+static void tls_reset(void) { memset(&tls_conn, 0, sizeof tls_conn); tls_conn.state = TLS_CLIENT_HELLO_SENT; }
+static void feed_header(u8 type, u8 vmaj, u8 vmin, u16 rec_len) {
+    tls_reset();
+    TLS_RX_RAW[0] = type; TLS_RX_RAW[1] = vmaj; TLS_RX_RAW[2] = vmin; TLS_RX_RAW[3] = rec_len >> 8; TLS_RX_RAW[4] = (u8)rec_len;
+    tls_conn.rx_raw_len = 5;
+    tls_process_raw_buffer(0);
+}
+static void test_tls(void) {
+    /* record headers (G-08): judged as soon as the 5 header bytes are in */
+    feed_header(22, 3, 3, 0xFFFF);
+    CHECK(tls_conn.state == TLS_FAILED && tls_conn.fail_reason == TLS_FAIL_BAD_RECORD, "a record declaring 65535 bytes fails at once (it used to wait for bytes that can never fit)");
+    feed_header(23, 3, 3, TLS_MAX_RECORD_CIPHERTEXT + 1);
+    CHECK(tls_conn.state == TLS_FAILED && tls_conn.fail_reason == TLS_FAIL_BAD_RECORD, "a record one byte over the RFC 5246 ciphertext limit fails");
+    feed_header(23, 3, 3, TLS_MAX_RECORD_CIPHERTEXT);
+    CHECK(tls_conn.state == TLS_CLIENT_HELLO_SENT, "a record of exactly the maximum legal size is waited for, not rejected");
+    feed_header(99, 3, 3, 100);
+    CHECK(tls_conn.state == TLS_FAILED && tls_conn.fail_reason == TLS_FAIL_BAD_RECORD, "unknown content type fails");
+    feed_header(19, 3, 3, 100);
+    CHECK(tls_conn.state == TLS_FAILED, "content type 19 (below change_cipher_spec) fails");
+    feed_header(24, 3, 3, 100);
+    CHECK(tls_conn.state == TLS_FAILED, "content type 24 (above application_data) fails");
+    feed_header(22, 2, 0, 100);
+    CHECK(tls_conn.state == TLS_FAILED && tls_conn.fail_reason == TLS_FAIL_BAD_RECORD, "record version 2.0 fails");
+    feed_header(22, 3, 4, 100);
+    CHECK(tls_conn.state == TLS_FAILED, "record version 3.4 fails");
+    feed_header(22, 3, 1, 100);
+    CHECK(tls_conn.state == TLS_CLIENT_HELLO_SENT, "record version 3.1 (legal legacy value on the first records) is accepted");
+    feed_header(22, 3, 3, 100);
+    CHECK(tls_conn.state == TLS_CLIENT_HELLO_SENT && tls_conn.rx_raw_len == 5, "a plausible header with an incomplete body just waits");
+
+    /* ServerHello (G-06) */
+    u16 n; const u16 GOOD = TLS_SUITE_ECDHE_RSA_AES128_GCM_SHA256;
+    tls_reset(); n = build_sh(0x0303, 0, GOOD, 0, 0);
+    CHECK(tls_parse_server_hello(shb, n) == 1 && tls_conn.cipher_suite == GOOD, "a plain TLS 1.2 ServerHello with no extensions parses");
+    tls_reset(); n = build_sh(0x0303, 32, GOOD, 0, 1);
+    CHECK(tls_parse_server_hello(shb, n) == 1, "32-byte session id + a well-formed renegotiation_info extension parses");
+    const u16 bad_versions[] = { 0x0302, 0x0301, 0x0300, 0x0304, 0x0200, 0xFEFF };
+    for (unsigned k = 0; k < sizeof bad_versions / sizeof bad_versions[0]; k++) {
+        tls_reset(); n = build_sh(bad_versions[k], 0, GOOD, 0, 0);
+        CHECK(tls_parse_server_hello(shb, n) == 0 && tls_conn.fail_reason == TLS_FAIL_PROTOCOL_VERSION, "ServerHello version 0x%04X is rejected", bad_versions[k]);
+    }
+    tls_reset(); n = build_sh(0x0303, 0, 0x1301, 0, 0);
+    CHECK(tls_parse_server_hello(shb, n) == 0 && tls_conn.fail_reason == TLS_FAIL_UNSUPPORTED_CIPHER_SUITE, "a suite we did not offer (a TLS 1.3 suite) is rejected");
+    tls_reset(); n = build_sh(0x0303, 0, 0x002F, 0, 0);
+    CHECK(tls_parse_server_hello(shb, n) == 0, "TLS_RSA_WITH_AES_128_CBC_SHA (never offered) is rejected");
+    tls_reset(); n = build_sh(0x0303, 33, GOOD, 0, 0);
+    CHECK(tls_parse_server_hello(shb, n) == 0, "session id longer than 32 bytes is rejected");
+    tls_reset(); n = build_sh(0x0303, 0, GOOD, 1, 0);
+    CHECK(tls_parse_server_hello(shb, n) == 0, "a non-null compression method is rejected");
+    tls_reset(); n = build_sh(0x0303, 0, GOOD, 0, 2);
+    CHECK(tls_parse_server_hello(shb, n) == 0, "an extensions block whose declared length does not match the message is rejected");
+    tls_reset(); n = build_sh(0x0303, 0, GOOD, 0, 3);
+    CHECK(tls_parse_server_hello(shb, n) == 0, "an extension whose body runs past the end is rejected");
+    tls_reset(); n = build_sh(0x0303, 0, GOOD, 0, 0);
+    CHECK(tls_parse_server_hello(shb, (u32)(n - 1)) == 0, "a ServerHello cut off before the compression byte is rejected");
+    tls_reset();
+    CHECK(tls_parse_server_hello(shb, 10) == 0, "a ServerHello shorter than its fixed part is rejected");
 }
 
 int main(void) {
@@ -409,6 +792,11 @@ int main(void) {
     test_tcp_synack();
     test_rx_checksums();
     test_send_failures();
+    test_rst();
+    test_arp();
+    test_dns();
+    test_dhcp();
+    test_tls();
 
     printf("%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
