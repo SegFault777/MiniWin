@@ -172,7 +172,8 @@ static void term_cmd_read(const char *arg) {
     if (!fs_check_slot(slot, &len)) { term_print("  that slot is empty"); return; }
 
     static u8 buf[FS_MAX_FILE_BYTES];
-    u32 got = fs_load_slot(slot, buf, sizeof(buf));
+    u32 got = 0;
+    if (!fs_read_slot(slot, (char *)buf, sizeof(buf), &got)) { term_print("  read error: the file is damaged"); return; }
     char line[TERM_COLS + 1]; u32 l = 0;
     for (u32 i = 0; i < got; i++) {
         if (buf[i] == '\n' || l >= TERM_COLS) {

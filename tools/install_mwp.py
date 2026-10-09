@@ -23,6 +23,7 @@ Usage: tools/install_mwp.py build/os-image.img 0 GREETER.MWP build/greeter.mwp
 """
 import struct
 import sys
+import zlib
 
 SECTOR = 512
 PROG_MAGIC = 0x50575732  # must match kernel/fs.h's PROG_MAGIC exactly
@@ -33,7 +34,7 @@ def read_define(path, name):
         for line in f:
             parts = line.split()
             if len(parts) >= 3 and parts[0] == "#define" and parts[1] == name:
-                return int(parts[2])
+                return int(parts[2].rstrip("uU"), 0)   # accepts 0x... and C's trailing u suffix
     sys.exit(f"couldn't find #define {name} in {path}")
 
 
@@ -72,6 +73,15 @@ def main():
     header = struct.pack("<III", PROG_MAGIC, len(data), entry_offset)
     header += name.encode().ljust(name_maxlen, b"\0")
     header = header.ljust(SECTOR, b"\0")
+    # rc-4 commit record, same as fs.h's fs_hdr_set_commit(): CRC-32 of the program bytes at +504 and the
+    # marker at +508, so the kernel verifies this program on load exactly like one it saved itself.
+    crc_off = read_define("kernel/fs.h", "FS_HDR_CRC_OFF")
+    commit_off = read_define("kernel/fs.h", "FS_HDR_COMMIT_OFF")
+    commit_magic = read_define("kernel/fs.h", "FS_COMMIT_MAGIC")
+    header = bytearray(header)
+    struct.pack_into("<I", header, crc_off, zlib.crc32(data) & 0xFFFFFFFF)
+    struct.pack_into("<I", header, commit_off, commit_magic)
+    header = bytes(header)
 
     with open(image_path, "r+b") as img:
         img.seek(header_lba * SECTOR)

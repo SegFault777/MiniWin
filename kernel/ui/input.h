@@ -359,7 +359,7 @@ static void handle_mouse(void) {
                             active_np->file_menu_open = 0;
                         } else if (file_menu_item_hit(mx, my, 1)) {
                             int saved_slot = save_current_document();
-                            status = saved_slot >= 0 ? format_saved_status(saved_slot) : t(STR_STORAGE_FULL_NOT_SAVED);
+                            status = saved_slot >= 0 ? format_saved_status(saved_slot) : save_error_status(saved_slot);
                             active_np->file_menu_open = 0;
                         } else if (file_menu_item_hit(mx, my, 2)) {
                             active_np->confirm_mode = CONFIRM_NEW;
@@ -463,8 +463,16 @@ static void handle_mouse(void) {
                                 if (free_slot < 0) {
                                     status = t(STR_ALL_NOTEPAD_WINDOWS_OPEN);
                                 } else {
+                                    /* Read BEFORE committing to opening the window: a damaged file (CRC mismatch,
+                                     * unreadable sector, longer than the buffer) used to open as silently truncated or
+                                     * empty text, and the next Save would overwrite the original with that. */
+                                    u32 loaded = 0;
+                                    if (!fs_read_slot(slot, notepads[free_slot].text_buf, sizeof(notepads[free_slot].text_buf) - 1, &loaded)) {
+                                        status = t(STR_FILE_DAMAGED);
+                                        awaiting_second_click_file_slot = -1;
+                                        break;
+                                    }
                                     active_np = &notepads[free_slot];
-                                    u32 loaded = fs_load_slot(slot, active_np->text_buf, sizeof(active_np->text_buf) - 1);
                                     active_np->text_buf[loaded] = 0;
                                     active_np->text_len = loaded;
                                     active_np->bound_slot = slot;
@@ -661,7 +669,7 @@ static void handle_keyboard(void) {
             if (ko_ime_is_composing()) ko_ime_commit(active_np->text_buf, &active_np->text_len, sizeof(active_np->text_buf));
             if (c == 's' || c == 'S') {
                 int saved_slot = save_current_document();
-                status = saved_slot >= 0 ? format_saved_status(saved_slot) : t(STR_STORAGE_FULL_NOT_SAVED);
+                status = saved_slot >= 0 ? format_saved_status(saved_slot) : save_error_status(saved_slot);
             } else if (c == 'n' || c == 'N') {
                 active_np->confirm_mode = CONFIRM_NEW;
                 beep_warning();

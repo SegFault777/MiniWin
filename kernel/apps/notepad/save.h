@@ -23,18 +23,35 @@ static const char *format_saved_status(int slot) {
     return status_buf;
 }
 
+#define SAVE_ERR_FULL   (-1)   /* all FS_MAX_FILES slots are occupied */
+#define SAVE_ERR_WRITE  (-2)   /* the save itself failed: disk error, or the text is bigger than a file can be */
+
+/* The status-bar text for a failed save_current_document(): "disk full" and "the write failed" are different
+ * problems and used to share one (misleading) message. */
+static const char *save_error_status(int code) {
+    return code == SAVE_ERR_WRITE ? t(STR_SAVE_FAILED) : t(STR_STORAGE_FULL_NOT_SAVED);
+}
+
 /* Saves active_np->text_buf/active_np->text_len to the slot the current document is bound to,
  * or to the first empty slot if unbound (and binds to it, so subsequent
  * saves of the same still-open document update that slot instead of
- * creating a new file each time). Returns the slot saved to, or -1 if
- * all FS_MAX_FILES slots are already occupied ("disk full"). */
+ * creating a new file each time). Returns the slot saved to, SAVE_ERR_FULL if
+ * all FS_MAX_FILES slots are already occupied ("disk full"), or SAVE_ERR_WRITE if
+ * the write did not succeed (the document stays open and unsaved -- see confirm_yes_action()). */
 static int save_current_document(void) {
     int slot = active_np->bound_slot;
     if (slot < 0) {
         slot = fs_find_empty_slot();
-        if (slot < 0) return -1;
+        if (slot < 0) return SAVE_ERR_FULL;
     }
-    if (!fs_save_slot(slot, active_np->text_buf, active_np->text_len)) return -1;
+    if (!fs_save_slot(slot, active_np->text_buf, active_np->text_len)) {
+        /* Whatever the failed save left behind (the old file, or a journal that recovery has since
+         * completed), the desktop icon must match what is really on disk. */
+        u32 l = 0;
+        desktop_file_exists[slot] = fs_check_slot(slot, &l) ? 1 : 0;
+        desktop_file_len[slot] = l;
+        return SAVE_ERR_WRITE;
+    }
     desktop_file_exists[slot] = 1;
     desktop_file_len[slot] = active_np->text_len;
     active_np->bound_slot = slot;
@@ -67,9 +84,16 @@ static int find_notepad_bound_to(int fs_slot) {
  * depends on why the dialog was opened (active_np->confirm_mode). */
 static void confirm_yes_action(void) {
     int saved_slot = save_current_document();
+    if (saved_slot == SAVE_ERR_WRITE) {
+        /* The text could not be written. "Yes, save it, then close/clear" must NOT go on to close/clear:
+         * that would throw away the only copy. Keep the window and the text, say what happened. */
+        status = t(STR_SAVE_FAILED);
+        active_np->confirm_mode = CONFIRM_NONE;
+        return;
+    }
     if (active_np->confirm_mode == CONFIRM_NEW) {
         active_np->text_len = 0; active_np->text_buf[0] = 0; active_np->bound_slot = -1; ko_ime_reset();
-        status = saved_slot >= 0 ? format_saved_status(saved_slot) : t(STR_STORAGE_FULL_NOT_SAVED);
+        status = saved_slot >= 0 ? format_saved_status(saved_slot) : save_error_status(saved_slot);
     } else if (active_np->confirm_mode == CONFIRM_CLOSE) {
         active_np->win.open = 0;
         active_np->win.minimized = 0;
