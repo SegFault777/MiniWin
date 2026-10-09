@@ -71,6 +71,11 @@ static inline int ip_parse(const u8 *data, u16 len, ip_packet_t *pkt) {
     u8 ihl_words = data[0] & 0x0F;
     u16 ihl_bytes = (u16)(ihl_words * 4);
     if (ihl_bytes < IP_HDR_LEN || ihl_bytes > len) return 0;
+    /* The header checksum: summing the whole header INCLUDING the checksum field must come out to
+     * all-ones (net_checksum() == 0). A header mangled on the wire -- or forged by someone who
+     * didn't bother -- used to be believed. (Frames that arrive with this wrong are dropped here, so
+     * every protocol above -- ICMP, UDP/DHCP/DNS, TCP -- only ever sees headers that verified.) */
+    if (net_checksum(data, ihl_bytes) != 0) return 0;
 
     pkt->version_ihl = data[0];
     pkt->proto = data[9];
@@ -130,8 +135,15 @@ static inline u32 ip_next_hop(u32 dst_ip) {
     return net_cfg.gateway_ip;       /* somewhere else -- that's the gateway's problem */
 }
 
+/* What ip_send() tells its caller. The old contract was a bare 0/1 where 0 meant BOTH "parked
+ * behind an ARP lookup, it will go out in a moment" AND "could not be sent at all", so TCP could not
+ * tell a healthy-but-waiting segment from one that was never going anywhere. */
+#define IP_SEND_FAILED  0   /* not sent and not queued: no NIC / no address / too big / the NIC refused it */
+#define IP_SEND_SENT    1   /* handed to the NIC and the NIC accepted it */
+#define IP_SEND_QUEUED  2   /* next hop's MAC unknown: ARP asked, packet parked, ip_flush_pending() will send it */
+
 /* The actual wire-writing half: called only once we already know the
- * destination MAC, no ARP guesswork left to do. */
+ * destination MAC, no ARP guesswork left to do. Returns IP_SEND_SENT or IP_SEND_FAILED. */
 static inline int ip_send_now(u32 dst_ip, u8 proto, const u8 *payload, u16 payload_len, const u8 dst_mac[6]) {
     u8 frame[NET_BUF_SIZE];
     for (int i = 0; i < 6; i++) frame[i] = dst_mac[i];
@@ -142,7 +154,7 @@ static inline int ip_send_now(u32 dst_ip, u8 proto, const u8 *payload, u16 paylo
     for (u16 i = 0; i < payload_len; i++) frame[14 + IP_HDR_LEN + i] = payload[i];
 
     u16 total = (u16)(ETH_HDR_LEN + IP_HDR_LEN + payload_len);
-    return nic.send(frame, total);
+    return nic.send(frame, total) ? IP_SEND_SENT : IP_SEND_FAILED;   /* normalize: a driver's "1" is SENT, anything else FAILED */
 }
 
 /* Sends one IPv4 datagram. `payload` (already fully built, including
@@ -155,8 +167,10 @@ static inline int ip_send_now(u32 dst_ip, u8 proto, const u8 *payload, u16 paylo
  * the MAC resolves. Higher layers no longer need to notice any of this
  * happened -- one ip_send() call is now enough, ARP miss or not.
  *
- * Returns 1 if the frame made it to the NIC already, 0 if it's queued
- * (or truly undeliverable -- no NIC, no route, oversized). */
+ * Returns IP_SEND_SENT if the frame made it to the NIC, IP_SEND_QUEUED if it is parked waiting for
+ * ARP (it WILL go out unless a newer unresolved send takes the one-packet slot, which TCP's
+ * retransmit covers), and IP_SEND_FAILED if it is undeliverable right now: no NIC, no address yet,
+ * oversized, too big to park while ARP resolves, or the NIC rejected/timed out. */
 static inline int ip_send(u32 dst_ip, u8 proto, const u8 *payload, u16 payload_len) {
     /* Normally we refuse to send anything until DHCP has handed us a
      * real identity -- but DHCP itself has to send its DISCOVER (and
@@ -165,9 +179,9 @@ static inline int ip_send(u32 dst_ip, u8 proto, const u8 *payload, u16 payload_l
      * address yet is fine as long as the destination is broadcast,
      * because broadcast is the only address a nobody is allowed to
      * shout at. */
-    if (!nic.present) return 0;
-    if (!net_cfg.ready && dst_ip != NET_IP4_BROADCAST) return 0;
-    if (payload_len > ETH_MTU - IP_HDR_LEN) return 0; /* no fragmentation, see file header */
+    if (!nic.present) return IP_SEND_FAILED;
+    if (!net_cfg.ready && dst_ip != NET_IP4_BROADCAST) return IP_SEND_FAILED;
+    if (payload_len > ETH_MTU - IP_HDR_LEN) return IP_SEND_FAILED; /* no fragmentation, see file header */
 
     u32 next_hop = ip_next_hop(dst_ip);
     u8 dst_mac[6];
@@ -193,8 +207,9 @@ static inline int ip_send(u32 dst_ip, u8 proto, const u8 *payload, u16 payload_l
         ip_pending.proto = proto;
         for (u16 i = 0; i < payload_len; i++) ip_pending.payload[i] = payload[i];
         ip_pending.payload_len = payload_len;
+        return IP_SEND_QUEUED;
     }
-    return 0;
+    return IP_SEND_FAILED;   /* too big to park: ARP was requested, the caller must retry (TCP does) */
 }
 
 /* Called from the ARP layer whenever a reply resolves an address --

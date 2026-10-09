@@ -95,10 +95,17 @@ static int rtl8139_send(const u8 *frame, u16 len) {
      * doing several sends in a row doesn't outrun the hardware and
      * stomp a slot that's still in flight. This is a busy-wait like
      * everything else in this kernel, not a real timeout in seconds. */
+    u32 tsd = 0;
     for (u32 i = 0; i < 200000; i++) {
-        if (inl(rtl_io_base + RTL_TSD0 + (u16)(slot * 4)) & 0x8000) break;
+        tsd = inl(rtl_io_base + RTL_TSD0 + (u16)(slot * 4));
+        if (tsd & 0x8000) return 1;                     /* TOK: the card says it went out */
+        if (tsd & 0x40000000u) break;                   /* TABT: transmit aborted, no point waiting */
     }
-    return 1;
+    /* No TOK: the frame did NOT (verifiably) leave. This used to fall out of the loop and return 1
+     * anyway, so TCP booked a lost segment as sent. Report the failure; the slot is simply rewritten
+     * from scratch the next time the round-robin comes back to it (TSAD+TSD are set per send). */
+    serial_puts("[RTL8139] TX not completed, frame reported as failed\n");
+    return 0;
 }
 
 /* Puts the receiver back into a known state: ring empty, both pointers at the start. Used when the

@@ -141,15 +141,23 @@ static int e1000_send(const u8 *frame, u16 len) {
     e1000_tx_ring[slot].css = 0;
     e1000_tx_ring[slot].special = 0;
 
+    __asm__ volatile("" ::: "memory");   /* the descriptor stores above must all be done before the card is told to look at them */
     e1000_write32(E1000_REG_TDT, (slot + 1) % E1000_NUM_TX_DESC);
 
     /* Poll (bounded) for the card to mark this descriptor done, same
      * "don't trust a promise, wait for the receipt" approach as the
      * RTL8139 driver's send(). */
     for (u32 i = 0; i < 200000; i++) {
-        if (e1000_tx_ring[slot].status & E1000_TXD_STAT_DD) break;
+        /* volatile: the NIC writes this byte behind the compiler's back. Read through a plain lvalue,
+         * the compiler reuses the `status = 0` it stored a few lines up and never looks again -- the
+         * old loop could NEVER see DD, always burned all 200000 iterations, and only "worked" because
+         * it returned success regardless. */
+        if (*(volatile u8 *)&e1000_tx_ring[slot].status & E1000_TXD_STAT_DD) return 1;   /* descriptor done: it went out */
     }
-    return 1;
+    /* No DD bit: not (verifiably) transmitted. Used to return success regardless, so the layers above
+     * recorded a lost frame as sent. The descriptor is rebuilt from scratch on its next use. */
+    serial_puts("[E1000] TX not completed, frame reported as failed\n");
+    return 0;
 }
 
 static int e1000_recv(u8 *out, u16 max_len, u16 *out_len) {

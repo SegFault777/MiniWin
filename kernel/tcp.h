@@ -86,6 +86,8 @@
 #define TCP_SEND_BUF ((u8 *)MW_TCP_SEND_ADDR)
 
 #define TCP_MAX_RETRIES 5
+#define TCP_TX_FAIL_BACKOFF_TICKS 200   /* wait this long before offering a refused segment to the NIC again */
+#define TCP_MAX_TX_FAILS          20    /* ...and give the connection up after this many refusals in a row (~ the same total wait as the retransmit budget) */
 #define TCP_RETRANSMIT_TICKS 800   /* roughly a couple hundred main-loop
                                     * iterations' worth of patience --
                                     * see net_stack_tick() in net.h for
@@ -141,6 +143,13 @@ typedef struct {
     u32 retx_tick_sent;
     int retx_count;
 
+    /* Send FAILURES (ip_send() == IP_SEND_FAILED: no address, NIC refused/timed out, ...) are not
+     * retransmissions -- nothing reached the wire, so there is nothing to retransmit and no
+     * sequence space was used. They are retried on a gentle backoff and, if the transmit path stays
+     * dead, the connection is dropped instead of waiting forever on a segment that never left. */
+    int tx_fail_count;
+    u32 tx_next_tick;
+
     /* Inbound bytes: written at recv_len by tcp_handle_packet(), drained
      * from the front by tcp_poll_recv() -- which slides the rest down.
      * A ring buffer would dodge that copy; the copy is a few KB per
@@ -186,6 +195,10 @@ static inline u32 tcp_send_space(void) {
  * everything except a pure retransmit) do that themselves, since a
  * plain retransmit needs to resend the exact same bytes with the exact
  * same sequence number. A SYN additionally carries the MSS option. */
+/* Returns ip_send()'s verdict: IP_SEND_SENT, IP_SEND_QUEUED (parked behind ARP; it WILL go out) or
+ * IP_SEND_FAILED (it did not and will not leave on its own). Callers that advance snd_nxt / arm the
+ * retransmit timer do so only when this is not IP_SEND_FAILED -- recording a segment that never left
+ * as "in flight" is how the wire and the TCP state used to drift apart. */
 static inline int tcp_send_segment(u8 flags, const u8 *data, u16 data_len) {
     u8 seg[TCP_SYN_HDR_LEN + TCP_SEND_MSS];
     u16 hdr_len = (flags & TCP_FLAG_SYN) ? TCP_SYN_HDR_LEN : TCP_HDR_LEN_MIN;
@@ -266,6 +279,8 @@ static inline void tcp_connect(u32 remote_ip, u16 remote_port) {
     tcp_conn.peer_mss = TCP_MSS_DEFAULT;
     tcp_conn.peer_fin_seen = 0;
     tcp_clear_retransmit();
+    tcp_conn.tx_fail_count = 0;
+    tcp_conn.tx_next_tick = 0;
 
     serial_puts("[TCP] connecting to ");
     net_log_ip(remote_ip);
@@ -273,10 +288,30 @@ static inline void tcp_connect(u32 remote_ip, u16 remote_port) {
     serial_put_dec(remote_port);
     serial_putc('\n');
 
-    tcp_send_segment(TCP_FLAG_SYN, 0, 0);
+    if (tcp_send_segment(TCP_FLAG_SYN, 0, 0) == IP_SEND_FAILED) {
+        /* The SYN never left (no address yet, NIC refused it...). Don't pretend a handshake is in
+         * progress and sit in SYN_SENT until the retransmit budget runs out: fail now, the way the
+         * callers already handle a connection that closed on them (http.h/https.h see CLOSED). */
+        serial_puts("[TCP] SYN could not be sent, connect failed\n");
+        tcp_conn.state = TCP_CLOSED;
+        return;
+    }
     tcp_arm_retransmit(TCP_FLAG_SYN, 0);
     tcp_conn.snd_nxt++; /* SYN consumes one sequence number, per RFC 793 --
                          * yes, even though it carries no data */
+}
+
+/* Books one refused transmission: back off before the next try, and after TCP_MAX_TX_FAILS in a row
+ * conclude the transmit path is dead and drop the connection (callers see TCP_CLOSED and report it)
+ * instead of leaving the UI waiting on bytes that can never leave. */
+static inline void tcp_tx_refused(void) {
+    tcp_conn.tx_fail_count++;
+    tcp_conn.tx_next_tick = net_ticks + TCP_TX_FAIL_BACKOFF_TICKS;
+    if (tcp_conn.tx_fail_count >= TCP_MAX_TX_FAILS) {
+        serial_puts("[TCP] transmit path keeps failing, giving up\n");
+        tcp_conn.state = TCP_CLOSED;
+        tcp_clear_retransmit();
+    }
 }
 
 /* The send queue's engine: if nothing is in flight, cut the next
@@ -288,16 +323,27 @@ static inline void tcp_pump_send(void) {
     if (tcp_conn.state != TCP_ESTABLISHED) return;
     if (tcp_conn.retx_pending) return;          /* stop-and-wait: one at a time */
 
+    if (tcp_conn.send_len == 0 && !tcp_conn.fin_pending) return;
+    if (tcp_conn.tx_fail_count > 0 && net_ticks < tcp_conn.tx_next_tick) return;   /* backing off after a refusal */
+
     if (tcp_conn.send_len > 0) {
         u32 n = tcp_conn.send_len;
         u32 cap = tcp_conn.peer_mss < TCP_SEND_MSS ? tcp_conn.peer_mss : TCP_SEND_MSS;
         if (n > cap) n = cap;
-        tcp_send_segment(TCP_FLAG_ACK | TCP_FLAG_PSH, TCP_SEND_BUF, (u16)n);
+        if (tcp_send_segment(TCP_FLAG_ACK | TCP_FLAG_PSH, TCP_SEND_BUF, (u16)n) == IP_SEND_FAILED) {
+            tcp_tx_refused();      /* nothing left the host: no snd_nxt advance, no retransmit armed, bytes stay queued */
+            return;
+        }
+        tcp_conn.tx_fail_count = 0;
         tcp_arm_retransmit(TCP_FLAG_ACK | TCP_FLAG_PSH, (u16)n);
         tcp_conn.snd_nxt += n;
     } else if (tcp_conn.fin_pending) {
+        if (tcp_send_segment(TCP_FLAG_FIN | TCP_FLAG_ACK, 0, 0) == IP_SEND_FAILED) {
+            tcp_tx_refused();      /* fin_pending stays set: the FIN is offered again after the backoff */
+            return;
+        }
+        tcp_conn.tx_fail_count = 0;
         tcp_conn.fin_pending = 0;
-        tcp_send_segment(TCP_FLAG_FIN | TCP_FLAG_ACK, 0, 0);
         tcp_arm_retransmit(TCP_FLAG_FIN | TCP_FLAG_ACK, 0);
         tcp_conn.snd_nxt++; /* FIN also consumes a sequence number */
         tcp_conn.state = TCP_FIN_WAIT_1;

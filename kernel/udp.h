@@ -105,6 +105,22 @@ static inline void udp_handle_packet(const ip_packet_t *ip) {
     u16 udp_len  = net_get16_be(&ip->payload[4]);
     if (udp_len < UDP_HDR_LEN || udp_len > ip->payload_len) return;
 
+    /* Verify the checksum -- unless the sender left it 0, which over IPv4 explicitly means "I didn't
+     * compute one" (RFC 768) and is NOT an error. Otherwise the pseudo-header + datagram must fold to
+     * all-ones, exactly the way tcp_checksum_ok() does for TCP. A corrupted DNS answer or DHCP offer
+     * used to be parsed and believed. */
+    if (net_get16_be(&ip->payload[6]) != 0) {
+        u8 pseudo[12];
+        net_put32_be(&pseudo[0], ip->src_ip);
+        net_put32_be(&pseudo[4], ip->dst_ip);
+        pseudo[8] = 0;
+        pseudo[9] = IP_PROTO_UDP;
+        net_put16_be(&pseudo[10], udp_len);
+        u32 sum = net_checksum_add(0, pseudo, sizeof(pseudo));
+        sum = net_checksum_add(sum, ip->payload, udp_len);
+        if (net_checksum_finish(sum) != 0) return;   /* bad checksum: drop silently */
+    }
+
     const u8 *data = ip->payload + UDP_HDR_LEN;
     u16 data_len = (u16)(udp_len - UDP_HDR_LEN);
 
