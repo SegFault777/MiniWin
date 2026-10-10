@@ -101,11 +101,15 @@ static void web_go_url(void) {
         else kstrcpy(path, tail, sizeof(path));
         web_start_fetch(want_https, host, port, path);
     } else {
-        char encoded[200];
-        web_urlencode(web_urlbar_buf, encoded, sizeof(encoded));
+        char encoded[WEB_PATH_MAX];
         char path[WEB_PATH_MAX];
         kstrcpy(path, "/lite/?q=", sizeof(path));
         u32 path_len = 9; /* strlen("/lite/?q=") -- append_str() needs the current length */
+        /* the encoded text has to fit what is LEFT of the request path, not just its own buffer */
+        if (!web_urlencode(web_urlbar_buf, encoded, sizeof(path) - path_len)) {
+            status = t(STR_SEARCH_TOO_LONG);       /* never search for a cut-off phrase */
+            return;
+        }
         append_str(path, &path_len, sizeof(path), encoded);
         web_start_fetch(1, "lite.duckduckgo.com", 443, path);
     }

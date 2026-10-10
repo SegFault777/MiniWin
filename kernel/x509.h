@@ -50,6 +50,15 @@ static const u8 OID_CURVE_P256[]          = {0x2a,0x86,0x48,0xce,0x3d,0x03,0x01,
 static const u8 OID_CURVE_P384[]          = {0x2b,0x81,0x04,0x00,0x22};                /* secp384r1 */
 static const u8 OID_SUBJECT_ALT_NAME[]    = {0x55,0x1d,0x11};
 static const u8 OID_BASIC_CONSTRAINTS[]   = {0x55,0x1d,0x13};
+static const u8 OID_KEY_USAGE[]           = {0x55,0x1d,0x0f};
+/* Extensions this client PROCESSES (or can safely treat as processed): see x509_ext_understood(). */
+static const u8 OID_SUBJECT_KEY_ID[]      = {0x55,0x1d,0x0e};
+static const u8 OID_AUTHORITY_KEY_ID[]    = {0x55,0x1d,0x23};
+static const u8 OID_EXT_KEY_USAGE[]       = {0x55,0x1d,0x25};
+static const u8 OID_CERT_POLICIES[]       = {0x55,0x1d,0x20};
+static const u8 OID_POLICY_MAPPINGS[]     = {0x55,0x1d,0x21};
+static const u8 OID_POLICY_CONSTRAINTS[]  = {0x55,0x1d,0x24};
+static const u8 OID_INHIBIT_ANY_POLICY[]  = {0x55,0x1d,0x36};
 static const u8 OID_COMMON_NAME[]         = {0x55,0x04,0x03};
 
 #define X509_SIG_NONE      0
@@ -114,6 +123,11 @@ typedef struct {
                               * anything else and this cert can't be
                               * cryptographically verified by this
                               * client, full stop */
+
+    /* keyUsage / critical-extension bookkeeping (rc-5): see x509_parse_extensions() */
+    int has_key_usage;            /* a keyUsage extension is present... */
+    u16 key_usage;                /* ...and these are its bits, bit i = RFC 5280's i-th named bit (digitalSignature = bit 0) */
+    int has_unknown_critical;     /* a critical extension this client does not understand (or an extension block it could not read) */
 
     int is_ca;   /* basicConstraints CA:TRUE -- required for any cert
                  * used as an issuer partway up a chain; irrelevant for
@@ -211,24 +225,56 @@ static inline void x509_extract_cn(x509_cert_t *cert, const u8 *name_data, u32 n
  * parser. Extensions are OPTIONAL and only present in v3 certificates
  * -- effectively every certificate on the modern web, but this function
  * is simply never called for a cert that omits the block. */
+#define X509_KU_DIGITAL_SIGNATURE  (1u << 0)
+#define X509_KU_KEY_CERT_SIGN      (1u << 5)
+
+/* Extensions that may be marked CRITICAL without making the certificate unacceptable to this client:
+ *  - the ones it actually uses (basicConstraints, keyUsage, subjectAltName), plus subject/authority key
+ *    identifiers and extendedKeyUsage, which it reads or does not need;
+ *  - the policy extensions (certificatePolicies, policyMappings, policyConstraints, inhibitAnyPolicy). RFC 5280's
+ *    policy processing only has an effect when the relying party demands a specific policy
+ *    (initial-explicit-policy); this client demands none, so there is nothing to process and these are
+ *    satisfied trivially.
+ * Anything else marked critical -- nameConstraints (which this client does NOT enforce), CRL distribution
+ * points (revocation is not checked), the CT precertificate poison, a private OID -- means "do not accept
+ * this certificate unless you understand me" (RFC 5280 4.2), so the certificate is refused. */
+static inline int x509_ext_understood(const asn1_tlv_t *oid_t) {
+    return asn1_oid_equals(oid_t, OID_BASIC_CONSTRAINTS, sizeof(OID_BASIC_CONSTRAINTS)) ||
+           asn1_oid_equals(oid_t, OID_KEY_USAGE, sizeof(OID_KEY_USAGE)) ||
+           asn1_oid_equals(oid_t, OID_SUBJECT_ALT_NAME, sizeof(OID_SUBJECT_ALT_NAME)) ||
+           asn1_oid_equals(oid_t, OID_SUBJECT_KEY_ID, sizeof(OID_SUBJECT_KEY_ID)) ||
+           asn1_oid_equals(oid_t, OID_AUTHORITY_KEY_ID, sizeof(OID_AUTHORITY_KEY_ID)) ||
+           asn1_oid_equals(oid_t, OID_EXT_KEY_USAGE, sizeof(OID_EXT_KEY_USAGE)) ||
+           asn1_oid_equals(oid_t, OID_CERT_POLICIES, sizeof(OID_CERT_POLICIES)) ||
+           asn1_oid_equals(oid_t, OID_POLICY_MAPPINGS, sizeof(OID_POLICY_MAPPINGS)) ||
+           asn1_oid_equals(oid_t, OID_POLICY_CONSTRAINTS, sizeof(OID_POLICY_CONSTRAINTS)) ||
+           asn1_oid_equals(oid_t, OID_INHIBIT_ANY_POLICY, sizeof(OID_INHIBIT_ANY_POLICY));
+}
+
 static inline void x509_parse_extensions(x509_cert_t *cert, const u8 *ext_data, u32 ext_len) {
     const u8 *p = ext_data;
     u32 remaining = ext_len;
     while (remaining > 0) {
         asn1_tlv_t ext_seq;
-        if (!asn1_expect(p, remaining, ASN1_TAG_SEQUENCE, &ext_seq)) return;
+        /* An extensions block that cannot be read to the end is not "no extensions": a critical one could be
+         * hiding in the part we cannot see, so the certificate is treated as having an unknown critical
+         * extension (fail closed) instead of being silently accepted with the rest ignored. */
+        if (!asn1_expect(p, remaining, ASN1_TAG_SEQUENCE, &ext_seq)) { cert->has_unknown_critical = 1; return; }
 
         asn1_tlv_t oid_t;
-        if (!asn1_parse_tlv(ext_seq.value, ext_seq.len, &oid_t)) return;
+        if (!asn1_parse_tlv(ext_seq.value, ext_seq.len, &oid_t)) { cert->has_unknown_critical = 1; return; }
         const u8 *after_oid = oid_t.next;
         u32 after_oid_remaining = ext_seq.len - (u32)(oid_t.next - ext_seq.value);
 
         /* OPTIONAL critical BOOLEAN may come next -- skip it if present */
         asn1_tlv_t maybe_bool;
+        int critical = 0;
         if (asn1_parse_tlv(after_oid, after_oid_remaining, &maybe_bool) && maybe_bool.tag == 0x01) {
+            critical = maybe_bool.len > 0 && maybe_bool.value[0] != 0x00;
             after_oid_remaining -= (u32)(maybe_bool.next - after_oid);
             after_oid = maybe_bool.next;
         }
+        if (critical && !x509_ext_understood(&oid_t)) cert->has_unknown_critical = 1;
 
         /* extnValue OCTET STRING -- its *content* is itself another
          * DER-encoded value specific to the extension type */
@@ -237,6 +283,19 @@ static inline void x509_parse_extensions(x509_cert_t *cert, const u8 *ext_data, 
             if (asn1_oid_equals(&oid_t, OID_SUBJECT_ALT_NAME, sizeof(OID_SUBJECT_ALT_NAME))) {
                 cert->san_ext_value = octet.value;
                 cert->san_ext_len = octet.len;
+            } else if (asn1_oid_equals(&oid_t, OID_KEY_USAGE, sizeof(OID_KEY_USAGE))) {
+                /* KeyUsage ::= BIT STRING -- the first content byte is the count of unused trailing bits */
+                asn1_tlv_t bits;
+                if (asn1_expect(octet.value, octet.len, 0x03, &bits) && bits.len >= 2) {
+                    u32 nbits = (bits.len - 1) * 8 - bits.value[0];
+                    u16 ku = 0;
+                    for (u32 b = 0; b < nbits && b < 16; b++)
+                        if (bits.value[1 + b / 8] & (0x80 >> (b % 8))) ku |= (u16)(1u << b);
+                    cert->has_key_usage = 1;
+                    cert->key_usage = ku;
+                } else {
+                    cert->has_unknown_critical = 1;     /* a keyUsage we cannot read cannot be waved through */
+                }
             } else if (asn1_oid_equals(&oid_t, OID_BASIC_CONSTRAINTS, sizeof(OID_BASIC_CONSTRAINTS))) {
                 /* BasicConstraints ::= SEQUENCE { cA BOOLEAN DEFAULT FALSE, ... } */
                 asn1_tlv_t bc_seq;
@@ -264,6 +323,7 @@ static inline void x509_parse_extensions(x509_cert_t *cert, const u8 *ext_data, 
  * safely proceed" rather than guessing. */
 static inline int x509_parse(const u8 *der, u32 der_len, x509_cert_t *cert) {
     cert->san_ext_value = 0; cert->san_ext_len = 0;
+    cert->has_key_usage = 0; cert->key_usage = 0; cert->has_unknown_critical = 0;
     cert->is_ca = 0;
     cert->cn_len = 0;
     cert->pubkey_valid = 0;
@@ -600,6 +660,24 @@ static inline int x509_issuer_matches_subject(const x509_cert_t *child, const x5
     for (u32 i = 0; i < child->issuer_len; i++) {
         if (child->issuer[i] != parent->subject[i]) return 0;
     }
+    return 1;
+}
+
+/* May this certificate be used as a TLS SERVER's end-entity certificate with the ECDHE suites this client offers?
+ * No unknown critical extension, and -- if it carries a keyUsage -- digitalSignature must be allowed (the server
+ * signs its ServerKeyExchange with the certificate's key). A certificate with no keyUsage is unrestricted. */
+static inline int x509_leaf_extensions_ok(const x509_cert_t *c) {
+    if (c->has_unknown_critical) return 0;
+    if (c->has_key_usage && !(c->key_usage & X509_KU_DIGITAL_SIGNATURE)) return 0;
+    return 1;
+}
+
+/* May this certificate vouch for another one (act as an issuer partway up a chain)? basicConstraints must say
+ * CA:TRUE, no unknown critical extension, and -- if it carries a keyUsage -- keyCertSign must be allowed. A CA
+ * certificate whose keyUsage lacks keyCertSign was not issued to sign certificates, whatever basicConstraints says. */
+static inline int x509_ca_extensions_ok(const x509_cert_t *c) {
+    if (!c->is_ca || c->has_unknown_critical) return 0;
+    if (c->has_key_usage && !(c->key_usage & X509_KU_KEY_CERT_SIGN)) return 0;
     return 1;
 }
 

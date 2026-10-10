@@ -90,6 +90,8 @@
 #define TCP_TX_FAIL_BACKOFF_TICKS 100   /* wait this long (main-loop passes) before offering a refused segment to the NIC again */
 #define TCP_TX_FAIL_GIVEUP_SECS   8     /* ...and give the connection up once the NIC has refused for this many REAL seconds (netclock.h:
                                          * loop passes per second differ wildly between machines, so a count of passes is not a duration) */
+#define TCP_ZERO_WINDOW_PROBE_SECS  2   /* while the peer advertises 0: ask for its current window this often */
+#define TCP_ZERO_WINDOW_GIVEUP_SECS 30  /* ...and give the connection up if it stays shut this long */
 #define TCP_TX_FAIL_MIN_COUNT     3     /* ...but never on fewer refusals than this, whatever the clock says */
 #define TCP_TX_FAIL_BACKSTOP      4000  /* a stopped RTC never advances the clock: this many refusals in a row ends it regardless */
 #define TCP_RETRANSMIT_TICKS 800   /* roughly a couple hundred main-loop
@@ -154,6 +156,16 @@ typedef struct {
     int tx_fail_count;
     u32 tx_next_tick;
     u32 tx_first_fail_wall;     /* RTC seconds-of-day of the first refusal in the current run */
+
+    /* The peer's advertised receive window (we never offer the window-scale option, so the 16-bit field
+     * is the literal size). Without it a zero or tiny window was ignored: data was sent anyway, dropped by
+     * the peer and retransmitted until the connection was given up. wl1/wl2 are RFC 793's SND.WL1/WL2: the
+     * sequence/ack of the segment that last set the window, so an old, reordered segment cannot shrink it. */
+    u32 peer_wnd;
+    u32 wl1, wl2;
+    int wl_valid;
+    int zero_wnd_active;
+    u32 zero_wnd_first_wall, zero_wnd_probe_wall;
 
     /* Inbound bytes: written at recv_len by tcp_handle_packet(), drained
      * from the front by tcp_poll_recv() -- which slides the rest down.
@@ -286,6 +298,7 @@ static inline void tcp_connect(u32 remote_ip, u16 remote_port) {
     tcp_clear_retransmit();
     tcp_conn.tx_fail_count = 0;
     tcp_conn.tx_next_tick = 0;
+    tcp_conn.peer_wnd = 0; tcp_conn.wl_valid = 0; tcp_conn.zero_wnd_active = 0;
 
     serial_puts("[TCP] connecting to ");
     net_log_ip(remote_ip);
@@ -322,6 +335,45 @@ static inline void tcp_tx_refused(void) {
     }
 }
 
+/* RFC 793 window update: only a segment whose ACK acknowledges something we really sent
+ * (snd_una <= ack <= snd_nxt) may change the window, and only if it is not older than the segment that set
+ * the current one (SND.WL1/WL2). */
+static inline void tcp_update_peer_window(const u8 *seg, u32 seq, u32 ack) {
+    if ((u32)(ack - tcp_conn.snd_una) > (u32)(tcp_conn.snd_nxt - tcp_conn.snd_una)) return;
+    if (!tcp_conn.wl_valid || (i32)(seq - tcp_conn.wl1) > 0 ||
+        (seq == tcp_conn.wl1 && (i32)(ack - tcp_conn.wl2) >= 0)) {
+        tcp_conn.peer_wnd = net_get16_be(&seg[14]);
+        tcp_conn.wl1 = seq; tcp_conn.wl2 = ack; tcp_conn.wl_valid = 1;
+    }
+}
+
+/* The peer says its window is 0 and there is data to send. Do not send into a closed window; instead, every
+ * TCP_ZERO_WINDOW_PROBE_SECS send a bare ACK carrying the previous sequence number (the keep-alive trick: the
+ * peer must answer with an ACK that states its current window, and our window update then reopens
+ * sending -- this recovers from a lost window-update without putting any data at risk). If the window stays
+ * shut for TCP_ZERO_WINDOW_GIVEUP_SECS the connection is dropped rather than left hanging. */
+static inline void tcp_zero_window_wait(void) {
+    u32 now = net_wall_seconds();
+    if (!tcp_conn.zero_wnd_active) {
+        tcp_conn.zero_wnd_active = 1;
+        tcp_conn.zero_wnd_first_wall = now;
+        tcp_conn.zero_wnd_probe_wall = now;
+        return;
+    }
+    if (net_wall_elapsed(tcp_conn.zero_wnd_first_wall) >= TCP_ZERO_WINDOW_GIVEUP_SECS) {
+        serial_puts("[TCP] peer window stayed closed, giving up\n");
+        tcp_conn.state = TCP_CLOSED;
+        tcp_clear_retransmit();
+        return;
+    }
+    if (net_wall_elapsed(tcp_conn.zero_wnd_probe_wall) >= TCP_ZERO_WINDOW_PROBE_SECS) {
+        tcp_conn.zero_wnd_probe_wall = now;
+        tcp_conn.snd_nxt--;
+        tcp_send_segment(TCP_FLAG_ACK, 0, 0);
+        tcp_conn.snd_nxt++;
+    }
+}
+
 /* The send queue's engine: if nothing is in flight, cut the next
  * segment off the front of the queue and put it on the wire; if the
  * queue is empty and tcp_close() asked for a FIN, send that instead.
@@ -335,8 +387,11 @@ static inline void tcp_pump_send(void) {
     if (tcp_conn.tx_fail_count > 0 && net_ticks < tcp_conn.tx_next_tick) return;   /* backing off after a refusal */
 
     if (tcp_conn.send_len > 0) {
+        if (tcp_conn.peer_wnd == 0) { tcp_zero_window_wait(); return; }
+        tcp_conn.zero_wnd_active = 0;
         u32 n = tcp_conn.send_len;
         u32 cap = tcp_conn.peer_mss < TCP_SEND_MSS ? tcp_conn.peer_mss : TCP_SEND_MSS;
+        if (cap > tcp_conn.peer_wnd) cap = tcp_conn.peer_wnd;      /* never more than the peer says it can take */
         if (n > cap) n = cap;
         if (tcp_send_segment(TCP_FLAG_ACK | TCP_FLAG_PSH, TCP_SEND_BUF, (u16)n) == IP_SEND_FAILED) {
             tcp_tx_refused();      /* nothing left the host: no snd_nxt advance, no retransmit armed, bytes stay queued */
@@ -531,6 +586,8 @@ static inline void tcp_handle_packet(const ip_packet_t *ip) {
             if ((flags & TCP_FLAG_SYN) && (flags & TCP_FLAG_ACK) && ack == tcp_conn.snd_nxt) {
                 tcp_conn.rcv_nxt = seq + 1; /* SYN consumes a sequence number, same as ours did */
                 tcp_parse_syn_options(seg, hdr_len);
+                tcp_conn.peer_wnd = net_get16_be(&seg[14]);       /* the SYN's window field is never scaled */
+                tcp_conn.wl1 = seq; tcp_conn.wl2 = ack; tcp_conn.wl_valid = 1;
                 tcp_conn.state = TCP_ESTABLISHED;
                 serial_puts("[TCP] established, peer mss=");
                 serial_put_dec(tcp_conn.peer_mss);
@@ -540,6 +597,7 @@ static inline void tcp_handle_packet(const ip_packet_t *ip) {
             break;
 
         case TCP_ESTABLISHED:
+            if (flags & TCP_FLAG_ACK) tcp_update_peer_window(seg, seq, ack);
 #ifdef MW_TCP_DEBUG
             if (data_len > 0 && seq != tcp_conn.rcv_nxt) {   /* anything but the next expected bytes is worth a line */
                 serial_puts("[TCPDBG] seg seq-rcv_nxt="); serial_put_dec((u32)(i32)(seq - tcp_conn.rcv_nxt));

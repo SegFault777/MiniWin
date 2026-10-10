@@ -147,6 +147,7 @@ typedef struct { u16 prop; u8 imp, pad; u32 voff; u32 vlen; } css_decl_t;
 
 #define CSS_BUCKET_N 256
 static u32 css_rule_count, css_comp_count, css_decl_count, css_order;
+static int css_overflowed;   /* some rules / matches were dropped for lack of room: the page may look different from what its author intended */
 static u16 css_by_tag[TG__COUNT];
 static u16 css_by_cls[CSS_BUCKET_N];
 static u16 css_by_id[CSS_BUCKET_N];
@@ -505,6 +506,7 @@ static inline u32 css_prop_id(const u8 *s, u32 n) {
  * ============================================================ */
 static inline void css_reset(void) {
     css_rule_count = css_comp_count = css_decl_count = css_order = 0;
+    css_overflowed = 0;
     css_var_count = 0;
     for (u32 i = 0; i < TG__COUNT; i++) css_by_tag[i] = CSS_NIL;
     for (u32 i = 0; i < CSS_BUCKET_N; i++) { css_by_cls[i] = CSS_NIL; css_by_id[i] = CSS_NIL; }
@@ -761,7 +763,7 @@ static inline void css_add_rule(u8 *b, u32 ss, u32 se, u32 ds, u32 de, int origi
             r->order = css_order++; r->ndecl = 0; r->decl_first = 0; r->next = CSS_NIL;
             if (css_is_rootish(cf, nc)) rootish = 1;
             css_rule_count++;
-        } else if (nc > 0) css_comp_count = cf;
+        } else if (nc > 0) { css_comp_count = cf; css_overflowed = 1; }   /* rule table full: this rule is dropped */
     }
     if (css_rule_count == r0) return;
     u32 d0 = css_decl_count, bo = (u32)(b - RD_POOL);       /* value offsets are stored pool-absolute */
@@ -1576,7 +1578,7 @@ static inline void css_apply_inline(u32 node, css_style_t *s, const css_style_t 
 static inline void css_collect(u16 head, u32 node, u16 *m, int *nm) {
     for (u16 r = head; r != CSS_NIL; r = RD_CSS_RULES[r].next) {
         css_rule_t *rule = &RD_CSS_RULES[r];
-        if (*nm >= CSS_MAX_MATCH) return;
+        if (*nm >= CSS_MAX_MATCH) { css_overflowed = 1; return; }
         if (css_match_from(node, &RD_CSS_COMPS[rule->comp_first], (int)rule->ncomp - 1)) m[(*nm)++] = r;
     }
 }

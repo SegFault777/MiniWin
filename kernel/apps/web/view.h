@@ -52,6 +52,7 @@ static const char *web_tls_fail_text(void) {
         case TLS_FAIL_SERVER_FINISHED:         return "The server's Finished message did not verify.";
         case TLS_FAIL_BUFFER_OVERFLOW:         return "A handshake message was larger than MiniWin can handle.";
         case TLS_FAIL_PEER_ALERT:              return "The server refused the connection with a TLS alert (see the number below).";
+        case TLS_FAIL_CERT_EXTENSION:          return "The certificate has an extension MiniWin cannot safely handle, or its key usage does not allow this use.";
         case TLS_FAIL_BAD_RECORD:              return "The server sent a malformed or oversized secure record.";
         case TLS_FAIL_PROTOCOL_VERSION:        return "The server chose a TLS version MiniWin did not offer (MiniWin speaks TLS 1.2).";
         default:                               return "The secure connection failed.";
@@ -106,6 +107,17 @@ static void draw_web_failure(void) {
     int https_failed = web_use_https && https_client.state == HTTPS_FAILED;
     int http_failed = !web_use_https && http_client.state == HTTP_FAILED;
     if (!https_failed && !http_failed) return;
+    if (hr_size_fatal()) {
+        /* Not a connection problem at all: the page arrived (or was announced) but is bigger than the response
+         * buffer, and a cut-off page is worse than none. Say so instead of "could not connect". */
+        append_str(head, &hl, sizeof(head), "The page from ");
+        append_str(head, &hl, sizeof(head), web_last_host);
+        append_str(head, &hl, sizeof(head), " is too large to display.");
+        web_draw_wrapped(&row, head, TH_TEXT);
+        row++;
+        web_draw_wrapped(&row, "MiniWin keeps a page in a fixed-size buffer (256 KB). Showing only the first part would change what the page means, so nothing is shown.", TH_TEXT);
+        return;
+    }
     append_str(head, &hl, sizeof(head), https_failed ? "Could not open a secure connection to " : "Could not connect to ");
     append_str(head, &hl, sizeof(head), web_last_host);
     append_str(head, &hl, sizeof(head), ".");
@@ -155,12 +167,20 @@ static void draw_web_page(void) {
 #define WEB_QUERY_MAX 480
 static void web_submit_form(u32 form, u32 submitter) {
     char q[WEB_QUERY_MAX], method[8], action[WEB_PATH_MAX], ref[WEB_PATH_MAX];
-    rd_form_query(form, submitter, q, sizeof(q));
+    int qlen = rd_form_query(form, submitter, q, sizeof(q));
     web_attr_copy(form, AT_METHOD, method, sizeof(method));
     web_attr_copy(form, AT_ACTION, action, sizeof(action));
     int post = (method[0] == 'p' || method[0] == 'P');
     if (action[0] == 0) kstrcpy(action, web_last_path, sizeof(action));       /* no action="": the page itself */
     for (u32 i = 0; action[i]; i++) if (action[i] == '?' || action[i] == '#') { action[i] = 0; break; }
+    /* Every stage below used to cut the data off silently (the encoder at WEB_QUERY_MAX, the request path at
+     * WEB_PATH_MAX, the POST body at HR_POST_MAX) and send what was left as if it were the whole form. A form
+     * that does not fit is not sent at all, and the user is told. */
+    u32 alen = 0; while (action[alen]) alen++;
+    if (rd_query_overflow || (post ? (u32)qlen >= HR_POST_MAX : alen + 1 + (u32)qlen + 1 > sizeof(ref))) {
+        status = t(STR_FORM_TOO_LONG);
+        return;
+    }
     u32 rl = 0; ref[0] = 0;
     append_str(ref, &rl, sizeof(ref), action);
     if (!post) { append_str(ref, &rl, sizeof(ref), "?"); append_str(ref, &rl, sizeof(ref), q); }
@@ -287,8 +307,8 @@ static void draw_web_window(void) {
             case HTTPS_CONNECTING:        status_text = "TLS handshake..."; break;
             case HTTPS_SENDING_REQUEST:   status_text = "Sending request..."; break;
             case HTTPS_AWAITING_RESPONSE: status_text = "Waiting for response..."; break;
-            case HTTPS_DONE:              status_text = web_page_ready ? "Done. (HTTPS)" : "Rendering..."; break;
-            case HTTPS_FAILED:            status_text = "TLS/HTTPS failed."; break;
+            case HTTPS_DONE:              status_text = !web_page_ready ? "Rendering..." : rd_page_incomplete() ? "Page too big - only part shown." : "Done. (HTTPS)"; break;
+            case HTTPS_FAILED:            status_text = hr_size_fatal() ? "Page too large." : "TLS/HTTPS failed."; break;
             default:                      status_text = ""; break;
         }
     } else {
@@ -296,8 +316,8 @@ static void draw_web_window(void) {
             case HTTP_CONNECTING:        status_text = "Connecting..."; break;
             case HTTP_SENDING_REQUEST:   status_text = "Sending request..."; break;
             case HTTP_AWAITING_RESPONSE: status_text = "Waiting for response..."; break;
-            case HTTP_DONE:              status_text = "Done."; break;
-            case HTTP_FAILED:            status_text = "Failed to connect."; break;
+            case HTTP_DONE:              status_text = rd_page_incomplete() ? "Page too big - only part shown." : "Done."; break;
+            case HTTP_FAILED:            status_text = hr_size_fatal() ? "Page too large." : "Failed to connect."; break;
             default:                     status_text = ""; break;
         }
     }

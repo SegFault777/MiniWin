@@ -113,6 +113,12 @@ static inline https_state_t https_poll(u64 now_packed) {
                 if (n == 0) break;
                 hr_feed(tmp, n);
             }
+            if (hr_size_fatal()) {                 /* bigger than the response buffer: fail, don't show a cut-off page */
+                serial_puts("[HTTPS] response too large for the buffer, failing\n");
+                tls_close();
+                https_client.state = HTTPS_FAILED;
+                break;
+            }
             int peer_done = (tcp_conn.peer_fin_seen || tls_conn.peer_close_notify || tcp_conn.state == TCP_CLOSED) &&
                             tcp_conn.recv_len == 0 && tls_conn.rx_raw_len == 0 && tls_conn.app_recv_len == 0;
             if (hr.complete || peer_done) {

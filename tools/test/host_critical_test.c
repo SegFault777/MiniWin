@@ -201,7 +201,8 @@ static u16 test_csum(const u8 *seg, u16 len, u32 src, u32 dst) {      /* indepen
 /* ---- fake NIC: records frames, can be told to refuse them ---- */
 static int fake_send_ok = 1;
 static int sent_frames = 0;
-static int fake_send(const u8 *frame, u16 len) { (void)frame; (void)len; if (!fake_send_ok) return 0; sent_frames++; return 1; }
+static u16 last_frame_len = 0;
+static int fake_send(const u8 *frame, u16 len) { (void)frame; if (!fake_send_ok) return 0; sent_frames++; last_frame_len = len; return 1; }
 static void arp_put(u32 ip, int resolved) {
     arp_cache_init();
     for (int i = 0; i < ARP_CACHE_SIZE; i++) arp_cache[i].state = ARP_ENTRY_EMPTY;
@@ -215,13 +216,14 @@ static void net_setup(void) {
 }
 
 static u8 seg_buf[1600];
+static u16 seg_wnd = 0xFFFF;      /* window field of the segments the tests deliver */
 static u16 build_seg(u8 flags, u32 seq, u32 ack, const u8 *data, u16 dlen, int with_mss, int good_csum) {
     u16 hl = with_mss ? 24 : 20;
     memset(seg_buf, 0, hl);
     seg_buf[0] = PEER_PORT >> 8; seg_buf[1] = PEER_PORT & 0xFF;
     seg_buf[2] = tcp_conn.local_port >> 8; seg_buf[3] = tcp_conn.local_port & 0xFF;
     for (int i = 0; i < 4; i++) { seg_buf[4 + i] = seq >> (24 - 8 * i); seg_buf[8 + i] = ack >> (24 - 8 * i); }
-    seg_buf[12] = (u8)((hl / 4) << 4); seg_buf[13] = flags; seg_buf[14] = 0xFF; seg_buf[15] = 0xFF;
+    seg_buf[12] = (u8)((hl / 4) << 4); seg_buf[13] = flags; seg_buf[14] = (u8)(seg_wnd >> 8); seg_buf[15] = (u8)seg_wnd;
     if (with_mss) { seg_buf[20] = 2; seg_buf[21] = 4; seg_buf[22] = 0x05; seg_buf[23] = 0xB4; } /* MSS 1460 */
     if (dlen) memcpy(seg_buf + hl, data, dlen);
     u16 len = (u16)(hl + dlen);
@@ -906,6 +908,65 @@ static void test_prog_atomic(void) {
     CHECK(bad == 0, "no program power-cut point produced a corrupt or mixed program");
 }
 
+/* ------------------------------------------------------------------ M-06 */
+static void test_peer_window(void) {
+    static u8 data[3000]; memset(data, 'd', sizeof data);
+
+    /* the window from the SYN-ACK caps the first segment */
+    seg_wnd = 100; establish();
+    CHECK(tcp_conn.state == TCP_ESTABLISHED && tcp_conn.peer_wnd == 100, "SYN-ACK window is recorded (%u)", tcp_conn.peer_wnd);
+    tcp_send_data(data, 1000); tcp_poll_retransmit();
+    CHECK(last_frame_len == 14 + 20 + 20 + 100, "a 1000-byte request is cut to the advertised 100-byte window (frame %u)", last_frame_len);
+    CHECK(tcp_conn.snd_nxt - tcp_conn.snd_una == 100, "only 100 bytes are in flight");
+
+    /* the ACK reopens the window: next segment follows, bigger */
+    seg_wnd = 600;
+    deliver(build_seg(TCP_FLAG_ACK, tcp_conn.rcv_nxt, tcp_conn.snd_nxt, 0, 0, 0, 1));
+    CHECK(tcp_conn.peer_wnd == 600, "window update from an ACK is taken (%u)", tcp_conn.peer_wnd);
+    tcp_poll_retransmit();
+    CHECK(last_frame_len == 14 + 20 + 20 + 600, "the next segment uses the new window (frame %u)", last_frame_len);
+
+    /* an OLD segment (lower seq) must not shrink the window again */
+    u32 rn = tcp_conn.rcv_nxt; seg_wnd = 5;
+    deliver(build_seg(TCP_FLAG_ACK, rn - 50, tcp_conn.snd_nxt, 0, 0, 0, 1));
+    CHECK(tcp_conn.peer_wnd == 600, "a reordered older segment cannot rewrite the window (%u)", tcp_conn.peer_wnd);
+    /* an ACK for data we never sent must not change it either */
+    seg_wnd = 7;
+    deliver(build_seg(TCP_FLAG_ACK, rn, tcp_conn.snd_nxt + 1000, 0, 0, 0, 1));
+    CHECK(tcp_conn.peer_wnd == 600, "an ACK beyond snd_nxt is ignored for window purposes (%u)", tcp_conn.peer_wnd);
+
+    /* the window never makes a segment bigger than the MSS either */
+    seg_wnd = 0xFFFF; establish();
+    tcp_send_data(data, 3000); tcp_poll_retransmit();
+    CHECK(last_frame_len <= 14 + 20 + 20 + 1460, "a huge window still respects the MSS (frame %u)", last_frame_len);
+
+    /* zero window: nothing is sent, probes go out, the connection is not abandoned early */
+    fake_wall = 40000; seg_wnd = 0; establish();
+    int fr = sent_frames; u32 nxt = tcp_conn.snd_nxt;
+    tcp_send_data(data, 50); tcp_poll_retransmit();
+    CHECK(sent_frames == fr && tcp_conn.snd_nxt == nxt && tcp_conn.retx_pending == 0, "peer window 0: the request is held, nothing goes out");
+    fake_wall += 1; tcp_poll_retransmit();
+    CHECK(sent_frames == fr, "no probe before TCP_ZERO_WINDOW_PROBE_SECS");
+    fake_wall += 2; tcp_poll_retransmit();
+    CHECK(sent_frames == fr + 1 && last_frame_len == 14 + 20 + 20 && tcp_conn.snd_nxt == nxt, "after the probe interval one bare ACK probe goes out (no data, snd_nxt unchanged)");
+    fake_wall += 3; tcp_poll_retransmit(); CHECK(sent_frames == fr + 2, "...and again, roughly every interval");
+    CHECK(tcp_conn.state == TCP_ESTABLISHED, "(still connected)");
+    /* the peer answers the probe with an ACK that opens the window */
+    seg_wnd = 1000;
+    deliver(build_seg(TCP_FLAG_ACK, tcp_conn.rcv_nxt, tcp_conn.snd_nxt, 0, 0, 0, 1));
+    tcp_poll_retransmit();
+    CHECK(tcp_conn.peer_wnd == 1000 && tcp_conn.retx_pending == 1 && tcp_conn.snd_nxt == nxt + 50, "when the window opens the held request is sent");
+    /* a window that never opens: give up, don't hang */
+    fake_wall = 50000; seg_wnd = 0; establish();
+    tcp_send_data(data, 50); tcp_poll_retransmit();
+    for (int k = 0; k < 40 && tcp_conn.state == TCP_ESTABLISHED; k++) { fake_wall += 1; net_ticks += 10; tcp_poll_retransmit(); }
+    CHECK(tcp_conn.state == TCP_CLOSED, "a window that stays at 0 for TCP_ZERO_WINDOW_GIVEUP_SECS ends the connection");
+    /* a FIN is not blocked by a closed window */
+    fake_wall = 60000; seg_wnd = 0; establish(); fr = sent_frames; tcp_close(); tcp_poll_retransmit();
+    CHECK(tcp_conn.state == TCP_FIN_WAIT_1 && sent_frames == fr + 1, "closing is not held up by a zero window");
+    seg_wnd = 0xFFFF;
+}
+
 int main(void) {
     signal(SIGALRM, on_alarm); alarm(60);
     /* the kernel's fixed network-buffer region, as ordinary memory */
@@ -925,6 +986,7 @@ int main(void) {
     test_tls();
     test_fs_atomic();
     test_prog_atomic();
+    test_peer_window();
 
     printf("%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;

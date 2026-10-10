@@ -34,6 +34,7 @@
 typedef struct {
     u32 len;              /* bytes stored in HR_BUF: headers + (still-chunked) body, as received */
     int truncated;        /* the response was bigger than HR_BUF; the rest was dropped */
+    int too_big;          /* the headers promise a body that cannot fit HR_BUF (Content-Length), seen before it all arrives */
     int hdr_done;         /* the blank line ending the headers has arrived */
     u32 body_start;       /* offset in HR_BUF where the body begins */
     int status;           /* 200, 301, 404 ... 0 until the status line has been parsed */
@@ -52,7 +53,7 @@ typedef struct {
 static hr_t hr;
 
 static inline void hr_reset(void) {
-    hr.len = 0; hr.truncated = 0; hr.hdr_done = 0; hr.body_start = 0; hr.status = 0;
+    hr.len = 0; hr.truncated = 0; hr.too_big = 0; hr.hdr_done = 0; hr.body_start = 0; hr.status = 0;
     hr.chunked = 0; hr.have_clen = 0; hr.clen = 0; hr.encoded = 0; hr.complete = 0;
     hr.chunk_pos = 0; hr.finished = 0; hr.body_len = 0;
     hr.location[0] = 0; hr.content_type[0] = 0;
@@ -81,15 +82,40 @@ static inline void hr_copy_value(char *dst, u32 dst_size, const u8 *v, const u8 
     dst[n] = 0;
 }
 
-static inline int hr_value_has(const u8 *v, const u8 *end, const char *word) {
-    /* case-insensitive substring search inside one header value */
+/* A header value that is a comma-separated LIST of tokens (Transfer-Encoding, Content-Encoding...) must be read
+ * token by token, not searched as text: a substring search finds "chunked" inside "notchunked" or
+ * "x-chunked-test" and the body then gets parsed as chunks it never contained. Tokens are trimmed of spaces and
+ * tabs, compared case-insensitively and cut at ';' (parameters); empty list members are skipped; the value
+ * ends at CR/LF/end. Returns a mask:
+ *   HR_TOK_HAS   some token equals `word`
+ *   HR_TOK_LAST  the LAST token equals `word` (RFC 7230 3.3.1: chunked must be the final transfer coding)
+ *   HR_TOK_OTHER some token equals neither `word` nor `word2` (word2 may be NULL) */
+#define HR_TOK_HAS   1
+#define HR_TOK_LAST  2
+#define HR_TOK_OTHER 4
+static inline int hr_tok_eq(const u8 *ts, const u8 *te, const char *word) {
     u32 wl = 0; while (word[wl]) wl++;
-    for (const u8 *q = v; q + wl <= end && *q != '\r' && *q != '\n'; q++) {
-        u32 k = 0;
-        while (k < wl && hr_lower((char)q[k]) == word[k]) k++;
-        if (k == wl) return 1;
+    if ((u32)(te - ts) != wl) return 0;
+    for (u32 k = 0; k < wl; k++) if (hr_lower((char)ts[k]) != word[k]) return 0;
+    return 1;
+}
+static inline int hr_value_tokens(const u8 *v, const u8 *end, const char *word, const char *word2) {
+    int flags = 0, last_is = 0;
+    const u8 *p = v;
+    for (;;) {
+        while (p < end && (*p == ' ' || *p == '\t' || *p == ',')) p++;
+        if (p >= end || *p == '\r' || *p == '\n') break;
+        const u8 *ts = p;
+        while (p < end && *p != ',' && *p != ';' && *p != '\r' && *p != '\n') p++;
+        const u8 *te = p;
+        while (te > ts && (te[-1] == ' ' || te[-1] == '\t')) te--;
+        while (p < end && *p != ',' && *p != '\r' && *p != '\n') p++;     /* skip ;parameters */
+        if (te == ts) continue;
+        if (hr_tok_eq(ts, te, word)) { flags |= HR_TOK_HAS; last_is = 1; }
+        else { last_is = 0; if (!(word2 && hr_tok_eq(ts, te, word2))) flags |= HR_TOK_OTHER; }
     }
-    return 0;
+    if (last_is) flags |= HR_TOK_LAST;
+    return flags;
 }
 
 /* Parses the status line and headers once the blank line has been seen. */
@@ -113,9 +139,14 @@ static inline void hr_parse_headers(u32 header_end /* offset of the first byte A
             while (v < line_end && *v >= '0' && *v <= '9') { n = n * 10 + (u32)(*v - '0'); v++; }
             hr.have_clen = 1; hr.clen = n;
         } else if ((v = hr_header_value(p, line_end, "transfer-encoding"))) {
-            if (hr_value_has(v, line_end, "chunked")) hr.chunked = 1;
+            /* chunked only counts when it is the FINAL coding; any coding we cannot undo (gzip, a typo, an
+             * unknown token) means the body is not something we can show as text. */
+            int fl = hr_value_tokens(v, line_end, "chunked", "identity");
+            if ((fl & HR_TOK_HAS) && (fl & HR_TOK_LAST)) hr.chunked = 1;
+            if (fl & HR_TOK_OTHER) hr.encoded = 1;
+            if ((fl & HR_TOK_HAS) && !(fl & HR_TOK_LAST)) hr.encoded = 1;      /* chunked applied and then something else on top */
         } else if ((v = hr_header_value(p, line_end, "content-encoding"))) {
-            if (!hr_value_has(v, line_end, "identity")) hr.encoded = 1;
+            if (hr_value_tokens(v, line_end, "identity", 0) & HR_TOK_OTHER) hr.encoded = 1;
         } else if ((v = hr_header_value(p, line_end, "location"))) {
             hr_copy_value(hr.location, sizeof(hr.location), v, line_end);
         } else if ((v = hr_header_value(p, line_end, "content-type"))) {
@@ -174,6 +205,9 @@ static inline u32 hr_feed(const u8 *data, u32 n) {
                 hr.body_start = i + 4;
                 hr_parse_headers(hr.body_start);
                 hr.chunk_pos = hr.body_start;
+                /* A Content-Length that cannot fit the buffer is known NOW; don't download megabytes to
+                 * find out (compared as "clen > room" so a huge value can't wrap the addition). */
+                if (hr.have_clen && !hr.chunked && hr.clen > HR_BUF_SIZE - hr.body_start) hr.too_big = 1;
                 break;
             }
         }
@@ -226,6 +260,13 @@ static inline void hr_finish(void) {
 static inline int hr_is_redirect(void) {
     return (hr.status == 301 || hr.status == 302 || hr.status == 303 || hr.status == 307 || hr.status == 308)
            && hr.location[0] != 0;
+}
+
+/* True when this response is too big to hold and the part that did not fit matters. Showing the first 256KB of
+ * a bigger page as if it were the page changes its meaning (and used to be reported as success); the clients
+ * turn this into an explicit failure. A redirect is exempt: its body is never shown, only Location is used. */
+static inline int hr_size_fatal(void) {
+    return (hr.truncated || hr.too_big) && !hr_is_redirect();
 }
 
 /* A form submitted with method="post": the next request built is a POST carrying this urlencoded body. The

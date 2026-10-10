@@ -116,6 +116,12 @@ static inline http_state_t http_poll(void) {
                 if (n == 0) break;
                 hr_feed(tmp, n);
             }
+            if (hr_size_fatal()) {                 /* bigger than the response buffer: fail, don't show a cut-off page */
+                serial_puts("[HTTP] response too large for the buffer, failing\n");
+                tcp_close();
+                http_client.state = HTTP_FAILED;
+                break;
+            }
             int peer_done = (tcp_conn.peer_fin_seen || tcp_conn.state == TCP_CLOSED) && tcp_conn.recv_len == 0;
             if (hr.complete || peer_done) {
                 if (hr.len == 0 && tcp_conn.state == TCP_CLOSED && !tcp_conn.peer_fin_seen) {

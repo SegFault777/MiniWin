@@ -198,6 +198,9 @@ typedef enum {
                                           * the receive buffer (also appended at the end, same reason) */
     TLS_FAIL_PROTOCOL_VERSION,           /* ServerHello chose a protocol version this client never
                                           * offered (it offers TLS 1.2 and nothing else) */
+    TLS_FAIL_CERT_EXTENSION,             /* a certificate in the chain has a critical extension this
+                                          * client does not understand, or a keyUsage / basicConstraints
+                                          * combination that does not allow its role in the chain */
 } tls_fail_reason_t;
 
 typedef struct {
@@ -727,6 +730,14 @@ static inline int tls_verify_certificate_chain(u64 now_packed) {
             tls_conn.fail_reason = TLS_FAIL_CERT_CHAIN;
             return 0;
         }
+        if (cert->has_unknown_critical) {            /* RFC 5280 4.2: a critical extension we do not understand means REJECT */
+            tls_conn.fail_reason = TLS_FAIL_CERT_EXTENSION;
+            return 0;
+        }
+    }
+    if (!x509_leaf_extensions_ok(&tls_conn.chain[0])) {   /* keyUsage must allow signing the key exchange */
+        tls_conn.fail_reason = TLS_FAIL_CERT_EXTENSION;
+        return 0;
     }
 
     if (!x509_matches_hostname(&tls_conn.chain[0], tls_conn.hostname)) {
@@ -743,6 +754,10 @@ static inline int tls_verify_certificate_chain(u64 now_packed) {
         }
         if (!parent->is_ca) {
             tls_conn.fail_reason = TLS_FAIL_CERT_CHAIN;
+            return 0;
+        }
+        if (!x509_ca_extensions_ok(parent)) {         /* CA:TRUE but keyUsage without keyCertSign, or an unknown critical extension */
+            tls_conn.fail_reason = TLS_FAIL_CERT_EXTENSION;
             return 0;
         }
         if (!x509_verify_signed_by(child, parent)) {

@@ -93,6 +93,7 @@ static void mw_autotest_step(void) {
             for (u32 i = 0; i < hr.body_len; i++) h = h * 31u + HR_BUF[hr.body_start + i];
             serial_puts("\n[AUTOTEST] body-hash=0x"); serial_put_hex32(h);
         }
+        if (rd_page_incomplete()) serial_puts("\n[AUTOTEST] page-incomplete=1 (dom_truncated/layout-full/css-dropped)");
         serial_puts("\n[AUTOTEST] title=["); serial_puts(web_title);
         serial_puts("] links="); serial_put_dec(web_link_count());
         serial_puts(" text-bytes="); serial_put_dec(web_text_bytes());

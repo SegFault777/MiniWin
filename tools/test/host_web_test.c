@@ -71,6 +71,72 @@ int main(void) {
       CHECK(n == strlen(req) && strstr(req, "GET /p?q=1 HTTP/1.1\r\nHost: example.com:8080\r\n") == req &&
             strstr(req, "Accept-Encoding: identity") && strstr(req, "User-Agent:") && strstr(req, "\r\n\r\n") == req + n - 4, "request text"); }
 
+
+    /* ---------- rc-5: oversized responses must be an explicit failure (G-03) ---------- */
+    feed_all("HTTP/1.1 200 OK\r\nContent-Length: 11\r\n\r\nhello world", 7);
+    CHECK(!hr.too_big && !hr.truncated && !hr_size_fatal(), "a normal response is not 'too big'");
+    { char hdr[128]; snprintf(hdr, sizeof hdr, "HTTP/1.1 200 OK\r\nContent-Length: %u\r\n\r\n", HR_BUF_SIZE + 1000);
+      hr_reset(); hr_feed((const u8 *)hdr, (u32)strlen(hdr));
+      CHECK(hr.too_big && hr_size_fatal(), "Content-Length above the buffer is flagged as soon as the headers are parsed (before any body arrives)"); }
+    { char hdr[128]; snprintf(hdr, sizeof hdr, "HTTP/1.1 200 OK\r\nContent-Length: 4294967295\r\n\r\n");
+      hr_reset(); hr_feed((const u8 *)hdr, (u32)strlen(hdr));
+      CHECK(hr.too_big && hr_size_fatal(), "a 4 GB Content-Length does not wrap the size check"); }
+    { char hdr[128];
+      snprintf(hdr, sizeof hdr, "HTTP/1.1 200 OK\r\nContent-Length: %u\r\n\r\n", 262000u);   /* same digit count as the values below */
+      hr_reset(); hr_feed((const u8 *)hdr, (u32)strlen(hdr));
+      u32 room = HR_BUF_SIZE - hr.body_start;
+      CHECK(!hr.too_big, "a 262000-byte body fits (room left after the headers: %u)", room);
+      snprintf(hdr, sizeof hdr, "HTTP/1.1 200 OK\r\nContent-Length: %u\r\n\r\n", room);
+      hr_reset(); hr_feed((const u8 *)hdr, (u32)strlen(hdr));
+      CHECK(!hr.too_big, "a body that fits EXACTLY is fine");
+      snprintf(hdr, sizeof hdr, "HTTP/1.1 200 OK\r\nContent-Length: %u\r\n\r\n", room + 1);
+      hr_reset(); hr_feed((const u8 *)hdr, (u32)strlen(hdr));
+      CHECK(hr.too_big, "one byte over is too big (the headers count against the buffer too)"); }
+    hr_reset(); hr_feed((const u8 *)"HTTP/1.1 200 OK\r\n\r\n", 19);
+    for (int k = 0; k < 6; k++) hr_feed(blob, sizeof blob);
+    CHECK(hr.truncated && hr_size_fatal(), "no Content-Length, body overflowed the buffer => fatal (this was reported as success)");
+    { const char *h = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n";
+      hr_reset(); hr_feed((const u8 *)h, (u32)strlen(h));
+      for (int k = 0; k < 4; k++) { char ch[32]; snprintf(ch, sizeof ch, "%x\r\n", (unsigned)sizeof blob); hr_feed((const u8 *)ch, (u32)strlen(ch)); hr_feed(blob, sizeof blob); hr_feed((const u8 *)"\r\n", 2); }
+      CHECK(hr.truncated && hr_size_fatal(), "an oversized chunked response is fatal too"); }
+    { const char *h = "HTTP/1.1 302 Found\r\nLocation: /elsewhere\r\nContent-Length: 999999999\r\n\r\n";
+      hr_reset(); hr_feed((const u8 *)h, (u32)strlen(h));
+      CHECK(hr.too_big && hr_is_redirect() && !hr_size_fatal(), "a redirect with a huge body is exempt: only Location is used"); }
+    { const char *h = "HTTP/1.1 302 Found\r\nContent-Length: 999999999\r\n\r\n";
+      hr_reset(); hr_feed((const u8 *)h, (u32)strlen(h));
+      CHECK(hr_size_fatal(), "a 302 WITHOUT Location is not a usable redirect, so the size still matters"); }
+
+    /* ---------- rc-5: Transfer-Encoding / Content-Encoding are token lists (M-01) ---------- */
+    const char *te_chunked_cases[] = { "chunked", "Chunked", "CHUNKED", " chunked ", "\tchunked", "chunked;q=1", "identity, chunked", "gzip, chunked", "chunked , " };
+    for (unsigned k = 0; k < sizeof te_chunked_cases / sizeof te_chunked_cases[0]; k++) {
+        char h[200]; snprintf(h, sizeof h, "HTTP/1.1 200 OK\r\nTransfer-Encoding: %s\r\n\r\n", te_chunked_cases[k]);
+        hr_reset(); hr_feed((const u8 *)h, (u32)strlen(h));
+        CHECK(hr.chunked, "Transfer-Encoding: [%s] is chunked", te_chunked_cases[k]);
+    }
+    const char *te_not_chunked[] = { "notchunked", "x-chunked-test", "chunkedx", "chunked-ish", "unchunked, identity", "gzip" };
+    for (unsigned k = 0; k < sizeof te_not_chunked / sizeof te_not_chunked[0]; k++) {
+        char h[200]; snprintf(h, sizeof h, "HTTP/1.1 200 OK\r\nTransfer-Encoding: %s\r\n\r\n", te_not_chunked[k]);
+        hr_reset(); hr_feed((const u8 *)h, (u32)strlen(h));
+        CHECK(!hr.chunked, "Transfer-Encoding: [%s] is NOT chunked (substring search used to say it was)", te_not_chunked[k]);
+    }
+    hr_reset(); hr_feed((const u8 *)"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked, gzip\r\n\r\n", 54);
+    CHECK(!hr.chunked && hr.encoded, "chunked that is not the FINAL coding is not treated as chunked (and the gzip layer makes it undecodable)");
+    hr_reset(); hr_feed((const u8 *)"HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip, chunked\r\n\r\n", 54);
+    CHECK(hr.chunked && hr.encoded, "gzip + chunked: de-chunkable, but the body stays encoded");
+    hr_reset(); hr_feed((const u8 *)"HTTP/1.1 200 OK\r\nTransfer-Encoding: identity, chunked\r\n\r\n", 58);
+    CHECK(hr.chunked && !hr.encoded, "identity + chunked is plain chunked");
+    hr_reset(); hr_feed((const u8 *)"HTTP/1.1 200 OK\r\nContent-Encoding: identity\r\n\r\n", 47);
+    CHECK(!hr.encoded, "Content-Encoding: identity is not an encoding");
+    hr_reset(); hr_feed((const u8 *)"HTTP/1.1 200 OK\r\nContent-Encoding: notidentity\r\n\r\n", 50);
+    CHECK(hr.encoded, "Content-Encoding: notidentity IS an encoding (substring search said identity)");
+    hr_reset(); hr_feed((const u8 *)"HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\n\r\n", 43);
+    CHECK(hr.encoded, "Content-Encoding: gzip is still flagged");
+    hr_reset(); hr_feed((const u8 *)"HTTP/1.1 200 OK\r\nContent-Encoding: identity, gzip\r\n\r\n", 54);
+    CHECK(hr.encoded, "a list that includes gzip is encoded");
+    /* a notchunked body must be read as a plain close-delimited body, not parsed as chunks */
+    hr_reset(); { const char *r = "HTTP/1.1 200 OK\r\nTransfer-Encoding: notchunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n"; hr_feed((const u8 *)r, (u32)strlen(r)); hr_finish(); }
+    CHECK(hr.body_len == strlen("5\r\nhello\r\n0\r\n\r\n"), "an unknown coding is read until close, not mis-parsed as chunks (%u)", hr.body_len);
+
     /* ---------- POST (a submitted form) ---------- */
     { char req[2100]; hr_set_post("q=a+b&k=%E4%B8%80"); u32 n = hr_build_request(req, "example.com", "/form");
       CHECK(n == strlen(req) && strstr(req, "POST /form HTTP/1.1\r\nHost: example.com\r\n") == req &&

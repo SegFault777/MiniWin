@@ -454,22 +454,40 @@ static inline u32 rd_find_form(u32 node) {
     return 0;
 }
 
+/* True when the page on screen is NOT the whole page: the DOM arena or text pool filled up (parsing stopped), the
+ * layout item table filled up (the rest of the page was not laid out), or the stylesheet had rules/matches
+ * dropped. None of these overran a buffer, but each used to produce a different-looking page with nothing to say so;
+ * the browser now shows a notice. */
+static inline int rd_page_incomplete(void) {
+    return dom_truncated || L.full || css_overflowed;
+}
+
+/* Set whenever the encoder had to DROP anything for lack of room. It used to just stop writing, so a long
+ * form value produced a shortened query that was sent as if it were the whole form (and a %XX escape that did
+ * not fit was skipped while later plain characters still were written, silently reordering the data).
+ * rd_form_query() clears it first; the submit code refuses to send when it is set. */
+static int rd_query_overflow = 0;
+
 static inline int rd_urlenc(char *out, int o, int cap, const u8 *s, u32 n) {
     static const char hex[] = "0123456789ABCDEF";
     for (u32 i = 0; i < n; i++) {
         u8 c = s[i];
         if (c == 0x01) c = ' ';
-        if (dom_is_alnum(c) || c == '-' || c == '_' || c == '.' || c == '~') { if (o + 1 < cap) out[o++] = (char)c; }
-        else if (c == ' ') { if (o + 1 < cap) out[o++] = '+'; }
+        if (rd_query_overflow) break;                       /* already out of room: write nothing more, keep the data's order honest */
+        if (dom_is_alnum(c) || c == '-' || c == '_' || c == '.' || c == '~') { if (o + 1 < cap) out[o++] = (char)c; else rd_query_overflow = 1; }
+        else if (c == ' ') { if (o + 1 < cap) out[o++] = '+'; else rd_query_overflow = 1; }
         else if (o + 3 < cap) { out[o++] = '%'; out[o++] = hex[c >> 4]; out[o++] = hex[c & 15]; }
+        else rd_query_overflow = 1;
     }
     return o;
 }
 
 static inline int rd_query_add(char *out, int o, int cap, const u8 *name, u32 nl, const u8 *val, u32 vl) {
-    if (o > 0 && o + 1 < cap) out[o++] = '&';
+    if (rd_query_overflow) return o;
+    if (o > 0) { if (o + 1 < cap) out[o++] = '&'; else { rd_query_overflow = 1; return o; } }
     o = rd_urlenc(out, o, cap, name, nl);
-    if (o + 1 < cap) out[o++] = '=';
+    if (rd_query_overflow) return o;
+    if (o + 1 < cap) out[o++] = '='; else { rd_query_overflow = 1; return o; }
     return rd_urlenc(out, o, cap, val, vl);
 }
 
@@ -508,6 +526,7 @@ static int rd_query_walk(u32 form, u32 node, u32 submitter, char *out, int o, in
 }
 /* the urlencoded name=value&... string for `form`; `submitter` is the button that was pressed (0 = Enter in a field) */
 static inline int rd_form_query(u32 form, u32 submitter, char *out, int cap) {
+    rd_query_overflow = 0;
     int o = rd_query_walk(form, form, submitter, out, 0, cap);
     out[o] = 0;
     return o;

@@ -173,6 +173,50 @@ int main(void) {
     { char o[64]; int n = 0;
       load("<form action='/x'><input name=q></form>"); (void)n; (void)o; }
 
+    /* rc-5 (G-07): a page that does not fit the fixed-size tables is FLAGGED so the browser can say so */
+    load("<html><body><p>a normal page</p></body></html>"); rd_relayout(600, 400, 1);
+    CHECK(!rd_page_incomplete(), "a normal page is not flagged incomplete");
+    { size_t n = 30000; char *big = malloc(n * 8 + 64); size_t o = 0;
+      o += sprintf(big + o, "<html><body>");
+      for (size_t i = 0; i < n; i++) o += sprintf(big + o, "<b>x</b>");        /* 30000 elements > RD_NODE_MAX (16384) */
+      o += sprintf(big + o, "</body></html>");
+      rd_load_html((const u8 *)big, (u32)o); rd_relayout(600, 400, 1);
+      CHECK(dom_truncated && rd_page_incomplete(), "more elements than the DOM arena holds => flagged (dom_truncated=%d)", dom_truncated);
+      free(big); }
+    load("<html><body><p>fine again</p></body></html>"); rd_relayout(600, 400, 1);
+    CHECK(!rd_page_incomplete(), "the flag is cleared when the next page loads");
+    { size_t n = 4000; char *big = malloc(n * 40 + 64); size_t o = 0;
+      o += sprintf(big + o, "<html><head><style>");
+      for (size_t i = 0; i < n; i++) o += sprintf(big + o, ".c%zu{color:red}\n", i);     /* 4000 rules > RD_CSS_RULE_MAX (3072) */
+      o += sprintf(big + o, "</style></head><body><p class=c1>hi</p></body></html>");
+      rd_load_html((const u8 *)big, (u32)o); rd_relayout(600, 400, 1);
+      CHECK(css_overflowed && rd_page_incomplete(), "more CSS rules than the rule table holds => flagged (css_overflowed=%d)", css_overflowed);
+      free(big); }
+    { size_t n = 12000; char *big = malloc(n * 16 + 64); size_t o = 0;
+      o += sprintf(big + o, "<html><body>");
+      for (size_t i = 0; i < n; i++) o += sprintf(big + o, "<p>row %zu</p>", i);   /* enough text runs to fill the layout item table */
+      o += sprintf(big + o, "</body></html>");
+      rd_load_html((const u8 *)big, (u32)o); rd_relayout(600, 400, 1);
+      CHECK(rd_page_incomplete(), "a page that fills the DOM/layout tables is flagged (dom_truncated=%d L.full=%d)", dom_truncated, L.full);
+      free(big); }
+
+    /* rc-5 (M-03): a form that does not fit the query buffer is FLAGGED, never silently shortened */
+    load("<form action=/s><input name=q value='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'><input name=z value=1></form>");
+    rd_relayout(600, 400, 1);
+    { char q[300]; u32 f = find_tag(TG_FORM, 0);
+      rd_form_query(f, 0, q, sizeof q);
+      CHECK(!rd_query_overflow && strstr(q, "&z=1"), "a form that fits is not flagged [%s]", q);
+      char small[40]; rd_form_query(f, 0, small, sizeof small);
+      CHECK(rd_query_overflow, "a form that does not fit a 40-byte query is flagged as overflowed [%s]", small);
+      CHECK(!strstr(small, "z=1"), "...and a later field is not squeezed in after an earlier one was cut (order stays honest) [%s]", small);
+      rd_form_query(f, 0, q, sizeof q);
+      CHECK(!rd_query_overflow, "the flag is cleared by the next successful query"); }
+    load("<form action=/s><input name=q value='\xE4\xB8\x80\xE4\xB8\x80\xE4\xB8\x80\xE4\xB8\x80'></form>");
+    rd_relayout(600, 400, 1);
+    { char q[12]; u32 f = find_tag(TG_FORM, 0); rd_form_query(f, 0, q, sizeof q);
+      CHECK(rd_query_overflow, "a multi-byte value whose %%XX escapes do not all fit is flagged, not half-escaped [%s]", q);
+      CHECK(strlen(q) < 12 && (strlen(q) == 0 || q[strlen(q) - 1] != '%') , "no dangling '%%' at the end [%s]", q); }
+
     /* ---------- loaders ---------- */
     rd_load_plain((const u8 *)"line1\r\n  line2\ttab\n", 20); rd_relayout(600, 400, 1);
     CHECK(find_text("line1") && find_text("line2") && find_text("line2")->y > find_text("line1")->y, "plain text keeps its lines");

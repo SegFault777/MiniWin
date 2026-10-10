@@ -265,10 +265,13 @@ static int web_looks_like_url(const char *s) {
  * always safe unescaped in a query value) passes through untouched, so
  * an ordinary search phrase stays readable in status text and server
  * logs instead of turning into a wall of %20-style noise. */
-static void web_urlencode(const char *src, char *out, u32 out_sz) {
+/* Returns 1 if the WHOLE of src was encoded, 0 if it did not fit (what is in `out` is then a cut-off query: the
+ * caller must not search with it). */
+static int web_urlencode(const char *src, char *out, u32 out_sz) {
     static const char hex[] = "0123456789ABCDEF";
-    u32 oi = 0;
-    for (u32 i = 0; src[i] && oi + 1 < out_sz; i++) {
+    u32 oi = 0, i = 0;
+    int complete = 1;
+    for (; src[i] && oi + 1 < out_sz; i++) {
         unsigned char c = (unsigned char)src[i];
         int safe = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
                    (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~';
@@ -285,7 +288,9 @@ static void web_urlencode(const char *src, char *out, u32 out_sz) {
                      * cleanly rather than emit a truncated one */
         }
     }
+    if (src[i]) complete = 0;
     out[oi] = 0;
+    return complete;
 }
 
 /* Fires off whatever's currently typed in the URL bar: a URL/hostname
