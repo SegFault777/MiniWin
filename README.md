@@ -142,10 +142,10 @@ you're on a 64-bit host), and `ld`.
 THEME=dark ./build.sh && tools/install_all.sh   # the same OS in another look (kernel/ui/themes/<name>.h)
 ```
 
-**Don't want to build it?** Every version's ready-made image is attached to its
-[GitHub Release](../../releases) as `<version>-image.img` (e.g. `MiniWin 1.0-pre-25-image.img`),
-with release notes saying what changed. The `build/` directory is not tracked in git -- build
-outputs live in Releases, not in the history.
+**Don't want to build it?** Older versions' ready-made images are attached to their
+[GitHub Releases](../../releases) as `<version>-image.img` (e.g. `MiniWin 1.0-pre-25-image.img`).
+Newer versions are published as source only: build with the two commands above. The `build/`
+directory is not tracked in git.
 
 Produces `build/os-image.img`, a raw disk image -- exactly 1MB
 (1,048,576 bytes), a deliberately round size rather than arbitrary
@@ -273,7 +273,10 @@ asks:
 
 - **Persistence**: real, already working -- saved files live on the ATA
   disk image itself (`kernel/fs.h`), and survive across QEMU runs as long
-  as `os-image.img` isn't rebuilt from scratch.
+  as `os-image.img` isn't rebuilt from scratch. Saves are crash-safe (a
+  write-ahead journal plus a CRC-32 per file: after a power cut you get the
+  old file or the whole new one, and damaged files are refused instead of
+  being opened half-read).
 - **Networking**: a real, layered TCP/IP stack, built from raw Ethernet
   all the way up to HTTP, running on top of two independently verified
   NIC drivers sharing one common interface (`kernel/nic.h`):
@@ -392,9 +395,11 @@ asks:
   source. On a network without that interception, the same code path
   reaches TLS_ESTABLISHED and shows a decrypted response, exactly as
   the standalone test already demonstrated.
-  What's still missing: TLS 1.3, ECDSA certificates, and DNS-over-HTTPS
-  (this kernel's own DNS resolver is plain UDP, unencrypted -- fine for
-  finding an IP address, not itself a privacy guarantee).
+  What's still missing: TLS 1.3, certificate revocation checking and
+  name constraints (certificates that mark those critical are refused),
+  and DNS-over-HTTPS (this kernel's own DNS resolver is plain UDP,
+  unencrypted -- fine for finding an IP address, not itself a privacy
+  guarantee). TLS 1.2 with RSA and ECDSA certificates works.
 - **File Manager**: not built yet.
 - MiniWeb renders HTML5 + CSS (see above) but is not a general-purpose
   browser: no JavaScript, no images yet, no external stylesheets, no
@@ -406,7 +411,7 @@ asks:
   model that doesn't exist yet.
 - No real internet-backed accounts or third-party (Google/Microsoft)
   sign-in are planned -- this kernel has a working TCP/IP stack and a
-  DNS resolver now, but still no TLS (so no HTTPS) and no registered
+  DNS resolver and TLS 1.2 now, but no registered
   OAuth credentials to talk to those services with -- any "sign in" UI
   here would need to be honestly local-only.
 

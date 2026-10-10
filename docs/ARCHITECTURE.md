@@ -55,6 +55,21 @@ hit-testing and by `ui_titlebar_buttons` for drawing, so the two can never drift
 cache, program slot). Compile-time asserts keep regions from overlapping. `build.sh` checks that `.bss` stays
 below the stack's guard band.
 
+## Disk layout and crash safety
+
+The disk map lives in the header comment of `kernel/fs.h` (boot sector, kernel, 4 document slots, 4 program slots,
+the icon catalog, two write-ahead **journals** at LBA 1756-1813, free headroom after that). Every save goes
+journal first, then the live slot, with a CRC-32 commit record in the header sector (`fsj_save()`); an interrupted
+save leaves either the old file or the whole new one, and loads verify the CRC. See the block comment above
+`FS_HDR_CRC_OFF` in `fs.h`.
+
+## Network input is validated at every layer
+
+IPv4 header checksum (`ip_parse`), UDP and TCP checksums, ARP replies accepted only for requests we sent, DNS
+answers bound to our question (name/type/class, owner name, CNAME chain), DHCP replies bound to our xid/MAC/server,
+TCP ACK/RST/window checks, TLS record headers, ServerHello parameters and certificate extensions. Each of those
+checks has a negative test in `tools/test/host_critical_test.c` (or `run_host_x509.sh`).
+
 ## Testing
 
 | what | how |
@@ -62,6 +77,8 @@ below the stack's guard band.
 | HTML engine (DOM, CSS, layout, forms) | `tools/test/run_host_engine.sh` — assertions + an ASan/UBSan fuzzer, all on the build host |
 | HTTP response/request handling | `tools/test/run_host_web.sh` |
 | crypto + trust store | `tools/test/run_host_crypto.sh` |
+| ATA timeouts, crash-safe saves (power cut injected after every sector write), TCP/ARP/DNS/DHCP/TLS-record validation | `tools/test/run_host_critical.sh` — the real kernel headers against a fake ATA controller / NIC / RTC |
+| certificate extensions (critical, keyUsage, CA) | `tools/test/run_host_x509.sh` — OpenSSL-generated certificate variants |
 | TLS end to end | `tools/test/tls_e2e.sh` (QEMU + openssl s_server) |
 | **what the user sees** | `tools/test/ui_golden.sh check [theme]` — boots the OS in QEMU, drives a fixed tour (open every app, type, menus, drag, resize, maximize, minimize, restore, dialogs) and compares 15 screenshots **pixel for pixel** with `tools/test/golden*/` |
 
