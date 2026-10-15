@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-only
 """Prints the C constants for kernel/ecc.h (NIST P-256 and P-384, from FIPS 186-4 /
 SEC 2) as little-endian u32 limb arrays, after CHECKING them with plain Python
 big-int arithmetic: G is on the curve, and n*G is the point at infinity. A typo in a

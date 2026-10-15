@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 #ifndef HMAC_SHA384_H
 #define HMAC_SHA384_H
 #include "sha512.h"

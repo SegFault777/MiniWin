@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-only
 # Host-side tests for the HTTP response handling and the HTML renderer.
 set -euo pipefail
 cd "$(dirname "$0")"

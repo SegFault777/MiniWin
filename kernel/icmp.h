@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 #ifndef ICMP_H
 #define ICMP_H
 #include "io.h"

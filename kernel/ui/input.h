@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 #ifndef MW_UI_INPUT_H
 #define MW_UI_INPUT_H
 
@@ -14,6 +15,8 @@ static int awaiting_second_click_web = 0;   /* same idea, but for the WEB.MWP ic
 static u32 last_web_click_tick = 0;
 static int awaiting_second_click_term = 0;  /* ...and for the TERMINAL.MWP icon */
 static u32 last_term_click_tick = 0;
+static int awaiting_second_click_files = 0; /* ...and for the MINIFILES.MWP icon */
+static u32 last_files_click_tick = 0;
 static int awaiting_second_click_file_slot = -1;   /* which file icon (if any) saw a first click */
 static u32 last_file_icon_click_tick = 0;
 static u32 tick = 0;
@@ -163,6 +166,10 @@ static void handle_mouse(void) {
                     win_z_raise(WIN_ID_TERMINAL);
                     status = t(STR_TERMINAL_OPENED);
                     start_menu_open = 0;
+                } else if (start_menu_item_hit(mx, my, 4)) {
+                    files_open_window();
+                    status = t(STR_FILES_OPENED);
+                    start_menu_open = 0;
                 } else if (start_menu_item_hit(mx, my, STARTMENU_POWER_IDX)) {
                     power_menu_open = 1;
                 } else {
@@ -177,6 +184,7 @@ static void handle_mouse(void) {
                 if (taskbar_restore_id == WIN_ID_SETTING) status = t(STR_SETTING_RESTORED);
                 else if (taskbar_restore_id == WIN_ID_WEB) status = t(STR_WEB_RESTORED);
                 else if (taskbar_restore_id == WIN_ID_TERMINAL) status = t(STR_TERMINAL_RESTORED);
+                else if (taskbar_restore_id == WIN_ID_FILES) status = t(STR_FILES_RESTORED);
                 else status = t(STR_NOTEPAD_RESTORED);
             } else if (taskbar_close_id >= 0) {
                 if (taskbar_close_id == WIN_ID_SETTING) {
@@ -198,6 +206,10 @@ static void handle_mouse(void) {
                     term_win.open = 0;
                     term_win.minimized = 0;
                     win_z_remove(WIN_ID_TERMINAL);
+                } else if (taskbar_close_id == WIN_ID_FILES) {
+                    files_win.open = 0;           /* a file list holds nothing to lose */
+                    files_win.minimized = 0;
+                    win_z_remove(WIN_ID_FILES);
                 } else {
                     /* Minimized taskbar close also asks first, for
                      * consistency with the window's own X button. */
@@ -337,6 +349,24 @@ static void handle_mouse(void) {
                     } else {
                         term_input_focused = 0;
                     }
+                } else if (hit_id == WIN_ID_FILES) {
+                    win_z_raise(WIN_ID_FILES);
+                    if (files_min_hit(mx, my)) {
+                        pressed_btn_kind = BTN_MIN;
+                        pressed_btn_win = WIN_ID_FILES;
+                    } else if (files_max_hit(mx, my)) {
+                        pressed_btn_kind = BTN_MAX;
+                        pressed_btn_win = WIN_ID_FILES;
+                    } else if (files_close_hit(mx, my)) {
+                        pressed_btn_kind = BTN_CLOSE;
+                        pressed_btn_win = WIN_ID_FILES;
+                    } else if (files_titlebar_drag_hit(mx, my) && !files_win.maximized) {
+                        dragging_id = WIN_ID_FILES;
+                        drag_offset_x = mx - files_win.x;
+                        drag_offset_y = my - files_win.y;
+                    } else {
+                        files_click(mx, my, tick, double_click_window);
+                    }
                 } else if (hit_id >= 0) {
                     active_np = &notepads[hit_id];
                     win_z_raise(hit_id);
@@ -440,6 +470,15 @@ static void handle_mouse(void) {
                         awaiting_second_click_term = 1;
                         last_term_click_tick = tick;
                     }
+                } else if (in_rect(mx, my, ICON5_X, ICON5_Y, ICON5_W, ICON5_H)) {
+                    if (awaiting_second_click_files && (tick - last_files_click_tick) < double_click_window) {
+                        files_open_window();
+                        status = t(STR_FILES_OPENED);
+                        awaiting_second_click_files = 0;
+                    } else {
+                        awaiting_second_click_files = 1;
+                        last_files_click_tick = tick;
+                    }
                 } else {
                     /* Check desktop file icons last (any slot). */
                     for (int slot = 0; slot < FS_MAX_FILES; slot++) {
@@ -448,43 +487,7 @@ static void handle_mouse(void) {
 
                         if (awaiting_second_click_file_slot == slot &&
                             (tick - last_file_icon_click_tick) < double_click_window) {
-                            /* 2nd click: if this file is already open in
-                             * some window, just focus that one instead
-                             * of loading a second editable copy (which
-                             * would race on Save); otherwise open it in
-                             * the first free window slot. */
-                            int existing = find_notepad_bound_to(slot);
-                            if (existing >= 0) {
-                                notepads[existing].win.minimized = 0;
-                                win_z_raise(existing);
-                                status = format_saved_status(slot);
-                            } else {
-                                int free_slot = find_free_notepad_slot();
-                                if (free_slot < 0) {
-                                    status = t(STR_ALL_NOTEPAD_WINDOWS_OPEN);
-                                } else {
-                                    /* Read BEFORE committing to opening the window: a damaged file (CRC mismatch,
-                                     * unreadable sector, longer than the buffer) used to open as silently truncated or
-                                     * empty text, and the next Save would overwrite the original with that. */
-                                    u32 loaded = 0;
-                                    if (!fs_read_slot(slot, notepads[free_slot].text_buf, sizeof(notepads[free_slot].text_buf) - 1, &loaded)) {
-                                        status = t(STR_FILE_DAMAGED);
-                                        awaiting_second_click_file_slot = -1;
-                                        break;
-                                    }
-                                    active_np = &notepads[free_slot];
-                                    active_np->text_buf[loaded] = 0;
-                                    active_np->text_len = loaded;
-                                    active_np->bound_slot = slot;
-                                    active_np->win.open = 1;
-                                    active_np->win.minimized = 0;
-                                    active_np->file_menu_open = 0;
-                                    active_np->confirm_mode = CONFIRM_NONE;
-                                    ko_ime_reset();
-                                    win_z_raise(free_slot);
-                                    status = format_saved_status(slot); /* reuse "SAVED: name" wording to show which file opened */
-                                }
-                            }
+                            open_document_slot(slot);
                             awaiting_second_click_file_slot = -1;
                         } else {
                             awaiting_second_click_file_slot = slot;
@@ -500,6 +503,8 @@ static void handle_mouse(void) {
          * still over the exact button that was pressed, then clear
          * the press state either way. Dragging off before letting
          * go cancels it -- same contract as any real button. ---- */
+        if (mouse_release_event) files_release(mx, my);   /* MiniFiles' own buttons (OPEN/DELETE/REFRESH) fire on release */
+
         if (mouse_release_event && pressed_btn_kind != BTN_NONE) {
             int kind = pressed_btn_kind, win = pressed_btn_win;
             int still_over = 0;
@@ -513,6 +518,10 @@ static void handle_mouse(void) {
                 else if (kind == BTN_MAX) still_over = web_max_hit(mx, my);
                 else if (kind == BTN_CLOSE) still_over = web_close_hit(mx, my);
                 else if (kind == BTN_WEB_GO) still_over = web_go_btn_hit(mx, my);
+            } else if (win == WIN_ID_FILES) {
+                if (kind == BTN_MIN) still_over = files_min_hit(mx, my);
+                else if (kind == BTN_MAX) still_over = files_max_hit(mx, my);
+                else if (kind == BTN_CLOSE) still_over = files_close_hit(mx, my);
             } else if (win == WIN_ID_TERMINAL) {
                 if (kind == BTN_MIN) still_over = term_min_hit(mx, my);
                 else if (kind == BTN_MAX) still_over = term_max_hit(mx, my);
@@ -563,6 +572,22 @@ static void handle_mouse(void) {
                         win_z_remove(WIN_ID_WEB);
                     } else if (kind == BTN_WEB_GO) {
                         web_go_url();
+                    }
+                } else if (win == WIN_ID_FILES) {
+                    if (kind == BTN_MIN) {
+                        win_minimize(WIN_ID_FILES);
+                        status = t(STR_FILES_MINIMIZED);
+                    } else if (kind == BTN_MAX) {
+                        if (files_win.maximized) {
+                            unmaximize_window(&files_win);
+                            status = t(STR_FILES_RESTORED);
+                        } else {
+                            maximize_window(&files_win);
+                            status = t(STR_FILES_MAXIMIZED);
+                        }
+                    } else if (kind == BTN_CLOSE) {
+                        files_win.open = 0;
+                        win_z_remove(WIN_ID_FILES);
                     }
                 } else if (win == WIN_ID_TERMINAL) {
                     if (kind == BTN_MIN) {
@@ -643,7 +668,19 @@ static void handle_keyboard(void) {
         else if (!web_urlbar_focused && (k == 'b' || k == 'B'))  { web_scroll_by(-page); k = KEY_NONE; }
     }
 
-    if (focused_id >= 0 && focused_id != WIN_ID_SETTING && focused_id != WIN_ID_WEB && focused_id != WIN_ID_TERMINAL) {
+    /* MiniFiles: arrows select, Left/Right switch tabs, Enter opens/runs/installs */
+    if (focused_id == WIN_ID_FILES) {
+        files_key(k);
+        k = KEY_NONE;
+    }
+
+    /* Terminal scrollback: Up/Down move the view three rows back/forward (consumed here, like the web page above) */
+    if (focused_id == WIN_ID_TERMINAL && (k == KEY_UP || k == KEY_DOWN)) {
+        term_scroll_by(k == KEY_UP ? 3 : -3);
+        k = KEY_NONE;
+    }
+
+    if (focused_id >= 0 && focused_id != WIN_ID_SETTING && focused_id != WIN_ID_WEB && focused_id != WIN_ID_TERMINAL && focused_id != WIN_ID_FILES) {
         active_np = &notepads[focused_id];
 
     if (active_np->confirm_mode != CONFIRM_NONE) {

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 #ifndef KEYBOARD_H
 #define KEYBOARD_H
 #include "io.h"

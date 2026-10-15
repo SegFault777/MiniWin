@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 #ifndef MW_APPS_WEB_ADDRESS_H
 #define MW_APPS_WEB_ADDRESS_H
 

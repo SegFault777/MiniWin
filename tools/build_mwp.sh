@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-only
 # Builds a loadable .mwp flat binary from one programs/*.c file --
 # completely separate from build.sh (which only ever builds the
 # kernel), because a .mwp isn't part of the kernel image at all: it's

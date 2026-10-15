@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 #ifndef MW_UI_CLOCK_H
 #define MW_UI_CLOCK_H
 

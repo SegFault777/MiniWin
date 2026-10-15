@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-only
 """Installs a bundle of 16x16/32x32 PNG icons directly into an existing
 os-image.img's icon catalog (see kernel/fs.h's ICON_* constants) --
 same "write the disk image offline, no in-OS installer app exists yet"

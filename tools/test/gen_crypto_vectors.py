@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-only
 """Reference vectors for host_crypto_test.c, produced by Python's hashlib/hmac
 and the `cryptography` package (i.e. OpenSSL) -- NOT by MiniWin's own code, so a
 mismatch means MiniWin is wrong. Deterministic (seeded) so failures reproduce.

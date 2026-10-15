@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 /* host_engine_test.c -- deterministic tests for the HTML5 engine (kernel/dom.h, css.h, layout.h, render.h).
  * Pure logic, so the real kernel headers compile on the build host with the fixed-address arenas swapped for arrays.
  *   tools/test/run_host_engine.sh                                                                                   */

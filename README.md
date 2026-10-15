@@ -417,6 +417,28 @@ asks:
 
 ## License
 
-MiniWin's own code is MIT-licensed -- see `LICENSE`. The bundled Dalmoori
-font (`third_party/dalmoori-font/`) is Apache-2.0 licensed by its own
-authors; see the `LICENSE`/`NOTICE.md` in that directory.
+MiniWin is free software, licensed under the **GNU General Public License,
+version 3** (`GPL-3.0-only`) -- the full text is in `LICENSE`, and every
+source file of the project carries an `SPDX-License-Identifier:
+GPL-3.0-only` line.
+
+    MiniWin -- a 32-bit x86 operating system
+    Copyright (C) 2026 MiniWin Project
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License version 3 as
+    published by the Free Software Foundation.
+
+    This program is distributed in the hope that it will be useful, but
+    WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+    General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+Bundled third-party material keeps the license of its own authors (the
+Galmuri and Dalmoori fonts, the CA root certificates, and the data files
+generated from them); see `third_party/*/NOTICE.md` and
+[docs/LICENSING.md](docs/LICENSING.md) for the full picture, including
+what changed from the earlier MIT-licensed versions.

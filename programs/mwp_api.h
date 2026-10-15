@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 #ifndef MWP_API_H
 #define MWP_API_H
 

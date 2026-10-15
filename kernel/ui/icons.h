@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 #ifndef MW_UI_ICONS_H
 #define MW_UI_ICONS_H
 
@@ -46,10 +47,11 @@
 #define ICONC_WEB     2
 #define ICONC_DOC     3
 #define ICONC_TERM    4
-#define ICONC_COUNT   5
+#define ICONC_FILES   5
+#define ICONC_COUNT   6
 
-static const char *const icon_cache_names[ICONC_COUNT] = { "NOTEPAD", "SETTING", "WEB", "DOCX", "TERMINAL" };
-/* 20KB: lives in memmap.h's MISC area, not .bss (always filled by icon_cache_init() before it is read) */
+static const char *const icon_cache_names[ICONC_COUNT] = { "NOTEPAD", "SETTING", "WEB", "DOCX", "TERMINAL", "FILEMANAGER" };
+/* 24KB: lives in memmap.h's MISC area, not .bss (always filled by icon_cache_init() before it is read) */
 #define icon_cache ((u32 (*)[32 * 32])MW_ICON_CACHE_ADDR)
 static u8  icon_cache_ok[ICONC_COUNT];
 
@@ -145,6 +147,17 @@ static void draw_desktop_icon3(void) {
 
 static void draw_desktop_icon4(void) {
     draw_icon_with_label(ICON4_X, ICON4_Y, ICONC_TERM, "TERMINAL", 8, ".MWP", 4);
+}
+
+/* MINIFILES.MWP -- fifth icon in the same row (the file manager). Double-click opens it. "MINIFILES" is one glyph
+ * wider than the slot; the label simply spills into the 10px gap on each side, where nothing else draws. */
+#define ICON5_X  (ICON4_X + ICON_SLOT_W + 10)
+#define ICON5_Y  8
+#define ICON5_W  ICON_SLOT_W
+#define ICON5_H  ICON_H
+
+static void draw_desktop_icon5(void) {
+    draw_icon_with_label(ICON5_X, ICON5_Y, ICONC_FILES, "MINIFILES", 9, ".MWP", 4);
 }
 
 /* (TASKBAR_H / TASKBAR_Y come from ui/theme.h) */

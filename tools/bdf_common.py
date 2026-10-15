@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Shared BDF-parsing and 11x11-cell glyph placement logic used by both
 gen_latin_font.py and gen_hangul_font.py, so the two generators agree on
 exactly how a BDF glyph lands in MiniWin's fixed-size bitmap cell instead

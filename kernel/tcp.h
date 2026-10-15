@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 #ifndef TCP_H
 #define TCP_H
 #include "io.h"

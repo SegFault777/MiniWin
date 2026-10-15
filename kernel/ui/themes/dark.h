@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 /* ui/themes/dark.h -- a deliberately different theme: charcoal surfaces, teal accent, a slightly taller title bar.
  * Build with  THEME=dark ./build.sh . Its job is partly diagnostic: any element that still looks "classic"
  * under this theme is a color some module hard-coded instead of asking the theme. */

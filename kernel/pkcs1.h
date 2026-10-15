@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 #ifndef PKCS1_H
 #define PKCS1_H
 #include "io.h"

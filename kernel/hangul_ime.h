@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 #ifndef HANGUL_IME_H
 #define HANGUL_IME_H
 #include "io.h"

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 #ifndef NET_H
 #define NET_H
 #include "io.h"

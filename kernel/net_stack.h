@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 #ifndef NET_STACK_H
 #define NET_STACK_H
 #include "io.h"

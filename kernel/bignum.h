@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 #ifndef BIGNUM_H
 #define BIGNUM_H
 #include "io.h"

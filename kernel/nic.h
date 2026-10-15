@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 #ifndef NIC_H
 #define NIC_H
 #include "io.h"

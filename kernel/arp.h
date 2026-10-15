@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 #ifndef ARP_H
 #define ARP_H
 #include "io.h"

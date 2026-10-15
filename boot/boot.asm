@@ -1,3 +1,4 @@
+; SPDX-License-Identifier: GPL-3.0-only
 ; ============================================================
 ; MiniWin Bootloader -- Stage 1 (the actual MBR)
 ; - This is the very first code that runs. Ever. On the whole machine.
@@ -26,6 +27,14 @@ BOOT_DRIVE_ADDR equ 0x0500   ; must match stage2.asm's own copy of this
                              ; introspecting this file's own layout, is
                              ; how the boot drive number crosses the
                              ; handoff between the two stages
+BOOT_BASE_ADDR  equ 0x0504   ; u32: the LBA this MiniWin installation starts at (0 = it owns the whole disk).
+BOOT_ID_ADDR    equ 0x0508   ; u32: the installation's unique id (0 = a stock image, never installed by os-inst).
+                             ; Both are copied here from the install_* fields at the end of this sector so stage 2
+                             ; and the kernel can find them; see kernel/storage.h / kernel/os_inst.h.
+INSTALL_FIELDS_OFF equ 432   ; where install_base / install_id sit inside this sector -- os-inst patches them
+                             ; there. Offset 432 stays clear of the MBR disk signature (440-445) and the
+                             ; partition table (446+), so an installation that LIVES in a partition (this
+                             ; sector then being the partition's boot record) never collides with either.
 STAGE2_LOAD_SEG equ 0x0000
 STAGE2_LOAD_OFF equ 0x0600  ; classic safe low-memory address: past the
                              ; IVT/BIOS Data Area (which end around
@@ -44,6 +53,15 @@ start:
     mov [BOOT_DRIVE_ADDR], dl   ; BIOS hands us the boot drive number in dl;
                                 ; stash it where stage 2 knows to look for it
 
+    ; Where does this installation start on the disk? A stock image owns the whole disk, so both fields are
+    ; zero and every LBA below is absolute, exactly as before. An installation made by os-inst into a partition
+    ; has install_base = the partition's first LBA, and every sector this loader (and stage 2, and later the
+    ; kernel) reads is that many sectors further in.
+    mov eax, [install_base]
+    mov [BOOT_BASE_ADDR], eax
+    mov eax, [install_id]
+    mov [BOOT_ID_ADDR], eax
+
     mov si, msg_boot
     call print_string
 
@@ -56,8 +74,9 @@ start:
     ; number, defined once by the build script, instead of three
     ; hand-synchronized copies.
     mov word [dap_sectors], STAGE2_SECTORS
-    mov word [dap_lba], 1
-    mov word [dap_lba+2], 0
+    mov eax, [install_base]
+    inc eax                      ; stage 2 starts one sector after this one, relative to the installation
+    mov [dap_lba], eax           ; (32-bit: a partition can start far beyond LBA 65535)
     mov word [dap_segment], STAGE2_LOAD_SEG
     mov si, dap
     mov dl, [BOOT_DRIVE_ADDR]
@@ -109,6 +128,14 @@ dap_sectors: dw 0
              dw STAGE2_LOAD_OFF
 dap_segment: dw 0
 dap_lba:     dq 0
+
+; ============================================================
+; Install fields -- patched into this sector by os-inst, never by the build. Fixed offset (see INSTALL_FIELDS_OFF);
+; a build-time check in build.sh refuses to continue if the code above ever grows past it.
+; ============================================================
+times INSTALL_FIELDS_OFF-($-$$) db 0
+install_base: dd 0
+install_id:   dd 0
 
 ; ============================================================
 ; Boot sector padding + the magic signature that tells the BIOS

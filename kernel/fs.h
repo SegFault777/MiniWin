@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 #ifndef FS_H
 #define FS_H
 #include "io.h"
@@ -46,7 +47,7 @@
  *                    slot 1: LBA 1114-1162
  *                    slot 2: LBA 1163-1211
  *                    slot 3: LBA 1212-1260
- *   LBA 1261-1755 - the icon catalog, 11 sectors per icon x 45 icons (1
+ *   LBA 1261-1876 - the icon catalog, 11 sectors per icon x 56 icons (1
  *                  header + 8 data sectors for a 32x32 RGBA bitmap + 2
  *                  data sectors for a 16x16 RGBA bitmap) -- see this
  *                  file's ICON_* constants and tools/install_icons.py,
@@ -57,19 +58,22 @@
  *                  the installer and the kernel agree on one write
  *                  path instead of the installer poking the header
  *                  format directly).
- *   LBA 1756-1764 - the document JOURNAL (1 header + 8 data sectors): where a save is
+ *   LBA 1877-1885 - the document JOURNAL (1 header + 8 data sectors): where a save is
  *                  staged and committed before it is applied to its slot, so
  *                  an interrupted save can be completed (or never started)
  *                  instead of leaving a half-written file. See fsj_save().
- *   LBA 1765-1813 - the program journal (1 header + 48 data sectors), same idea.
- *   LBA 1814-2047 - unused headroom (~117KB) -- room for the kernel,
+ *   LBA 1886-1934 - the program journal (1 header + 48 data sectors), same idea.
+ *   LBA 1935-2047 - unused headroom (~56KB) -- room for the kernel,
  *                  the document area, the program area, or the icon
  *                  catalog to grow without immediately forcing the
  *                  image past the 1024KB line; see build.sh's size
  *                  check, which fails loudly if any of them ever does.
  * (Each area starts the sector immediately after the one before it ends
- * -- no gaps. Every sector between LBA 1 and LBA 1755 is now spoken for
- * on purpose.)
+ * -- no gaps. Every sector between LBA 1 and LBA 1934 is now spoken for
+ * on purpose. The icon catalog grew from 45 to 56 slots when the bundle with the drive
+ * icons arrived (47 distinct icons); the journals, which sit right after it, moved from
+ * LBA 1756/1765 to 1877/1886 -- only matters for a journal left pending by a crash on
+ * an older image, which is simply discarded.)
  */
 
 #define FS_MAGIC           0x31573154u
@@ -128,8 +132,8 @@ static inline void fs_strcpy_fixed(char *dst, const char *src, u32 n) {
 #define FS_HDR_COMMIT_OFF  508
 #define FS_HDR_TARGET_OFF  496                 /* journal header only: 1 + the slot a staged save is destined for */
 #define FS_COMMIT_MAGIC    0x31544D43u         /* "CMT1" little-endian */
-#define FS_JOURNAL_LBA     1756                /* document journal (9 sectors) -- see the layout map */
-#define PROG_JOURNAL_LBA   1765                /* program journal (49 sectors) */
+#define FS_JOURNAL_LBA     1877                /* document journal (9 sectors) -- see the layout map */
+#define PROG_JOURNAL_LBA   1886                /* program journal (49 sectors) */
 
 /* Standard CRC-32 (IEEE 802.3, the one zlib/zip/PNG use: reflected, poly 0xEDB88320), bitwise -- no 1KB table in
  * a kernel that counts its bytes; 24KB of program is ~200K cheap operations, nothing next to the disk reads.
@@ -363,6 +367,27 @@ static inline u32 fs_load_slot(int slot, char *dst, u32 maxlen) {
     return fs_read_slot(slot, dst, maxlen, &len) ? len : 0;
 }
 
+/* Is the document in `slot` intact -- a valid header, every data sector readable and, for a slot with a commit
+ * record, matching its CRC? Streams one sector at a time (a 4KB buffer is not worth the stack), so it is cheap
+ * enough for a file manager to run over every file. Returns 0 for an empty slot too: "is there a healthy file". */
+static inline int fs_verify_slot(int slot) {
+    u32 len = 0;
+    if (!fs_check_slot(slot, &len)) return 0;
+    u32 want = 0;
+    int commit = fs_read_commit(fs_slot_header_lba(slot), &want);
+    if (commit == 0) return 0;
+    u32 remaining = len, crc = 0xFFFFFFFFu, lba = fs_slot_data_lba(slot);
+    for (int s = 0; s < FS_DATA_SECTORS && remaining > 0; s++) {
+        u8 sector[512];
+        if (!ata_read_sector(lba + s, sector)) return 0;
+        u32 chunk = remaining > 512 ? 512 : remaining;
+        crc = fs_crc32_update(crc, sector, chunk);
+        remaining -= chunk;
+    }
+    if (remaining != 0) return 0;
+    return commit == 2 ? (~crc == want) : 1;
+}
+
 /* Finds the first slot nobody's using yet. Returns -1 if all four are
  * taken, at which point it's officially "your problem now, go delete
  * something" -- except we don't have a delete feature yet either. Oops. */
@@ -516,6 +541,35 @@ static inline u32 prog_load_slot(int slot, u8 *dst, u32 maxlen) {
     return len;
 }
 
+/* Same health check as fs_verify_slot() for a program: valid header, readable sectors, matching CRC. */
+static inline int prog_verify_slot(int slot) {
+    u32 len = 0;
+    if (!prog_check_slot(slot, &len, 0, 0)) return 0;
+    u32 want = 0;
+    int commit = fs_read_commit(prog_slot_header_lba(slot), &want);
+    if (commit == 0) return 0;
+    u32 remaining = len, crc = 0xFFFFFFFFu, lba = prog_slot_data_lba(slot);
+    for (int s = 0; s < PROG_DATA_SECTORS && remaining > 0; s++) {
+        u8 sector[512];
+        if (!ata_read_sector(lba + s, sector)) return 0;
+        u32 chunk = remaining > 512 ? 512 : remaining;
+        crc = fs_crc32_update(crc, sector, chunk);
+        remaining -= chunk;
+    }
+    if (remaining != 0) return 0;
+    return commit == 2 ? (~crc == want) : 1;
+}
+
+/* Erases a program slot by zeroing its header (any pending journaled save is settled first, so it cannot bring
+ * the program back). Returns 1 if the header was cleared. */
+static inline int prog_delete_slot(int slot) {
+    if (slot < 0 || slot >= PROG_MAX_SLOTS) return 0;
+    prog_recover();
+    u8 header[512];
+    fs_zero(header, 512);
+    return ata_write_sector(prog_slot_header_lba(slot), header);
+}
+
 /* Looks a program up by name (case-sensitive, exact match against
  * whatever prog_save_slot() wrote) -- this is what Terminal.mwp's `run`
  * command actually calls; it doesn't want to know slot numbers exist. */
@@ -543,7 +597,7 @@ static inline int prog_find_empty_slot(void) {
 }
 
 /* ============================================================
- * Icon catalog -- 45 slots of real, hand-drawn (by a person, not this
+ * Icon catalog -- 56 slots of real, hand-drawn (by a person, not this
  * kernel) RGBA bitmap icons, replacing the hand-coded vector glyphs
  * (a few bb_rect()/bb_putpixel() calls apiece) the desktop and file
  * icons used to be drawn with. Each slot carries BOTH a 32x32 and a
@@ -555,7 +609,7 @@ static inline int prog_find_empty_slot(void) {
  * Format is deliberately raw, uncompressed RGBA -- 4 bytes/pixel,
  * straight from the source PNGs, no palette, no run-length encoding,
  * nothing this freestanding kernel would need a decoder for. That
- * costs disk space (a 32x32 icon is 4KB, times 45 icons, is real
+ * costs disk space (a 32x32 icon is 4KB, times 56 icons, is real
  * spend -- see this file's disk-layout comment for how that pushed the
  * whole image to 1MB) in exchange for a renderer that's just a pixel
  * copy loop with an alpha check, not a PNG/zlib decoder this kernel
@@ -574,8 +628,14 @@ static inline int prog_find_empty_slot(void) {
  * ============================================================ */
 #define ICON_BASE_LBA        1261
 #define ICON_SLOT_SECTORS    11    /* 1 header + 8 data (32x32) + 2 data (16x16) */
-#define ICON_MAX_SLOTS       45
+#define ICON_MAX_SLOTS       56    /* the current bundle has 47 distinct icons; 9 spare */
 #define ICON_NAME_MAXLEN     24    /* e.g. "TYPESCRIPT_CODE" -- room to spare */
+
+/* Compile-time guard: the journals must start after the icon catalog ends and the whole installation must fit
+ * os-inst's fixed 2048-sector layout. (build.sh checks the same things before compiling; this makes a
+ * miscalculated edit fail even when only this header is compiled, as the host tests do.) */
+typedef char fs_layout_journals_after_icons[(FS_JOURNAL_LBA >= ICON_BASE_LBA + ICON_MAX_SLOTS * ICON_SLOT_SECTORS) ? 1 : -1];
+typedef char fs_layout_fits_install_size[(PROG_JOURNAL_LBA + 1 + 48 <= 2048) ? 1 : -1];
 
 #define ICON_32_BYTES  (32 * 32 * 4)  /* 4096 bytes -- exactly 8 sectors, no padding */
 #define ICON_16_BYTES  (16 * 16 * 4)  /* 1024 bytes -- exactly 2 sectors, no padding */

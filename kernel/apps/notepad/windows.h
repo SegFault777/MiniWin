@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 #ifndef MW_APPS_NOTEPAD_WINDOWS_H
 #define MW_APPS_NOTEPAD_WINDOWS_H
 
@@ -54,24 +55,28 @@ static notepad_t *active_np = &notepads[0];
 #define WIN_ID_SETTING  NOTEPAD_MAX
 #define WIN_ID_WEB      (NOTEPAD_MAX + 1)
 #define WIN_ID_TERMINAL (NOTEPAD_MAX + 2)
-#define WIN_ID_COUNT    (NOTEPAD_MAX + 3)
+#define WIN_ID_FILES    (NOTEPAD_MAX + 3)
+#define WIN_ID_COUNT    (NOTEPAD_MAX + 4)
 
 static int win_is_open(int id) {
     if (id == WIN_ID_SETTING) return setting.open;
     if (id == WIN_ID_WEB) return web_win.open;
     if (id == WIN_ID_TERMINAL) return term_win.open;
+    if (id == WIN_ID_FILES) return files_win.open;
     return notepads[id].win.open;
 }
 static int win_is_minimized(int id) {
     if (id == WIN_ID_SETTING) return setting.minimized;
     if (id == WIN_ID_WEB) return web_win.minimized;
     if (id == WIN_ID_TERMINAL) return term_win.minimized;
+    if (id == WIN_ID_FILES) return files_win.minimized;
     return notepads[id].win.minimized;
 }
 static window_t *win_ptr(int id) {
     if (id == WIN_ID_SETTING) return &setting;
     if (id == WIN_ID_WEB) return &web_win;
     if (id == WIN_ID_TERMINAL) return &term_win;
+    if (id == WIN_ID_FILES) return &files_win;
     return &notepads[id].win;
 }
 

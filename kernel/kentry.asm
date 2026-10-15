@@ -1,3 +1,4 @@
+; SPDX-License-Identifier: GPL-3.0-only
 ; ============================================================
 ; Kernel entry stub -- this MUST be the very first code sitting at
 ; 0x10000, because that's the address we pinky-promised the bootloader

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 #ifndef X509_H
 #define X509_H
 #include "io.h"

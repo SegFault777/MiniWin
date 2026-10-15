@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 #ifndef NETCLOCK_H
 #define NETCLOCK_H
 #include "io.h"

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-only
 # Host-side regression tests for the critical findings of the 2026-10-08 audit
 # (ATA timeouts, partial program loads, TCP SYN-ACK validation + RX checksum).
 set -euo pipefail

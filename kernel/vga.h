@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 #ifndef VGA_H
 #define VGA_H
 #include "io.h"

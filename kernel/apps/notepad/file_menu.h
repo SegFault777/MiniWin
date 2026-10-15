@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 #ifndef MW_APPS_NOTEPAD_FILE_MENU_H
 #define MW_APPS_NOTEPAD_FILE_MENU_H
 
@@ -34,7 +35,7 @@ static u32 desktop_file_len[FS_MAX_FILES];
 
 /* Shared status-line message, file scope so helper functions below (save
  * logic, confirm dialog actions) can set it directly. */
-static const char *status = "MINIWIN 1.0 - DOUBLE-CLICK NOTEPAD.MWP TO OPEN";
+static const char *status = "MINIWIN 1.1-ALPHA-1 - DOUBLE-CLICK NOTEPAD.MWP TO OPEN";
 static char status_buf[48]; /* scratch space for status messages that embed a filename */
 
 #define MENU_FILE_LABEL_W 46   /* clickable width for the "File" label */

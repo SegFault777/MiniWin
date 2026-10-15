@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 #include "mwp_api.h"
 
 /* GREETER.MWP -- the "hello, world" of MiniWin's loadable-program

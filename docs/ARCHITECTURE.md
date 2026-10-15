@@ -58,7 +58,7 @@ below the stack's guard band.
 ## Disk layout and crash safety
 
 The disk map lives in the header comment of `kernel/fs.h` (boot sector, kernel, 4 document slots, 4 program slots,
-the icon catalog, two write-ahead **journals** at LBA 1756-1813, free headroom after that). Every save goes
+the icon catalog, two write-ahead **journals** at LBA 1877-1934, free headroom after that). Every save goes
 journal first, then the live slot, with a CRC-32 commit record in the header sector (`fsj_save()`); an interrupted
 save leaves either the old file or the whole new one, and loads verify the CRC. See the block comment above
 `FS_HDR_CRC_OFF` in `fs.h`.

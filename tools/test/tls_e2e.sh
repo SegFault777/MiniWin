@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-only
 # End-to-end TLS test in QEMU against a local `openssl s_server` -- the only way to exercise the
 # whole stack (NIC -> IP -> TCP -> TLS -> x509 -> HTTPS) headlessly, since real sites can't be
 # reached with a trustworthy certificate path from a sandboxed build host.

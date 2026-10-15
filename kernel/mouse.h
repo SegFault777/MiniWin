@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 #ifndef MOUSE_H
 #define MOUSE_H
 #include "io.h"

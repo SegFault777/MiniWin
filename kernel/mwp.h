@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 #ifndef MWP_H
 #define MWP_H
 #include "io.h"

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 #ifndef IP_H
 #define IP_H
 #include "io.h"

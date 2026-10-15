@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 #ifndef MW_UI_TASKBAR_H
 #define MW_UI_TASKBAR_H
 
@@ -58,6 +59,9 @@ static void taskbar_pill_label(int id, char *out, u32 outsz) {
         while (*s) kstrcpy_append(out, &len, outsz, *s++);
     } else if (id == WIN_ID_TERMINAL) {
         const char *s = "T...";
+        while (*s) kstrcpy_append(out, &len, outsz, *s++);
+    } else if (id == WIN_ID_FILES) {
+        const char *s = "F...";
         while (*s) kstrcpy_append(out, &len, outsz, *s++);
     } else {
         kstrcpy_append(out, &len, outsz, 'N');

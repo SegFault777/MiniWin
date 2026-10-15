@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-only
 """Generates kernel/font_latin_data.h: an 11x11 bitmap glyph table for
 ASCII 0x20-0x7E, extracted from Galmuri11 (third_party/galmuri-font/,
 SIL OFL 1.1) -- the same font kernel/font_ko_data.h's Hangul glyphs come

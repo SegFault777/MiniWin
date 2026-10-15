@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 #ifndef PCI_H
 #define PCI_H
 #include "io.h"

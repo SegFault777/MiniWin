@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-only
 # Same idea as tls_e2e.sh but plain HTTP to tools/test/webserver.py on :80 (regression check for the
 # TCP layer). usage: [NIC=e1000] [DUMP=500] tools/test/qemu_plain_http.sh [secs] [path, e.g. /ddg?q=hello]
 set -uo pipefail

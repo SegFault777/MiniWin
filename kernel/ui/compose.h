@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 #ifndef MW_UI_COMPOSE_H
 #define MW_UI_COMPOSE_H
 
@@ -19,6 +20,7 @@ static void render_frame(int mouse_x, int mouse_y, const char *status_msg) {
     draw_desktop_icon2();
     draw_desktop_icon3();
     draw_desktop_icon4();
+    draw_desktop_icon5();
     draw_desktop_file_icons();
 
     if (status_msg) draw_status_line(status_msg);
@@ -35,6 +37,8 @@ static void render_frame(int mouse_x, int mouse_y, const char *status_msg) {
             draw_web_window();
         } else if (id == WIN_ID_TERMINAL) {
             draw_terminal_window();
+        } else if (id == WIN_ID_FILES) {
+            draw_files_window();
         } else {
             active_np = &notepads[id];
             draw_window();

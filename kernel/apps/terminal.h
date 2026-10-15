@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 #ifndef MW_APPS_TERMINAL_H
 #define MW_APPS_TERMINAL_H
 
@@ -41,6 +42,7 @@ static void system_shutdown(void);
  *   run   - load and execute a program by name (kernel/mwp.h's mwp_run())
  *   tick  - print the current time and date (kernel/rtc.h)
  *   fetch - print OS name/version, screen mode, and disk-slot usage
+ *   os-inst - install MiniWin on another disk or partition (kernel/os_inst.h); `os-inst ?` explains it
  *   wipe  - clear the scrollback
  *   re    - restart the machine (same triple-fault trick SETTING.MWP's
  *           power menu already uses)
@@ -69,6 +71,8 @@ static int  term_scroll_count = 0;  /* how many rows have EVER been written
                                      * to know how far back there's real
                                      * content vs. never-written rows) */
 static int  term_scroll_head = 0;   /* ring-buffer write cursor */
+static int  term_scroll_off = 0;    /* how many rows the view is scrolled back from the newest line (Up/Down keys); any
+                                     * new output snaps it back to 0 so fresh output is never hidden */
 
 static char term_input_buf[TERM_INPUT_MAXLEN + 1];
 static u32  term_input_len = 0;
@@ -85,6 +89,16 @@ static void term_print(const char *s) {
     row[i] = 0;
     term_scroll_head = (term_scroll_head + 1) % TERM_SCROLLBACK_ROWS;
     if (term_scroll_count < TERM_SCROLLBACK_ROWS) term_scroll_count++;
+    term_scroll_off = 0;
+}
+
+/* Up/Down: move the view by `d` rows (positive = back in time), clamped to what exists. */
+static void term_scroll_by(int d) {
+    int max_off = term_scroll_count - TERM_VISIBLE_ROWS;
+    if (max_off < 0) max_off = 0;
+    term_scroll_off += d;
+    if (term_scroll_off < 0) term_scroll_off = 0;
+    if (term_scroll_off > max_off) term_scroll_off = max_off;
 }
 
 static void term_print_blank(void) { term_print(""); }
@@ -128,9 +142,11 @@ static void term_cmd_help(void) {
     term_print("run <nm> - load and run a program");
     term_print("tick     - show the time and date");
     term_print("fetch    - show system information");
+    term_print("os-inst  - install MiniWin (os-inst ?)");
     term_print("wipe     - clear this screen");
     term_print("re       - restart the machine");
     term_print("off      - power off the machine");
+    term_print("Up/Down keys scroll this screen");
 }
 
 /* peek -- lists the four document slots (kernel/fs.h), same slots
@@ -266,7 +282,7 @@ static void term_cmd_tick(void) {
  * this command is for -- just MiniWin-scaled: no CPU/GPU/package-count
  * detection to do when this whole OS IS the software stack. */
 static void term_cmd_fetch(void) {
-    term_print("  MiniWin 1.0");
+    term_print("  MiniWin 1.1-alpha-1");
     char line[TERM_COLS + 1]; u32 l = 0;
     append_str(line, &l, sizeof(line), "  display: ");
     append_uint(line, &l, sizeof(line), VGA_WIDTH);
@@ -296,6 +312,212 @@ static void term_cmd_fetch(void) {
 static void term_cmd_wipe(void) {
     term_scroll_count = 0;
     term_scroll_head = 0;
+    term_scroll_off = 0;
+}
+
+
+/* ============================================================
+ * os-inst -- install MiniWin onto another disk / partition.
+ *   os-inst ?        explain it
+ *   os-inst list     the IDE disks and their partitions, with the id to use
+ *   os-inst <id>     vet the target, show what would be erased, ask for YES, then install (kernel/os_inst.h)
+ * The install runs as a background job (term_install_poll(), called every frame), so the screen keeps
+ * updating and the progress line moves; the scrollback is 40 columns wide, so every message is short.
+ * ============================================================ */
+static int term_inst_pending = 0;          /* waiting for the user to type YES */
+static st_target_t term_inst_target;
+static int term_inst_progress_head = -1;   /* scrollback row holding the live "NN%" line, if it is still the last row */
+static u32 term_inst_last_pct = 0xFFFFFFFFu;
+
+/* word-wraps `text` into rows of at most TERM_COLS, each indented by `indent` spaces */
+static void term_print_wrapped(const char *text, int indent) {
+    char row[TERM_COLS + 1];
+    u32 i = 0;
+    while (text[i]) {
+        u32 l = 0;
+        for (int k = 0; k < indent; k++) row[l++] = ' ';
+        u32 limit = TERM_COLS - (u32)indent, take = 0, last_space = 0;
+        while (text[i + take] && take < limit) { if (text[i + take] == ' ') last_space = take; take++; }
+        if (text[i + take] && last_space > 0) take = last_space;       /* break at the last space that fits */
+        for (u32 k = 0; k < take; k++) row[l++] = text[i + k];
+        row[l] = 0;
+        term_print(row);
+        i += take;
+        while (text[i] == ' ') i++;
+    }
+}
+
+/* "64 MB" / "2.5 GB" */
+static void term_fmt_size(char *out, u32 *len, u32 cap, u32 sectors) {
+    u32 mb = sectors / 2048;
+    if (mb >= 10240) {
+        append_uint(out, len, cap, mb / 1024);
+        append_str(out, len, cap, ".");
+        append_uint(out, len, cap, (mb % 1024) * 10 / 1024);
+        append_str(out, len, cap, " GB");
+    } else {
+        append_uint(out, len, cap, mb);
+        append_str(out, len, cap, " MB");
+    }
+}
+
+static void term_inst_help(void) {
+    term_print("os-inst - install MiniWin on a disk");
+    term_print("  os-inst ?       this help");
+    term_print("  os-inst list    disks and their ids");
+    term_print("  os-inst <id>    install onto <id>");
+    term_print("id = <type><disk><part>");
+    term_print("  type  ide sata nvme scsi usb");
+    term_print("  disk  1, 2, 3 ... (which disk)");
+    term_print("  part  2 digits: 01 02 03 ...");
+    term_print("        00 = the whole disk");
+    term_print("  sata103 = sata disk 1, part 3");
+    term_print("  ide200  = whole ide disk 2");
+    term_print("this build drives ide disks only:");
+    term_print("  ide1 ide2 = primary master/slave");
+    term_print("  ide3 ide4 = secondary master/slave");
+    term_print("It copies the system, not your");
+    term_print("files, and asks before writing.");
+    term_print("Never the disk it is running from.");
+}
+
+static void term_inst_list(void) {
+    if (!st_scanned) st_scan();
+    char line[TERM_COLS + 1]; u32 l;
+    int any = 0;
+    for (int d = 0; d < ATA_POSITIONS; d++) {
+        char id[16]; l = 0;
+        st_format_id(ST_IDE, (u32)d + 1, 0, id);
+        id[4] = 0;                                              /* "ide1" -- the disk, without the partition digits */
+        append_str(line, &l, sizeof(line), id);
+        if (!st_devs[d].present) { append_str(line, &l, sizeof(line), "  (nothing)"); term_print(line); continue; }
+        any = 1;
+        append_str(line, &l, sizeof(line), "  ");
+        term_fmt_size(line, &l, sizeof(line), st_devs[d].sectors);
+        append_str(line, &l, sizeof(line), "  ");
+        append_str(line, &l, sizeof(line), st_devs[d].model);
+        term_print(line);
+        if (d == ata_boot_pos) term_print("  <- MiniWin is running from here");
+        st_part_t parts[16];
+        int n = st_list_partitions(d, parts, 16);
+        for (int i = 0; i < n; i++) {
+            l = 0;
+            st_format_id(ST_IDE, (u32)d + 1, (u32)parts[i].number, id);
+            append_str(line, &l, sizeof(line), "  ");
+            append_str(line, &l, sizeof(line), id);
+            append_str(line, &l, sizeof(line), "  ");
+            term_fmt_size(line, &l, sizeof(line), parts[i].sectors);
+            if (parts[i].is_gpt) append_str(line, &l, sizeof(line), "  gpt");
+            else if (parts[i].extended_container) append_str(line, &l, sizeof(line), "  extended");
+            else {
+                static const char hx[] = "0123456789ABCDEF";
+                append_str(line, &l, sizeof(line), "  type ");
+                char t[3] = { hx[parts[i].type >> 4], hx[parts[i].type & 15], 0 };
+                append_str(line, &l, sizeof(line), t);
+            }
+            if (d == ata_boot_pos && st_overlap(parts[i].start, parts[i].sectors, ata_boot_base, ST_INSTALL_SECTORS))
+                append_str(line, &l, sizeof(line), " (running)");
+            term_print(line);
+        }
+        if (n == 0) term_print("  no partition table");
+        l = 0;
+        st_format_id(ST_IDE, (u32)d + 1, 0, id);
+        append_str(line, &l, sizeof(line), "  whole disk: ");
+        append_str(line, &l, sizeof(line), id);
+        term_print(line);
+    }
+    if (!any) term_print("  no ide disk found");
+    term_print("sata nvme scsi usb: no driver yet");
+}
+
+static void term_inst_start(void) {
+    inst_begin(&term_inst_target, st_boot_id);
+    term_inst_last_pct = 0xFFFFFFFFu;
+    term_inst_progress_head = -1;
+    term_print("  installing... do not power off");
+}
+
+/* os-inst <id> */
+static void term_cmd_osinst(const char *arg) {
+    if (arg[0] == 0 || term_streq(arg, "?")) { term_inst_help(); return; }
+    if (term_streq(arg, "list")) { term_inst_list(); return; }
+    st_target_t t;
+    int r = st_resolve(arg, &t);
+    if (r != ST_OK) { term_print_wrapped(st_error_text(r), 2); return; }
+
+    inst_probe_t pr;
+    inst_probe(&t, &pr);
+    char line[TERM_COLS + 1]; u32 l = 0;
+    append_str(line, &l, sizeof(line), "target: ");
+    append_str(line, &l, sizeof(line), t.id);
+    append_str(line, &l, sizeof(line), t.whole ? "  (whole disk)" : "  (partition)");
+    term_print(line);
+    l = 0;
+    append_str(line, &l, sizeof(line), "  ");
+    append_str(line, &l, sizeof(line), st_devs[t.pos].model);
+    append_str(line, &l, sizeof(line), ", ");
+    term_fmt_size(line, &l, sizeof(line), t.sectors);
+    term_print(line);
+    l = 0;
+    append_str(line, &l, sizeof(line), "  starts at sector ");
+    append_uint(line, &l, sizeof(line), t.base);
+    term_print(line);
+    if (!pr.readable)          term_print("  warning: cannot read it first");
+    else if (pr.miniwin)       term_print("  it already holds a MiniWin");
+    else if (pr.non_empty)     term_print("  it holds data (not empty)");
+    else                       term_print("  it looks empty");
+    if (t.whole && pr.partitions > 0) {
+        l = 0;
+        append_str(line, &l, sizeof(line), "  destroys the partition table (");
+        append_uint(line, &l, sizeof(line), (u32)pr.partitions);
+        append_str(line, &l, sizeof(line), ")");
+        term_print(line);
+    }
+    term_print("It writes 1 MB there and erases it.");
+    term_print("Type YES to install; else cancels.");
+    term_inst_target = t;
+    term_inst_pending = 1;
+}
+
+/* Called every frame from the main loop: advances a running install and keeps the progress line current. */
+static void term_install_poll(void) {
+    if (!inst_active()) return;
+    int phase = inst_step(24);
+    if (phase == INST_PHASE_WRITE || phase == INST_PHASE_VERIFY) {
+        u32 pct = inst_percent() / 5 * 5;                         /* update in 5% steps */
+        if (pct != term_inst_last_pct) {
+            term_inst_last_pct = pct;
+            char line[TERM_COLS + 1]; u32 l = 0;
+            append_str(line, &l, sizeof(line), phase == INST_PHASE_WRITE ? "  writing  " : "  checking ");
+            append_uint(line, &l, sizeof(line), inst_percent());
+            append_str(line, &l, sizeof(line), "%");
+            int last = (term_scroll_head + TERM_SCROLLBACK_ROWS - 1) % TERM_SCROLLBACK_ROWS;
+            if (term_inst_progress_head == last) {                // the progress line is still the newest row: rewrite it
+                u32 i = 0; while (line[i] && i < TERM_COLS) { term_scrollback[last][i] = line[i]; i++; } term_scrollback[last][i] = 0;
+            } else {
+                term_print(line);
+                term_inst_progress_head = (term_scroll_head + TERM_SCROLLBACK_ROWS - 1) % TERM_SCROLLBACK_ROWS;
+            }
+        }
+    } else if (phase == INST_PHASE_DONE) {
+        { int last = (term_scroll_head + TERM_SCROLLBACK_ROWS - 1) % TERM_SCROLLBACK_ROWS;
+          if (term_inst_progress_head == last) { const char *f = "  checking 100%"; u32 i = 0; while (f[i]) { term_scrollback[last][i] = f[i]; i++; } term_scrollback[last][i] = 0; } }
+        term_print("  done: written and verified");
+        term_print_wrapped(inst_mbr_text(inst.mbr_result), 2);
+        char line[TERM_COLS + 1]; u32 l = 0;
+        append_str(line, &l, sizeof(line), "  installed on ");
+        append_str(line, &l, sizeof(line), inst.t.id);
+        term_print(line);
+        term_print("  boot that disk to use it");
+    } else if (phase == INST_PHASE_FAILED) {
+        char line[TERM_COLS + 1]; u32 l = 0;
+        term_print("  INSTALL FAILED");
+        term_print_wrapped(inst_error_text(inst.err), 2);
+        append_str(line, &l, sizeof(line), "  at sector ");
+        append_uint(line, &l, sizeof(line), inst.err_lba);
+        term_print(line);
+        term_print("  the target is not bootable now");
+    }
 }
 
 /* Runs whatever's currently in term_input_buf, echoing the command
@@ -307,6 +529,22 @@ static void term_run_input(void) {
     append_str(echoed, &el, sizeof(echoed), "> ");
     append_str(echoed, &el, sizeof(echoed), term_input_buf);
     term_print(echoed);
+
+    /* An install is waiting for its YES, or is running: those two states own the keyboard. */
+    if (term_inst_pending) {
+        term_inst_pending = 0;
+        if (term_streq(term_input_buf, "YES")) term_inst_start();
+        else term_print("  cancelled, nothing was written");
+        term_input_buf[0] = 0;
+        term_input_len = 0;
+        return;
+    }
+    if (inst_active()) {
+        term_print("  install running, please wait");
+        term_input_buf[0] = 0;
+        term_input_len = 0;
+        return;
+    }
 
     char tokens[2][TERM_INPUT_MAXLEN + 1];
     int n = term_tokenize(term_input_buf, tokens);
@@ -329,6 +567,8 @@ static void term_run_input(void) {
         term_cmd_tick();
     } else if (term_streq(tokens[0], "fetch")) {
         term_cmd_fetch();
+    } else if (term_streq(tokens[0], "os-inst")) {
+        term_cmd_osinst(n > 1 ? tokens[1] : "");
     } else if (term_streq(tokens[0], "wipe")) {
         term_cmd_wipe();
     } else if (term_streq(tokens[0], "re")) {
@@ -395,7 +635,7 @@ static void draw_terminal_window(void) {
     bb_fillrect(wx + 2, oy, ww - 4, oh, TH_CONSOLE);
 
     int visible = term_scroll_count < TERM_VISIBLE_ROWS ? term_scroll_count : TERM_VISIBLE_ROWS;
-    int start = (term_scroll_head - visible + TERM_SCROLLBACK_ROWS) % TERM_SCROLLBACK_ROWS;
+    int start = (term_scroll_head - term_scroll_off - visible + 2 * TERM_SCROLLBACK_ROWS) % TERM_SCROLLBACK_ROWS;
     for (int i = 0; i < visible; i++) {
         int row = (start + i) % TERM_SCROLLBACK_ROWS;
         font_draw_string(wx + 4, oy + 2 + i * (FONT_CELL + 1), term_scrollback[row], TH_CONSOLE_TEXT);

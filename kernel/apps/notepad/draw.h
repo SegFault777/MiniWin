@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 #ifndef MW_APPS_NOTEPAD_DRAW_H
 #define MW_APPS_NOTEPAD_DRAW_H
 

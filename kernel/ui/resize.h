@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 #ifndef MW_UI_RESIZE_H
 #define MW_UI_RESIZE_H
 

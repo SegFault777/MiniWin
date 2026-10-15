@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 #ifndef SPEAKER_H
 #define SPEAKER_H
 #include "io.h"

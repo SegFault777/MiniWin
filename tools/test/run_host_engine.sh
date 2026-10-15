@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-only
 # Host-side tests for the HTML5 engine (dom/css/layout/render), then a burst of the ASan/UBSan fuzzer.
 #   tools/test/run_host_engine.sh [fuzz-iterations]
 set -euo pipefail

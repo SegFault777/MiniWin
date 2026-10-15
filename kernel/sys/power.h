@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 #ifndef MW_SYS_POWER_H
 #define MW_SYS_POWER_H
 

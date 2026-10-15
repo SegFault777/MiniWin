@@ -1,8 +1,18 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 #ifndef MW_SYS_BOOT_H
 #define MW_SYS_BOOT_H
 
 /* sys/boot.h -- everything kmain used to do once before its loop: serial, video mode, syscall table, PCI, network, saved files, window slots.
  * (Split out of kmain() in pre-29; still one translation unit -- see the module map in kernel.c.) */
+
+/* Reads a u32 the boot loader left at a fixed low-memory address. The empty asm hides the constant address from the
+ * optimizer, which otherwise warns that "address 0x504" is outside any object (it is: it is a hardware/loader
+ * contract, not a C object). */
+static inline u32 boot_info_u32(u32 addr) {
+    volatile u32 *p = (volatile u32 *)addr;
+    __asm__ volatile ("" : "+r"(p));
+    return *p;
+}
 
 static void kernel_boot(void) {
     /* Serial first, before anything else touches the framebuffer --
@@ -10,6 +20,18 @@ static void kernel_boot(void) {
      * only way left to say why, since writing to backbuf at that point
      * is exactly the unsafe operation being guarded against. */
     serial_init();
+
+    /* Where does THIS installation live? The boot loader left two numbers at fixed low addresses (boot/boot.asm):
+     * the sector this installation starts at, and its install id. A stock image has both 0 and owns the primary
+     * master; one placed by os-inst may sit in a partition and/or on another IDE position, so find the disk that
+     * carries our id. This has to run before anything reads the disk (icons, files) -- every ata_read_sector()
+     * from here on is relative to this base on this device. */
+    st_boot_locate(boot_info_u32(0x0504), boot_info_u32(0x0508));
+    serial_puts("[BOOT] installation base LBA ");
+    serial_put_dec(ata_boot_base);
+    serial_puts(" on ide");
+    serial_put_dec((u32)ata_boot_pos + 1);
+    serial_putc('\n');
 
     vga_init_display();
 

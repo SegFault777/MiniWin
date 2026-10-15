@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 #ifndef MW_SYS_LANG_H
 #define MW_SYS_LANG_H
 
@@ -74,6 +75,7 @@ typedef enum {
     STR_SETTING_MINIMIZED, STR_SETTING_MAXIMIZED, STR_SETTING_RESTORED,
     STR_WEB_MINIMIZED, STR_WEB_MAXIMIZED, STR_WEB_RESTORED,
     STR_TERMINAL_MINIMIZED, STR_TERMINAL_MAXIMIZED, STR_TERMINAL_RESTORED,
+    STR_FILES_OPENED, STR_FILES_MINIMIZED, STR_FILES_MAXIMIZED, STR_FILES_RESTORED,
     STR_SAVE_AS_COMING_SOON,
     STR_STORAGE_FULL_NOT_SAVED,
     STR_SAVE_FAILED, STR_FILE_DAMAGED, STR_FORM_TOO_LONG, STR_SEARCH_TOO_LONG,
@@ -105,7 +107,7 @@ static const char *ui_strings_en[STR_COUNT] = {
     [STR_SHUT_DOWN] = "Shut Down",
     [STR_RESTART] = "Restart",
     [STR_SAFE_TO_TURN_OFF] = "It's now safe to turn off your computer.",
-    [STR_DEFAULT_HINT] = "MINIWIN 1.0 - DOUBLE-CLICK NOTEPAD.MWP TO OPEN",
+    [STR_DEFAULT_HINT] = "MINIWIN 1.1-ALPHA-1 - DOUBLE-CLICK NOTEPAD.MWP TO OPEN",
     [STR_NOTEPAD_OPENED] = "NOTEPAD.MWP OPENED (RIGHT ALT: SWITCH IME)",
     [STR_SETTING_OPENED] = "SETTING.MWP OPENED",
     [STR_WEB_OPENED] = "WEB.MWP OPENED",
@@ -122,6 +124,10 @@ static const char *ui_strings_en[STR_COUNT] = {
     [STR_TERMINAL_MINIMIZED] = "TERMINAL.MWP MINIMIZED",
     [STR_TERMINAL_MAXIMIZED] = "TERMINAL.MWP MAXIMIZED",
     [STR_TERMINAL_RESTORED] = "TERMINAL.MWP RESTORED",
+    [STR_FILES_OPENED] = "MINIFILES.MWP OPENED",
+    [STR_FILES_MINIMIZED] = "MINIFILES.MWP MINIMIZED",
+    [STR_FILES_MAXIMIZED] = "MINIFILES.MWP MAXIMIZED",
+    [STR_FILES_RESTORED] = "MINIFILES.MWP RESTORED",
     [STR_SAVE_AS_COMING_SOON] = "SAVE AS - COMING SOON",
     [STR_STORAGE_FULL_NOT_SAVED] = "STORAGE FULL - NOT SAVED",
     [STR_SAVE_FAILED] = "SAVE FAILED - DISK ERROR OR FILE TOO BIG",
@@ -158,7 +164,7 @@ static const char *ui_strings_ko[STR_COUNT] = {
     [STR_SHUT_DOWN] = "\xec\x8b\x9c\xec\x8a\xa4\xed\x85\x9c \xec\xa2\x85\xeb\xa3\x8c",
     [STR_RESTART] = "\xeb\x8b\xa4\xec\x8b\x9c \xec\x8b\x9c\xec\x9e\x91",
     [STR_SAFE_TO_TURN_OFF] = "\xec\x9d\xb4\xec\xa0\x9c \xec\xbb\xb4\xed\x93\xa8\xed\x84\xb0\xeb\xa5\xbc \xea\xba\xbc\xeb\x8f\x84 \xeb\x90\xa9\xeb\x8b\x88\xeb\x8b\xa4.",
-    [STR_DEFAULT_HINT] = "MINIWIN 1.0 - NOTEPAD.MWP \xeb\x8d\x94\xeb\xb8\x94\xed\x81\xb4\xeb\xa6\xad\xec\x9c\xbc\xeb\xa1\x9c \xec\x8b\xa4\xed\x96\x89",
+    [STR_DEFAULT_HINT] = "MINIWIN 1.1-ALPHA-1 - NOTEPAD.MWP \xeb\x8d\x94\xeb\xb8\x94\xed\x81\xb4\xeb\xa6\xad\xec\x9c\xbc\xeb\xa1\x9c \xec\x8b\xa4\xed\x96\x89",
     [STR_NOTEPAD_OPENED] = "NOTEPAD.MWP \xec\x8b\xa4\xed\x96\x89\xeb\x90\xa8 (RIGHT ALT: \xec\x9e\x85\xeb\xa0\xa5\xea\xb8\xb0 \xec\xa0\x84\xed\x99\x98)",
     [STR_SETTING_OPENED] = "SETTING.MWP \xec\x8b\xa4\xed\x96\x89\xeb\x90\xa8",
     [STR_WEB_OPENED] = "WEB.MWP \xec\x8b\xa4\xed\x96\x89\xeb\x90\xa8",
@@ -175,6 +181,10 @@ static const char *ui_strings_ko[STR_COUNT] = {
     [STR_TERMINAL_MINIMIZED] = "TERMINAL.MWP \xec\xb5\x9c\xec\x86\x8c\xed\x99\x94\xeb\x90\xa8",
     [STR_TERMINAL_MAXIMIZED] = "TERMINAL.MWP \xec\xb5\x9c\xeb\x8c\x80\xed\x99\x94\xeb\x90\xa8",
     [STR_TERMINAL_RESTORED] = "TERMINAL.MWP \xeb\xb3\xb5\xec\x9b\x90\xeb\x90\xa8",
+    [STR_FILES_OPENED] = "MINIFILES.MWP \xec\x8b\xa4\xed\x96\x89\xeb\x90\xa8",
+    [STR_FILES_MINIMIZED] = "MINIFILES.MWP \xec\xb5\x9c\xec\x86\x8c\xed\x99\x94\xeb\x90\xa8",
+    [STR_FILES_MAXIMIZED] = "MINIFILES.MWP \xec\xb5\x9c\xeb\x8c\x80\xed\x99\x94\xeb\x90\xa8",
+    [STR_FILES_RESTORED] = "MINIFILES.MWP \xeb\xb3\xb5\xec\x9b\x90\xeb\x90\xa8",
     [STR_SAVE_AS_COMING_SOON] = "\xeb\x8b\xa4\xeb\xa5\xb8 \xec\x9d\xb4\xeb\xa6\x84\xec\x9c\xbc\xeb\xa1\x9c \xec\xa0\x80\xec\x9e\xa5 - \xec\xa4\x80\xeb\xb9\x84 \xec\xa4\x91",
     [STR_STORAGE_FULL_NOT_SAVED] = "\xec\xa0\x80\xec\x9e\xa5 \xea\xb3\xb5\xea\xb0\x84 \xeb\xb6\x80\xec\xa1\xb1 - \xec\xa0\x80\xec\x9e\xa5 \xec\x95\x88 \xeb\x90\xa8",
     [STR_SAVE_FAILED] = "\xec\xa0\x80\xec\x9e\xa5\x20\xec\x8b\xa4\xed\x8c\xa8\x20\x2d\x20\xeb\x94\x94\xec\x8a\xa4\xed\x81\xac\x20\xec\x98\xa4\xeb\xa5\x98\x20\xeb\x98\x90\xeb\x8a\x94\x20\xed\x8c\x8c\xec\x9d\xbc\x20\xeb\x84\x88\xeb\xac\xb4\x20\xed\x81\xbc",

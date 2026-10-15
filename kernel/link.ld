@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 ENTRY(_start)
 
 /* Every section pattern below uses the trailing "*" wildcard

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 #ifndef MW_UI_WINDOW_H
 #define MW_UI_WINDOW_H
 
@@ -97,6 +98,20 @@ static window_t term_win = {
     .w = TERM_DEFAULT_W, .h = TERM_DEFAULT_H,
     .restore_x = TERM_DEFAULT_X, .restore_y = TERM_DEFAULT_Y,
     .restore_w = TERM_DEFAULT_W, .restore_h = TERM_DEFAULT_H,
+};
+
+/* MINIFILES.MWP, the file manager (apps/minifiles.h) */
+#define FILES_DEFAULT_X   110
+#define FILES_DEFAULT_Y   84
+#define FILES_DEFAULT_W   430
+#define FILES_DEFAULT_H   260
+
+static window_t files_win = {
+    .open = 0, .minimized = 0, .maximized = 0,
+    .x = FILES_DEFAULT_X, .y = FILES_DEFAULT_Y,
+    .w = FILES_DEFAULT_W, .h = FILES_DEFAULT_H,
+    .restore_x = FILES_DEFAULT_X, .restore_y = FILES_DEFAULT_Y,
+    .restore_w = FILES_DEFAULT_W, .restore_h = FILES_DEFAULT_H,
 };
 
 /* ---- title-bar button geometry, shared by every window ----

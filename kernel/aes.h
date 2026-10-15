@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 #ifndef AES_H
 #define AES_H
 #include "io.h"

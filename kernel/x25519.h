@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 #ifndef X25519_H
 #define X25519_H
 #include "io.h"

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 #ifndef IO_H
 #define IO_H
 /* The absolute bedrock of this whole operation: talking to hardware

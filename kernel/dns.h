@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 #ifndef DNS_H
 #define DNS_H
 #include "io.h"

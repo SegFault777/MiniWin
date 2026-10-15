@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 #ifndef RD_HOST_H
 #define RD_HOST_H
 /* Host-side arenas for the MiniWeb HTML engine (kernel/dom.h, css.h, layout.h, render.h).

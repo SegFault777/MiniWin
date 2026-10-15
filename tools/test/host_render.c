@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 /* Renders an HTML file through the real engine (dom.h/css.h/layout.h/render.h) into a PPM image:
  *   host_render page.html out.ppm [width] [height]
  * The screen is `width` x 480 by default; the page is laid out in a (width-20) wide window like the OS's web window. */

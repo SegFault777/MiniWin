@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 #ifndef MW_APPS_NOTEPAD_SAVE_H
 #define MW_APPS_NOTEPAD_SAVE_H
 
@@ -77,6 +78,39 @@ static int find_notepad_bound_to(int fs_slot) {
         if (notepads[i].win.open && notepads[i].bound_slot == fs_slot) return i;
     }
     return -1;
+}
+
+/* Opens the document in FS slot `slot` in a Notepad window (shared by the desktop file icons and MiniFiles). If it is
+ * already open in some window that window is focused instead -- loading a second editable copy would race on Save --
+ * and a damaged file is refused rather than opened as truncated text that the next Save would write over the original.
+ * Sets the status line; returns 1 if a window now shows the file. */
+static int open_document_slot(int slot) {
+    int existing = find_notepad_bound_to(slot);
+    if (existing >= 0) {
+        notepads[existing].win.minimized = 0;
+        win_z_raise(existing);
+        status = format_saved_status(slot);
+        return 1;
+    }
+    int free_slot = find_free_notepad_slot();
+    if (free_slot < 0) { status = t(STR_ALL_NOTEPAD_WINDOWS_OPEN); return 0; }
+    u32 loaded = 0;
+    if (!fs_read_slot(slot, notepads[free_slot].text_buf, sizeof(notepads[free_slot].text_buf) - 1, &loaded)) {
+        status = t(STR_FILE_DAMAGED);
+        return 0;
+    }
+    active_np = &notepads[free_slot];
+    active_np->text_buf[loaded] = 0;
+    active_np->text_len = loaded;
+    active_np->bound_slot = slot;
+    active_np->win.open = 1;
+    active_np->win.minimized = 0;
+    active_np->file_menu_open = 0;
+    active_np->confirm_mode = CONFIRM_NONE;
+    ko_ime_reset();
+    win_z_raise(free_slot);
+    status = format_saved_status(slot);    /* reuse "SAVED: name" wording to show which file opened */
+    return 1;
 }
 
 /* Shared Yes/No handling for the confirm dialog, used by both mouse

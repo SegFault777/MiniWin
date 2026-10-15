@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-only
 # Boots the OS in QEMU, drives the desktop through a fixed tour (open every app, type, open menus, press a
 # button without releasing) and compares every screenshot with tools/test/golden/*.png, pixel for pixel.
 #   tools/test/ui_golden.sh check [theme]    # compare (exit 1 on any difference); theme defaults to classic

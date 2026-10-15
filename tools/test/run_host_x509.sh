@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-only
 # Certificate-extension tests (audit M-02). Needs gcc and openssl (3.x). Generates one DER certificate per
 # variant into /tmp/x509t, then runs host_x509_test against MiniWin's real x509.h.
 set -euo pipefail

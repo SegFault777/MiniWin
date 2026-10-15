@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 #ifndef HTTPRESP_H
 #define HTTPRESP_H
 #include "io.h"

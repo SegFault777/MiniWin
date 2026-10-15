@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 /* host_crypto_test.c -- compiles MiniWin's REAL crypto headers on the build
  * host (they are freestanding C, so they build fine against a hosted libc) and
  * checks them against vectors from gen_crypto_vectors.py.

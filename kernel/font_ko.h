@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 #ifndef FONT_KO_H
 #define FONT_KO_H
 #include "io.h"

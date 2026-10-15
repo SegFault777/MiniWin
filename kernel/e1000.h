@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 #ifndef E1000_H
 #define E1000_H
 #include "io.h"

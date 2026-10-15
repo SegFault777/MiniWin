@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 #ifndef SHA512_H
 #define SHA512_H
 #include "io.h"

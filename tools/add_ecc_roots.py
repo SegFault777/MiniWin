@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-only
 """Appends the Mozilla ECDSA roots (NIST P-256 / P-384 keys) to kernel/trusted_roots.h.
 
 The original 41 anchors were RSA-only (the client could only verify RSA). With ecc.h and

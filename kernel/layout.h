@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 #ifndef LAYOUT_H
 #define LAYOUT_H
 #include "css.h"

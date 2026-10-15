@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 /* Fuzzer for the HTML engine: random tag soup + random CSS through dom_parse -> rd_layout -> rd_paint, under ASan/UBSan.
  * The OS has no memory protection, so an out-of-bounds write in the renderer is not a "segfault", it is a corrupted
  * kernel. Anything this finds is worth fixing.   usage: host_rd_fuzz [iterations] [seed] */

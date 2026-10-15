@@ -1,10 +1,11 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 /* kernel.c -- MiniWin's kernel: pulls the layers together and runs the main loop.
  *
  * The whole kernel is ONE translation unit (every module is a header of `static` code), so the order of the
  * includes below IS the dependency order: a module may use anything included above it and nothing below.
  * That order is the architecture; docs/ARCHITECTURE.md explains each layer and the rules between them.
  *
- *   hardware & protocols   io vga font keyboard mouse ata fs speaker rtc serial pci  nic rtl8139 e1000
+ *   hardware & protocols   io vga font keyboard mouse ata storage fs os_inst speaker rtc serial pci  nic rtl8139 e1000
  *   (flat headers in       net arp ip icmp udp dns dhcp tcp tls http https           net_stack mwp
  *    kernel/)              dom css layout render  <- the HTML5 engine used by the web app
  *   design                 ui/theme.h (+ ui/themes/*.h)  ui/widgets.h
@@ -21,7 +22,9 @@
 #include "keyboard.h"
 #include "mouse.h"
 #include "ata.h"
+#include "storage.h"
 #include "fs.h"
+#include "os_inst.h"
 #include "font_ko.h"
 #include "hangul_ime.h"
 #include "speaker.h"
@@ -77,6 +80,7 @@
 #include "apps/web/autotest.h"
 #include "apps/web/view.h"
 #include "apps/terminal.h"
+#include "apps/minifiles.h"
 #include "apps/notepad/dialogs.h"
 #include "ui/desktop_files.h"
 #include "ui/resize.h"
@@ -98,6 +102,7 @@ void kmain(void) {
         handle_keyboard();
 
         net_stack_poll(); /* drains and dispatches any received frames: ARP, IP/ICMP/UDP/TCP, DHCP */
+        term_install_poll(); /* advances a running `os-inst` a few sectors (kernel/os_inst.h) */
 
         /* Advances whatever MiniWeb (WEB.MWP) currently has outstanding
          * -- a DNS lookup, an HTTP fetch, or nothing at all. The app

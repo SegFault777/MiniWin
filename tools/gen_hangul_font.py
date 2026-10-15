@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-only
 """Generates kernel/font_ko_data.h: an 11x11 bitmap glyph table for all
 11172 modern Hangul syllables (U+AC00-U+D7A3) plus the 51 standalone
 compatibility jamo (U+3131-U+3163), extracted from Galmuri11

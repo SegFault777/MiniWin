@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 #ifndef MW_UI_TASKBAR_METRICS_H
 #define MW_UI_TASKBAR_METRICS_H
 

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-only
 """Writes a compiled .mwp flat binary (see tools/build_mwp.sh) directly
 into one of kernel/fs.h's PROG_MAX_SLOTS program slots on an existing
 os-image.img -- the disk-image equivalent of what kernel/fs.h's own

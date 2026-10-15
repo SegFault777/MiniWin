@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 #ifndef ASN1_H
 #define ASN1_H
 #include "io.h"

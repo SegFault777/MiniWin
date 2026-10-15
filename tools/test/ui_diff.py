@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-only
 """Compares a directory of fresh screenshots (PPM) against the golden PNGs, pixel for pixel.
    ui_diff.py check  NEWDIR GOLDENDIR      -> exit 1 if anything differs (prints where)
    ui_diff.py record NEWDIR GOLDENDIR      -> overwrite the goldens with the new shots

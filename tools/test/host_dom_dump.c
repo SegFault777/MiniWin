@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 /* Dumps the DOM kernel/dom.h builds for an HTML file: a quick way to eyeball the tree builder. */
 #include "rd_host.h"
 #include "../../kernel/dom.h"

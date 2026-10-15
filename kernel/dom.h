@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 #ifndef DOM_H
 #define DOM_H
 #include "io.h"

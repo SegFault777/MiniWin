@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 #ifndef TLS_H
 #define TLS_H
 #include "io.h"

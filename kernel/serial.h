@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 #ifndef SERIAL_H
 #define SERIAL_H
 #include "io.h"

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 /* host_web_test.c -- unit tests for kernel/httpresp.h  (HTTP response handling).
  * (the HTML engine has its own host_engine_test.c). Pure logic: the real kernel header compiles on
  * the build host with its fixed-address buffer swapped for an ordinary array.

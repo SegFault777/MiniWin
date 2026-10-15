@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 #ifndef HMAC_SHA256_H
 #define HMAC_SHA256_H
 #include "io.h"

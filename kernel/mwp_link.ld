@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 /* Linker script for loadable .mwp programs (see kernel/mwp.h). Same
  * shape as kernel/link.ld -- position everything from a fixed load
  * address, keep .text/.rodata/.data, drop debug sections nobody at

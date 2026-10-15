@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-only
 set -e
 cd "$(dirname "$0")"
 
@@ -28,6 +29,10 @@ STAGE2_SECTORS=4   # 2KB -- stage2.asm currently assembles to well under
                    # path, say) without needing to touch this number.
 nasm -f bin -DSTAGE2_SECTORS=$STAGE2_SECTORS boot/boot.asm -o $BUILD/boot.bin
 nasm -f bin -DSTAGE2_SECTORS=$STAGE2_SECTORS boot/stage2.asm -o $BUILD/stage2_raw.bin
+
+# The "boot the active partition" MBR that os-inst can write onto a blank disk, embedded into the kernel as a C array.
+nasm -f bin boot/chain_mbr.asm -o $BUILD/chain_mbr.bin
+python3 tools/gen_chain_mbr.py $BUILD/chain_mbr.bin kernel/chain_mbr.h
 
 STAGE2_ACTUAL_BYTES=$(stat -c%s "$BUILD/stage2_raw.bin")
 STAGE2_MAX_BYTES=$((STAGE2_SECTORS * 512))
@@ -229,6 +234,23 @@ LAST_USED_LBA=$((ICON_BASE_LBA + ICON_TOTAL_SECTORS - 1))
 MIN_IMAGE_SECTORS=$((LAST_USED_LBA + 1))
 echo "  icon catalog: LBA $ICON_BASE_LBA-$LAST_USED_LBA" \
      "($ICON_MAX_SLOTS slots x $ICON_SLOT_SECTORS sectors)"
+# The write-ahead journals (kernel/fs.h) live right after the icon catalog and must not overlap it, nor run
+# past the 2048 sectors os-inst copies as one installation.
+FS_JOURNAL_LBA=$(grep -oP '#define\s+FS_JOURNAL_LBA\s+\K[0-9]+' kernel/fs.h)
+PROG_JOURNAL_LBA=$(grep -oP '#define\s+PROG_JOURNAL_LBA\s+\K[0-9]+' kernel/fs.h)
+if [ "$FS_JOURNAL_LBA" -le "$LAST_USED_LBA" ]; then
+    echo "ERROR: FS_JOURNAL_LBA ($FS_JOURNAL_LBA) is inside the icon catalog (ends at LBA $LAST_USED_LBA)." \
+         "Move the journals in kernel/fs.h to LBA $((LAST_USED_LBA + 1)) or higher."
+    exit 1
+fi
+if [ $((PROG_JOURNAL_LBA + 49)) -gt 2048 ] || [ "$PROG_JOURNAL_LBA" -lt $((FS_JOURNAL_LBA + 9)) ]; then
+    echo "ERROR: the journals (document $FS_JOURNAL_LBA, program $PROG_JOURNAL_LBA) overlap or run past LBA 2047."
+    exit 1
+fi
+echo "  journals: document LBA $FS_JOURNAL_LBA-$((FS_JOURNAL_LBA + 8)), program LBA $PROG_JOURNAL_LBA-$((PROG_JOURNAL_LBA + 48))," \
+     "free headroom LBA $((PROG_JOURNAL_LBA + 49))-2047"
+LAST_USED_LBA=$((PROG_JOURNAL_LBA + 48))
+MIN_IMAGE_SECTORS=$((LAST_USED_LBA + 1))
 echo "  minimum sectors needed: $MIN_IMAGE_SECTORS" \
      "($(( MIN_IMAGE_SECTORS * 512 / 1024 ))KB)"
 

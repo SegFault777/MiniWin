@@ -1,3 +1,4 @@
+; SPDX-License-Identifier: GPL-3.0-only
 ; ============================================================
 ; MiniWin Bootloader -- Stage 2
 ;
@@ -19,6 +20,8 @@
 ; ============================================================
 BITS 16
 ORG 0x0600
+
+BOOT_BASE_ADDR  equ 0x0504      ; u32 written by stage 1: the LBA this installation starts at (see boot.asm)
 
 BOOT_DRIVE_ADDR equ 0x0500      ; fixed, low-memory scratch address both
                                  ; stage 1 and stage 2 agree on independently
@@ -73,8 +76,9 @@ stage2_entry:
     ; cap out at 255 sectors per call anyway, which is exactly the kind
     ; of limit an LBA-based DAP loop like this one sidesteps entirely.
     mov word [dap_sectors], KERNEL_SECTORS_PER_CHUNK
-    mov word [dap_lba], KERNEL_START_LBA
-    mov word [dap_lba+2], 0
+    mov eax, [BOOT_BASE_ADDR]
+    add eax, KERNEL_START_LBA    ; relative to where this installation starts (0 for a whole-disk image)
+    mov [dap_lba], eax
     mov word [dap_segment], KERNEL_LOAD_SEG
     mov cx, KERNEL_CHUNKS
 
@@ -85,7 +89,7 @@ stage2_entry:
     int 0x13
     jc disk_error
 
-    add word [dap_lba], KERNEL_SECTORS_PER_CHUNK
+    add dword [dap_lba], KERNEL_SECTORS_PER_CHUNK   ; 32-bit: a partition's LBAs routinely exceed 65535
     add word [dap_segment], 0x0800      ; += 32KB, in paragraph units
     loop .load_loop
 

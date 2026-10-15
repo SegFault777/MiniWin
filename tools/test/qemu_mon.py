@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-only
 """Drives a running QEMU through its monitor socket: a tiny script language, one command per argument.
    wait N          sleep N seconds
    shot FILE.ppm   screendump

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-only
 """A small web server for the MiniWeb end-to-end tests: it serves exactly the awkward things a
 real site does and a plain `http.server` never will.
 

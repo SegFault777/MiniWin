@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-only
 # Boots the OS in QEMU with the autotest URL pointing at a page served from /tmp/www, runs a monitor script
 # (waits, key presses, mouse clicks, screenshots) and prints the serial log's [AUTOTEST] lines.
 # usage: [NIC=e1000] tools/test/qemu_shot.sh PAGE "wait 25" "shot /tmp/a.ppm" ["click" ...]

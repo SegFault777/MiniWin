@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 /* host_x509_test.c -- certificate-extension handling (audit M-02): critical extensions we do not understand must
  * make a certificate unacceptable, and keyUsage must agree with the certificate's role (TLS server leaf: must
  * allow digitalSignature; issuer: must allow keyCertSign). The DER files are produced by run_host_x509.sh with

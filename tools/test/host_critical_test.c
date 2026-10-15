@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 /* host_critical_test.c -- regression tests for the three "critical" findings of the
  * 2026-10-08 bug audit (docs: MiniWin 버그 감사 보고서):
  *   C-01  ATA status polling must time out instead of hanging the kernel forever
@@ -881,6 +882,34 @@ static void test_fs_atomic(void) {
     { u8 *j = &disk[FS_JOURNAL_LBA * 512]; int z = 1; for (int i = 0; i < 512; i++) if (j[i]) z = 0; CHECK(z, "...and the bad journal is cleared"); }
 }
 
+static void test_verify_delete(void) {
+    static u8 A[3000]; fill_pat(A, 3000, 9);
+    disk_reset();
+    CHECK(!fs_verify_slot(0), "an empty slot is not a healthy file");
+    fs_save_slot(0, (const char *)A, 3000);
+    CHECK(fs_verify_slot(0) == 1, "a freshly saved document verifies");
+    disk[fs_slot_data_lba(0) * 512 + 2000] ^= 0x04;
+    CHECK(fs_verify_slot(0) == 0, "a flipped bit makes it fail verification");
+    disk_reset(); fs_save_slot(0, (const char *)A, 3000); memset(&disk[fs_slot_header_lba(0) * 512 + FS_HDR_CRC_OFF], 0, 8);
+    CHECK(fs_verify_slot(0) == 1, "a legacy document (no commit record) verifies by readability alone");
+    disk_reset(); fs_save_slot(0, (const char *)A, 3000); ata_mode = MODE_READ_ERR_LBA; ata_err_lba = fs_slot_data_lba(0) + 2;
+    CHECK(fs_verify_slot(0) == 0, "an unreadable sector fails verification");
+    ata_mode = MODE_OK;
+
+    disk_reset();
+    CHECK(prog_save_slot(1, "P.MWP", A, 3000, 0) == 1 && prog_verify_slot(1) == 1, "a program verifies after saving");
+    disk[prog_slot_data_lba(1) * 512 + 100] ^= 1;
+    CHECK(prog_verify_slot(1) == 0, "a damaged program fails verification");
+    disk_reset(); prog_save_slot(1, "P.MWP", A, 3000, 0);
+    CHECK(prog_delete_slot(1) == 1, "delete a program");
+    { u32 l; CHECK(prog_check_slot(1, &l, 0, 0) == 0, "a deleted program is gone"); }
+    CHECK(prog_delete_slot(-1) == 0 && prog_delete_slot(99) == 0, "bad slot numbers are refused");
+    /* a pending journaled save cannot resurrect a deleted program */
+    disk_reset(); sector_writes_done = 0; cut_after = 52; prog_save_slot(2, "Q.MWP", A, 3000, 0); reboot();
+    CHECK(prog_delete_slot(2) == 1, "delete with a pending journal");
+    { u32 l; CHECK(prog_check_slot(2, &l, 0, 0) == 0, "...the journal did not bring it back"); }
+}
+
 static void test_prog_atomic(void) {
     static u8 A[24576], B[20000], got[24576];
     fill_pat(A, 24576, 3); fill_pat(B, 20000, 99);
@@ -986,6 +1015,7 @@ int main(void) {
     test_tls();
     test_fs_atomic();
     test_prog_atomic();
+    test_verify_delete();
     test_peer_window();
 
     printf("%d checks, %d failures\n", checks, failures);

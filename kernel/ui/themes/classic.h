@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
 /* ui/themes/classic.h -- the original MiniWin look: Windows-95 gray on a cyan desktop. Pixel-for-pixel what
  * the kernel drew before themes existed (the golden screenshots in tools/test/golden are this theme). */
 

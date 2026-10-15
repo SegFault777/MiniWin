@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-only
 # Throwaway test PKI for the QEMU end-to-end TLS tests (tls_e2e.sh). usage: mkcerts.sh <leaf: rsa|ec256|ec384> <ca: rsa|ec384>
 # -> /tmp/pki/{ca.pem,leaf.pem,leaf.key,test_roots.h}. Optional env for negative tests: LEAF_KU (keyUsage list), LEAF_EXTRA (extra extension line(s)), WRONG_ROOT, SAN. The leaf is for host "10.0.2.2" (QEMU's name for the host) with SAN DNS:10.0.2.2, because QEMU's DNS proxy ignores /etc/hosts.
 set -e; cd /tmp/pki; rm -f *.pem *.key *.h *.csr *.srl
