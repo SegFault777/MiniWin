@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #ifndef STORAGE_H
 #define STORAGE_H
-#include "ata.h"
+#include "blk.h"
 
 /* storage.h -- which storage devices exist, how they are partitioned, and the "storage id" that names one of
  * their partitions (the argument of the terminal's `os-inst`). Nothing here WRITES to a disk; installing is
@@ -17,11 +17,13 @@
  *   device number is just the common case.
  *
  * ---- What this build can actually reach ------------------------------------------------------------------------
- *   Only `ide` has a driver: the legacy ATA ports, four positions numbered by where the disk is plugged in
- *   (ide1 = primary master, ide2 = primary slave, ide3 = secondary master, ide4 = secondary slave -- numbered by
- *   POSITION, not by order of appearance, so an id keeps meaning the same drive when another one is added).
- *   The other type names parse (so an id like "nvme101" gets a precise answer instead of "syntax error"),
- *   and are reported as "no driver in this build". They are the next drivers to write, not an oversight.
+ *   `ide`: the legacy ATA ports, four positions numbered by where the disk is plugged in (ide1 = primary master,
+ *   ide2 = primary slave, ide3 = secondary master, ide4 = secondary slave -- numbered by POSITION, not by order of
+ *   appearance, so an id keeps meaning the same drive when another one is added).
+ *   `sata`: SATA disks behind an AHCI controller (ahci.h), numbered in discovery order: sata1 is the first disk of
+ *   the first controller's lowest port. (Unlike IDE this number can shift when a disk is added or removed.)
+ *   The other type names (nvme, scsi, usb) parse, so an id like "nvme101" gets a precise answer instead of "syntax
+ *   error", and are reported as "no driver in this build". They are the next drivers to write, not an oversight.
  *
  * ---- Partition numbers -----------------------------------------------------------------------------------------
  *   MBR: 01-04 = the four primary entries (by table position), 05, 06 ... = logical partitions inside the
@@ -31,9 +33,8 @@
  *        protective MBR (type 0xEE) plus a valid "EFI PART" header; only 32-bit LBAs are supported.
  */
 
-typedef enum { ST_IDE = 0, ST_SATA, ST_NVME, ST_SCSI, ST_USB, ST_TYPE_COUNT } st_type_t;
 static const char *const st_type_names[ST_TYPE_COUNT] = { "ide", "sata", "nvme", "scsi", "usb" };
-static inline int st_type_has_driver(st_type_t t) { return t == ST_IDE; }
+static inline int st_type_has_driver(st_type_t t) { return t == ST_IDE || t == ST_SATA; }
 
 /* result codes of st_parse_id() / st_resolve() */
 #define ST_OK              0
@@ -49,29 +50,6 @@ static inline int st_type_has_driver(st_type_t t) { return t == ST_IDE; }
 
 /* The size of one complete MiniWin installation (the fixed disk layout of fs.h: LBA 0..2047). */
 #define ST_INSTALL_SECTORS 2048
-
-/* ================================================================ devices */
-typedef struct {
-    int  present;
-    u32  sectors;       /* usable (LBA28-addressable) sectors */
-    char model[41];
-} st_dev_t;
-static st_dev_t st_devs[ATA_POSITIONS];
-static int st_scanned = 0;
-
-/* Probes the four IDE positions. Cheap when positions are empty (status reads 0x00/0xFF). */
-static inline void st_scan(void) {
-    for (int i = 0; i < ATA_POSITIONS; i++) {
-        ata_ident_t id;
-        st_devs[i].present = 0; st_devs[i].sectors = 0; st_devs[i].model[0] = 0;
-        if (ata_at_identify(&ata_positions[i], &id)) {
-            st_devs[i].present = 1;
-            st_devs[i].sectors = id.sectors;
-            for (int k = 0; k < 41; k++) st_devs[i].model[k] = id.model[k];
-        }
-    }
-    st_scanned = 1;
-}
 
 /* ================================================================ partitions */
 typedef struct {
@@ -107,7 +85,7 @@ static inline int st_mbr_entry(const u8 *e, int number, st_part_t *out) {
 
 static inline int st_read(int pos, u32 lba, u8 *buf) {
     for (int i = 0; i < 512; i++) buf[i] = 0;
-    return ata_at_read(ata_positions[pos].io, ata_positions[pos].slave, lba, buf);
+    return blk_read(pos, lba, buf);
 }
 
 /* A valid GPT header at LBA 1? (and fills the geometry we need) */
@@ -261,7 +239,7 @@ typedef struct {
     u32 dev;               /* the device number from the id */
     u32 part;              /* the partition number from the id (0 = whole device) */
     int whole;
-    int pos;               /* ATA position (0..3), valid for ST_IDE */
+    int pos;               /* device index in st_devs[] (blk.h): 0..3 = ide positions, 4.. = sata disks */
     u32 base;              /* absolute first sector of the target region */
     u32 sectors;           /* its length */
     st_part_t partition;   /* valid when !whole */
@@ -285,8 +263,8 @@ static inline int st_resolve(const char *s, st_target_t *t) {
     if (!st_type_has_driver(id.type)) return ST_E_NO_DRIVER;
 
     if (!st_scanned) st_scan();
-    if (id.dev < 1 || id.dev > ATA_POSITIONS) return ST_E_NO_DEVICE;
-    t->pos = (int)id.dev - 1;
+    t->pos = blk_index(id.type, id.dev);
+    if (t->pos < 0) return ST_E_NO_DEVICE;
     if (!st_devs[t->pos].present) return ST_E_NO_DEVICE;
     u32 dev_sectors = st_devs[t->pos].sectors;
 
@@ -302,7 +280,7 @@ static inline int st_resolve(const char *s, st_target_t *t) {
     /* The WHOLE target region, not just the 2048 sectors an install will write, is compared with the running
      * installation's footprint: installing to a whole device ("00") rewrites sector 0 and with it the partition table,
      * which would orphan a MiniWin that is running from a partition inside that very device. */
-    if (t->pos == ata_boot_pos && st_overlap(t->base, t->sectors, ata_boot_base, ST_INSTALL_SECTORS)) return ST_E_OVERLAP_BOOT;
+    if (t->pos == blk_boot_dev && st_overlap(t->base, t->sectors, blk_boot_base, ST_INSTALL_SECTORS)) return ST_E_OVERLAP_BOOT;
     return ST_OK;
 }
 
@@ -310,7 +288,7 @@ static inline const char *st_error_text(int e) {
     switch (e) {
         case ST_E_SYNTAX:       return "bad id: expected <type><device><2-digit partition>, e.g. ide101 (see os-inst ?)";
         case ST_E_UNKNOWN_TYPE: return "unknown storage type (known: ide sata nvme scsi usb)";
-        case ST_E_NO_DRIVER:    return "this build has no driver for that storage type yet (only ide)";
+        case ST_E_NO_DRIVER:    return "this build has no driver for that storage type yet (only ide, sata)";
         case ST_E_NO_DEVICE:    return "no such device (see os-inst list)";
         case ST_E_NO_PARTITION: return "no such partition on that device (see os-inst list)";
         case ST_E_EXTENDED:     return "that is an extended-partition container; pick a logical partition inside it";
@@ -325,25 +303,45 @@ static inline const char *st_error_text(int e) {
 /* The installation fields os-inst patches into the boot sector (boot/boot.asm: INSTALL_FIELDS_OFF). */
 #define ST_BOOT_FIELDS_OFF 432
 
+/* The BIOS loaded this installation's boot sector to 0x7C00 and boot.asm leaves most of it alone (it only writes its own
+ * disk-address packet, which sits between the first bytes of code and the install fields). The first ST_BOOT_CODE_BYTES
+ * bytes (the code every MiniWin boot sector starts with) and everything from the install fields to the signature are
+ * therefore still exactly what the disk holds -- a fingerprint of "the sector the machine really booted". */
+#define ST_BOOT_CODE_BYTES 48
+#ifndef MW_BOOTSECT_COPY                                   /* (host tests point this at a fake) */
+#define MW_BOOTSECT_COPY ((const u8 *)0x7C00)
+#endif
+
+static inline int st_boot_sector_matches(const u8 *disk_sector) {
+    const u8 *mem = MW_BOOTSECT_COPY;
+    for (int i = 0; i < ST_BOOT_CODE_BYTES; i++) if (disk_sector[i] != mem[i]) return 0;
+    for (int i = ST_BOOT_FIELDS_OFF; i < 512; i++) if (disk_sector[i] != mem[i]) return 0;
+    return 1;
+}
+
 /* The boot loader tells the kernel two numbers (see boot.asm): where this installation starts on its disk and its
- * unique install id (0 = a stock image that was never installed by os-inst: it owns the whole of whichever disk it
- * booted from, which this kernel has always taken to be the primary master). For an installed system the disk may
- * be ANY of the four positions, so find the one whose boot sector carries our id at our base. */
-static u32 st_boot_id = 0;     /* the running installation's id (0 for a stock image) -- os-inst makes sure a copy gets a different one */
+ * unique install id (0 = a stock image that was never installed by os-inst). Which DISK is it on? The BIOS can boot
+ * from IDE, AHCI SATA (and, later, SCSI) and the kernel has to find the same one again by itself:
+ *   - an installed system (id != 0): the device whose sector at `base` carries our base and id (ids are unique per
+ *     install, os-inst makes sure a copy gets a different one);
+ *   - a stock image (id == 0): the first device whose sector at `base` is the one the BIOS put at 0x7C00.
+ * Devices are tried in table order (ide1..ide4, then sata1, sata2 ...), so a tie -- the same image on two disks -- is
+ * broken the same way every boot. If nothing matches (booted from a bus this build cannot drive) the kernel falls
+ * back to the primary IDE master, as it always did, and says so over serial. */
+static u32 st_boot_id = 0;     /* the running installation's id (0 for a stock image) */
 
 static inline void st_boot_locate(u32 base, u32 id) {
-    ata_boot_pos = 0; ata_boot_base = base; st_boot_id = id;
-    if (id == 0) return;
-    for (int i = 0; i < ATA_POSITIONS; i++) {
+    blk_boot_dev = 0; blk_boot_base = base; st_boot_id = id;
+    st_scan();
+    for (int d = 0; d < BLK_DEV_MAX; d++) {
         u8 s[512];
-        ata_ident_t ident;
-        if (!ata_at_identify(&ata_positions[i], &ident)) continue;
-        if (!st_read(i, base, s)) continue;
-        if (st_le32(s + ST_BOOT_FIELDS_OFF) == base && st_le32(s + ST_BOOT_FIELDS_OFF + 4) == id) {
-            ata_boot_pos = i;
-            return;
-        }
+        if (!st_devs[d].present) continue;
+        if (!st_read(d, base, s)) continue;
+        int match = id ? (st_le32(s + ST_BOOT_FIELDS_OFF) == base && st_le32(s + ST_BOOT_FIELDS_OFF + 4) == id)
+                       : st_boot_sector_matches(s);
+        if (match) { blk_boot_dev = d; return; }
     }
+    serial_puts("[BOOT] boot disk not found on any known bus; assuming ide1\n");
 }
 
 #endif

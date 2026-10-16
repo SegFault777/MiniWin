@@ -29,8 +29,15 @@ Only `ide` has a driver: the legacy ATA ports, PIO mode, LBA28.
 
 Disks are numbered **by position, not by order of appearance**, so an id keeps meaning the same drive when another one is
 added. A position is "present" when `IDENTIFY DEVICE` answers with a plain ATA disk with LBA support. Not offered: empty
-positions (status `0x00`/`0xFF`), ATAPI drives (CD/DVD), SATA drives behind an AHCI-mode controller (signature
-`0x3C/0xC3`), disks without LBA. Sizes are capped at what LBA28 can address (2^28 - 1 sectors).
+positions (status `0x00`/`0xFF`), ATAPI drives (CD/DVD), SATA drives behind an AHCI-mode controller (those are `sata`
+ids, below), disks without LBA. Sizes are capped at what LBA28 can address (2^28 - 1 sectors).
+
+## sata ids
+
+`sata1`, `sata2`, ... are the SATA disks (signature `0x00000101`, 512-byte sectors, LBA) behind AHCI controllers (PCI class
+01:06:01), numbered **in discovery order**: controller by controller, port by port, up to 8. Unlike IDE positions this
+number can shift when a disk is added or removed -- check `os-inst list` before installing. Sizes are capped at 2^28 - 1
+sectors like IDE.
 
 ## Partition numbers
 

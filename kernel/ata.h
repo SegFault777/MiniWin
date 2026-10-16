@@ -14,11 +14,8 @@
  *      1 = primary channel,                               slave       -> "ide2"
  *      2 = secondary channel (I/O 0x170, control 0x376), master       -> "ide3"
  *      3 = secondary channel,                             slave       -> "ide4"
- * The functions named ata_at_*() take the position explicitly. The plain ata_read_sector() /
- * ata_write_sector() that the rest of the kernel (fs.h, icons, programs) has always used keep their
- * signature: they talk to the BOOT device -- the position this installation was started from -- and add
- * the installation's base LBA (non-zero only when MiniWin lives inside a partition, see storage.h), so
- * every "LBA 1029" in fs.h means "1029 sectors into MY installation" wherever that is. */
+ * The functions named ata_at_*() take the position explicitly; blk.h puts them in one table with the
+ * SATA (AHCI) disks and builds the ata_read_sector()/ata_write_sector() the rest of the kernel uses. */
 
 #define ATA_POSITIONS 4
 typedef struct { u16 io; u16 ctl; u8 slave; } ata_pos_t;
@@ -175,18 +172,6 @@ static inline int ata_at_identify(const ata_pos_t *p, ata_ident_t *id) {
     return total != 0;
 }
 
-/* ---- The BOOT device: what the rest of the kernel has always meant by "the disk" ---- */
-static int ata_boot_pos = 0;       /* index into ata_positions[]: the device this installation runs from */
-static u32 ata_boot_base = 0;      /* first sector of this installation on that device (0 = it owns the disk) */
-
-static inline int ata_read_sector(u32 lba, void *buf) {
-    const ata_pos_t *p = &ata_positions[ata_boot_pos];
-    return ata_at_read(p->io, p->slave, ata_boot_base + lba, buf);
-}
-
-static inline int ata_write_sector(u32 lba, const void *buf) {
-    const ata_pos_t *p = &ata_positions[ata_boot_pos];
-    return ata_at_write(p->io, p->slave, ata_boot_base + lba, buf);
-}
+/* The boot device and the sector calls the rest of the kernel uses live in blk.h (they dispatch to this file or to ahci.h). */
 
 #endif

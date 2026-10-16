@@ -107,6 +107,10 @@ static void outl(u16 p, u32 v) { (void)p; (void)v; }
 static u32  inl(u16 p) { (void)p; return 0; }
 static void io_wait(void) {}
 
+/* The sector the BIOS left at 0x7C00: st_boot_locate() fingerprints it. On the host it is this array. */
+static u8 fake_bootsect[512];
+#define MW_BOOTSECT_COPY ((const u8 *)fake_bootsect)
+
 #include "../../kernel/storage.h"
 #include "../../kernel/os_inst.h"
 
@@ -117,7 +121,7 @@ static int checks = 0, failures = 0;
 static void reset_all(void) {
     for (int d = 0; d < 4; d++) { if (dev_img[d]) { free(dev_img[d]); dev_img[d] = 0; } dev_kind[d] = DEV_NONE; dev_sectors[d] = 0; dev_lba48[d] = 0; dev_model[d] = ""; }
     chan_floating[0] = chan_floating[1] = 0;
-    st_scanned = 0; ata_boot_pos = 0; ata_boot_base = 0;
+    st_scanned = 0; blk_boot_dev = 0; blk_boot_base = 0;
     memset(st_devs, 0, sizeof st_devs);
     memset(writes_done, 0, sizeof writes_done);
     inj_write_fail_dev = inj_lost_dev = inj_read_fail_dev = -1; inj_write_fail_after = -1; inj_lost_lba = inj_read_fail_lba = 0xFFFFFFFFu;
@@ -183,8 +187,8 @@ static void test_install(void) {
       CHECK(zeros, "documents, programs, journals and headroom are zero -- the running system's user data was NOT copied"); }
     CHECK(writes_done[2] == ST_INSTALL_SECTORS, "exactly %d sector writes (got %ld)", ST_INSTALL_SECTORS, writes_done[2]);
     /* the new installation can find itself at boot */
-    st_boot_locate(0, 0x1234ABCD); CHECK(ata_boot_pos == 2 && ata_boot_base == 0, "booted from that disk, the kernel locates it by id (pos %d)", ata_boot_pos);
-    ata_boot_pos = 0; ata_boot_base = 0;
+    st_boot_locate(0, 0x1234ABCD); CHECK(blk_boot_dev == 2 && blk_boot_base == 0, "booted from that disk, the kernel locates it by id (pos %d)", blk_boot_dev);
+    blk_boot_dev = 0; blk_boot_base = 0;
 
     /* ---- 2. partition of a blank-MBR disk: chain loader added, partition marked active ---- */
     reset_all(); add_disk(0, 4096, "RUNNING"); add_disk(2, 16384, "TARGET"); fill_source(0, 0, 0); sentinel(2);
@@ -260,13 +264,13 @@ static void test_install(void) {
 
     /* ---- 9. running from a partition itself: sources are read relative to MiniWin's own base ---- */
     reset_all(); add_disk(0, 16384, "RUNNING"); add_disk(2, 8192, "TARGET"); fill_source(0, 4096, 0xAAAA0001); sentinel(2);
-    ata_boot_pos = 0; ata_boot_base = 4096;
+    blk_boot_dev = 0; blk_boot_base = 4096;
     st_resolve("ide300", &t); inj_read_fail_dev = -1;
     inst_id_override = 0; inst_begin(&t, 0xAAAA0001);
     CHECK(inst.id != 0 && inst.id != 0xAAAA0001, "a fresh id, different from the running system's (0x%08X)", inst.id);
     CHECK(run_job() == INST_PHASE_DONE && image_ok(2, 0, inst.id, 0, 4096, &bad), "an installed system can install a copy of itself (bad %u)", bad);
     CHECK(st_le32(sec(2, 0) + ST_BOOT_FIELDS_OFF + 4) != 0xAAAA0001, "the copy does not inherit the old install id");
-    ata_boot_pos = 0; ata_boot_base = 0;
+    blk_boot_dev = 0; blk_boot_base = 0;
     { u32 ids[64]; int distinct = 1; reset_all();
       for (int i = 0; i < 64; i++) { ids[i] = inst_new_id(i ? ids[i - 1] : 0); for (int k = 0; k < i; k++) if (ids[k] == ids[i]) distinct = 0; if (!ids[i]) distinct = 0; }
       CHECK(distinct, "64 generated install ids are non-zero and distinct"); }
@@ -389,37 +393,54 @@ int main(void) {
     CHECK(st_resolve("ide200", &t) == ST_OK, "a 3000-sector whole disk is big enough");
     CHECK(st_resolve("ide400", &t) == ST_E_NO_DEVICE, "an empty position: no such device");
     CHECK(st_resolve("ide501", &t) == ST_E_NO_DEVICE, "device 5 does not exist on IDE");
-    CHECK(st_resolve("sata101", &t) == ST_E_NO_DRIVER && st_resolve("nvme101", &t) == ST_E_NO_DRIVER && st_resolve("scsi101", &t) == ST_E_NO_DRIVER && st_resolve("usb101", &t) == ST_E_NO_DRIVER, "types without a driver are named as such");
+    CHECK(st_resolve("nvme101", &t) == ST_E_NO_DRIVER && st_resolve("scsi101", &t) == ST_E_NO_DRIVER && st_resolve("usb101", &t) == ST_E_NO_DRIVER, "types without a driver are named as such");
+    CHECK(st_resolve("sata101", &t) == ST_E_NO_DEVICE && st_resolve("sata900", &t) == ST_E_NO_DEVICE, "sata has a driver now: with no AHCI disk attached the answer is 'no such device'");
     CHECK(st_resolve("hdx101", &t) == ST_E_UNKNOWN_TYPE && st_resolve("ide1", &t) == ST_E_SYNTAX, "syntax errors come through");
 
     /* never the running system */
-    ata_boot_pos = 0; ata_boot_base = 0;
+    blk_boot_dev = 0; blk_boot_base = 0;
     CHECK(st_resolve("ide100", &t) == ST_E_OVERLAP_BOOT, "the whole boot disk overlaps the running installation");
     CHECK(st_resolve("ide101", &t) == ST_OK, "...but a partition that starts after the running installation is fine");
-    ata_boot_base = 2048;                                                     /* running from inside partition 1 of ide1 */
+    blk_boot_base = 2048;                                                     /* running from inside partition 1 of ide1 */
     CHECK(st_resolve("ide101", &t) == ST_E_OVERLAP_BOOT, "the partition MiniWin runs from is refused");
     CHECK(st_resolve("ide100", &t) == ST_E_OVERLAP_BOOT, "so is the whole disk that contains it");
     CHECK(st_resolve("ide300", &t) == ST_OK, "another disk is fine");
-    ata_boot_pos = 2; ata_boot_base = 0;
+    blk_boot_dev = 2; blk_boot_base = 0;
     CHECK(st_resolve("ide300", &t) == ST_E_OVERLAP_BOOT, "running from ide3 (base 0): its whole disk is refused");
     CHECK(st_resolve("ide301", &t) == ST_OK, "...but its partition 1 starts after the running installation, so it is allowed");
     CHECK(st_resolve("ide302", &t) == ST_E_TOO_SMALL, "(ide302 is still too small -- size is checked before overlap)");
     CHECK(st_resolve("ide305", &t) == ST_OK, "...while a logical partition beyond the running installation is allowed");
-    ata_boot_pos = 0; ata_boot_base = 0;
+    blk_boot_dev = 0; blk_boot_base = 0;
 
     /* ---------------- finding the boot device ---------------- */
     reset_all(); add_disk(0, 8192, "A"); add_disk(2, 8192, "B"); add_disk(3, 8192, "C");
     put32(sec(2, 100) + ST_BOOT_FIELDS_OFF, 100); put32(sec(2, 100) + ST_BOOT_FIELDS_OFF + 4, 0xCAFEF00D);   /* installed at base 100 on ide3 */
     st_boot_locate(100, 0xCAFEF00D);
-    CHECK(ata_boot_pos == 2 && ata_boot_base == 100, "boot device located by install id: pos %d base %u", ata_boot_pos, ata_boot_base);
+    CHECK(blk_boot_dev == 2 && blk_boot_base == 100, "boot device located by install id: pos %d base %u", blk_boot_dev, blk_boot_base);
     st_boot_locate(100, 0x12345678);
-    CHECK(ata_boot_pos == 0 && ata_boot_base == 100, "unknown id: falls back to the primary master, base still applied");
+    CHECK(blk_boot_dev == 0 && blk_boot_base == 100, "unknown id: falls back to the primary master, base still applied");
+    /* a stock image (id 0): the disk whose sector 0 is what the BIOS put at 0x7C00 -- code prefix + everything from the install fields on */
+    memset(fake_bootsect, 0, 512); for (int i = 0; i < ST_BOOT_CODE_BYTES; i++) fake_bootsect[i] = (u8)(0xB0 + i); fake_bootsect[510] = 0x55; fake_bootsect[511] = 0xAA;
+    reset_all(); add_disk(0, 8192, "A"); add_disk(2, 8192, "B"); add_disk(3, 8192, "C");
+    memcpy(sec(2, 0), fake_bootsect, 512);                                                     /* the boot sector sits on ide3 */
+    sec(2, 0)[100] ^= 0x5A; fake_bootsect[100] = sec(2, 0)[100] ^ 0x5A;                         /* (boot.asm rewrites its own disk-address packet in memory: bytes in between may differ) */
     st_boot_locate(0, 0);
-    CHECK(ata_boot_pos == 0 && ata_boot_base == 0, "a stock image (id 0) is the primary master with base 0");
+    CHECK(blk_boot_dev == 2 && blk_boot_base == 0, "a stock image is found by comparing sector 0 with the BIOS's copy: pos %d", blk_boot_dev);
+    memcpy(sec(3, 0), fake_bootsect, 512); sec(3, 0)[100] ^= 1;
+    st_boot_locate(0, 0);
+    CHECK(blk_boot_dev == 2, "an identical boot sector on a later disk does not steal it (first match wins)");
+    sec(2, 0)[ST_BOOT_FIELDS_OFF + 20] ^= 0xFF;                                                 /* damage the tail: ide3 no longer matches, ide4 does */
+    st_boot_locate(0, 0);
+    CHECK(blk_boot_dev == 3, "the install-field/partition-table tail is part of the fingerprint (pos %d)", blk_boot_dev);
+    reset_all(); add_disk(0, 8192, "A");
+    st_boot_locate(0, 0);
+    CHECK(blk_boot_dev == 0 && blk_boot_base == 0, "nothing matches (booted from a bus this build cannot drive): falls back to ide1");
+    reset_all(); add_disk(0, 8192, "A"); add_disk(2, 8192, "B"); add_disk(3, 8192, "C");
+    put32(sec(2, 100) + ST_BOOT_FIELDS_OFF, 100); put32(sec(2, 100) + ST_BOOT_FIELDS_OFF + 4, 0xCAFEF00D);
     put32(sec(3, 100) + ST_BOOT_FIELDS_OFF, 100); put32(sec(3, 100) + ST_BOOT_FIELDS_OFF + 4, 0xCAFEF00D);   /* a clone on ide4 */
     st_boot_locate(100, 0xCAFEF00D);
-    CHECK(ata_boot_pos == 2, "two disks with the same id: the first position wins, deterministically");
-    ata_boot_pos = 0; ata_boot_base = 0;
+    CHECK(blk_boot_dev == 2, "two disks with the same id: the first position wins, deterministically");
+    blk_boot_dev = 0; blk_boot_base = 0;
 
     test_install();
     printf("%d checks, %d failures\n", checks, failures);

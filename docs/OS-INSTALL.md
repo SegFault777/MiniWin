@@ -45,7 +45,7 @@ ide2  16 MB  QEMU HARDDISK
   whole disk: ide200
 ide3  (nothing)
 ide4  (nothing)
-sata nvme scsi usb: no driver yet
+nvme scsi usb: no driver yet
 > os-inst ide200
 target: ide200  (whole disk)
   QEMU HARDDISK, 16 MB
@@ -125,7 +125,7 @@ Only those 2048 sectors are written; the rest of a larger partition or disk is n
 | message | meaning |
 |---|---|
 | `bad id: expected <type><device><2-digit partition>` | the id is not `<type><digits>` with at least a disk digit and 2 partition digits |
-| `this build has no driver for that storage type yet (only ide)` | `sata`/`nvme`/`scsi`/`usb` |
+| `this build has no driver for that storage type yet (only ide, sata)` | `nvme`/`scsi`/`usb` |
 | `no such device` / `no such partition on that device` | see `os-inst list` |
 | `that is an extended-partition container ...` | choose a logical partition inside it |
 | `target is smaller than 1 MB` | too small for a 2048-sector installation |

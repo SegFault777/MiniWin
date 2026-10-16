@@ -123,9 +123,31 @@ typedef char mw_assert_netmem_fits[(MW_NETMEM_USED_END <= MW_NETMEM_END) ? 1 : -
 #define MW_FILES_ICON_ADDR  (MW_MISC_BASE + MW_ICON_CACHE_SIZE)   /* MiniFiles: 4 small icons x 16x16 x u32 = 4KB */
 #define MW_FILES_ICON_SIZE  0x00001000u
 
+/* The Korean font: 11172 syllables x 11 rows x u16 = 245,784 bytes, inflated here at boot from the LZ4 table in
+ * font_ko_data.h (63 KB in the image instead of 245 KB -- the image has a hard 512 KB budget, this region does not).
+ * Read-only after ko_font_init(). */
+#ifndef MW_KFONT_ADDR                                    /* (host tests point this at an ordinary array) */
+#define MW_KFONT_ADDR       0x007D0000u
+#endif
+#define MW_KFONT_SIZE       0x0003D000u
+
+/* Storage DMA: what the AHCI and SCSI drivers (ahci.h, mpt.h) hand to their controllers -- command lists, FIS
+ * receive areas, command tables, request/reply frames and a bounce sector per device. Plain RAM below 4 GB,
+ * identity-mapped, so a pointer IS the bus address. Each driver gets a fixed slice; the asserts keep them apart. */
+#ifndef MW_STOR_DMA_ADDR
+#define MW_STOR_DMA_ADDR    0x00810000u
+#endif
+#define MW_STOR_DMA_SIZE    0x00010000u
+#define MW_AHCI_DEV_STRIDE  0x00000800u   /* per SATA device: CLB 0x000, FIS 0x400, command table 0x500, bounce sector 0x600 */
+#define MW_AHCI_DEVS        8u
+#define MW_AHCI_DMA_ADDR    (MW_STOR_DMA_ADDR)
+#define MW_AHCI_DMA_SIZE    (MW_AHCI_DEV_STRIDE * MW_AHCI_DEVS)
+
 typedef char mw_assert_rd_fits[(MW_RD_END <= MW_MISC_BASE) ? 1 : -1];
 typedef char mw_assert_misc_fits[((MW_MISC_BASE + MW_ICON_CACHE_SIZE) <= MW_MWP_SYSCALL_ADDR) ? 1 : -1];
 typedef char mw_assert_files_icons_fit[((MW_FILES_ICON_ADDR + MW_FILES_ICON_SIZE) <= MW_MWP_SYSCALL_ADDR) ? 1 : -1];
+typedef char mw_assert_kfont_fits[((0x007D0000u + MW_KFONT_SIZE) <= MW_MWP_SYSCALL_ADDR && 0x007D0000u >= (MW_MISC_BASE + MW_ICON_CACHE_SIZE + MW_FILES_ICON_SIZE)) ? 1 : -1];
+typedef char mw_assert_stor_dma_fits[((0x00810000u + MW_STOR_DMA_SIZE) <= MW_MWP_SYSCALL_ADDR && 0x00810000u >= (0x007D0000u + MW_KFONT_SIZE) && MW_AHCI_DMA_SIZE <= MW_STOR_DMA_SIZE) ? 1 : -1];
 typedef char mw_assert_rd_above_backbuf[(MW_RD_BASE >= 0x0052C000u) ? 1 : -1];
 typedef char mw_assert_mwp_in_ram[(MW_MWP_END <= 0x0092C000u) ? 1 : -1];
 

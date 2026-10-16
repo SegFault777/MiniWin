@@ -282,7 +282,7 @@ static void term_cmd_tick(void) {
  * this command is for -- just MiniWin-scaled: no CPU/GPU/package-count
  * detection to do when this whole OS IS the software stack. */
 static void term_cmd_fetch(void) {
-    term_print("  MiniWin 1.1-alpha-1");
+    term_print("  MiniWin 1.1-alpha-2");
     char line[TERM_COLS + 1]; u32 l = 0;
     append_str(line, &l, sizeof(line), "  display: ");
     append_uint(line, &l, sizeof(line), VGA_WIDTH);
@@ -373,9 +373,10 @@ static void term_inst_help(void) {
     term_print("        00 = the whole disk");
     term_print("  sata103 = sata disk 1, part 3");
     term_print("  ide200  = whole ide disk 2");
-    term_print("this build drives ide disks only:");
-    term_print("  ide1 ide2 = primary master/slave");
-    term_print("  ide3 ide4 = secondary master/slave");
+    term_print("this build drives ide and sata:");
+    term_print("  ide1..4 = primary/secondary");
+    term_print("            master/slave");
+    term_print("  sata1.. = AHCI disks, in order");
     term_print("It copies the system, not your");
     term_print("files, and asks before writing.");
     term_print("Never the disk it is running from.");
@@ -385,10 +386,13 @@ static void term_inst_list(void) {
     if (!st_scanned) st_scan();
     char line[TERM_COLS + 1]; u32 l;
     int any = 0;
-    for (int d = 0; d < ATA_POSITIONS; d++) {
+    for (int d = 0; d < BLK_DEV_MAX; d++) {
+        int type = blk_type_of(d);
+        u32 num = (u32)(d - blk_first_of(type)) + 1;
+        if (!st_devs[d].present && type != ST_IDE) continue;     /* ide positions are always listed; sata disks only when found */
         char id[16]; l = 0;
-        st_format_id(ST_IDE, (u32)d + 1, 0, id);
-        id[4] = 0;                                              /* "ide1" -- the disk, without the partition digits */
+        st_format_id((st_type_t)type, num, 0, id);
+        { int n = 0; while (id[n]) n++; id[n - 2] = 0; }          /* "ide1" / "sata1" -- the disk, without the 2 partition digits */
         append_str(line, &l, sizeof(line), id);
         if (!st_devs[d].present) { append_str(line, &l, sizeof(line), "  (nothing)"); term_print(line); continue; }
         any = 1;
@@ -397,12 +401,12 @@ static void term_inst_list(void) {
         append_str(line, &l, sizeof(line), "  ");
         append_str(line, &l, sizeof(line), st_devs[d].model);
         term_print(line);
-        if (d == ata_boot_pos) term_print("  <- MiniWin is running from here");
+        if (d == blk_boot_dev) term_print("  <- MiniWin is running from here");
         st_part_t parts[16];
         int n = st_list_partitions(d, parts, 16);
         for (int i = 0; i < n; i++) {
             l = 0;
-            st_format_id(ST_IDE, (u32)d + 1, (u32)parts[i].number, id);
+            st_format_id((st_type_t)type, num, (u32)parts[i].number, id);
             append_str(line, &l, sizeof(line), "  ");
             append_str(line, &l, sizeof(line), id);
             append_str(line, &l, sizeof(line), "  ");
@@ -415,19 +419,19 @@ static void term_inst_list(void) {
                 char t[3] = { hx[parts[i].type >> 4], hx[parts[i].type & 15], 0 };
                 append_str(line, &l, sizeof(line), t);
             }
-            if (d == ata_boot_pos && st_overlap(parts[i].start, parts[i].sectors, ata_boot_base, ST_INSTALL_SECTORS))
+            if (d == blk_boot_dev && st_overlap(parts[i].start, parts[i].sectors, blk_boot_base, ST_INSTALL_SECTORS))
                 append_str(line, &l, sizeof(line), " (running)");
             term_print(line);
         }
         if (n == 0) term_print("  no partition table");
         l = 0;
-        st_format_id(ST_IDE, (u32)d + 1, 0, id);
+        st_format_id((st_type_t)type, num, 0, id);
         append_str(line, &l, sizeof(line), "  whole disk: ");
         append_str(line, &l, sizeof(line), id);
         term_print(line);
     }
-    if (!any) term_print("  no ide disk found");
-    term_print("sata nvme scsi usb: no driver yet");
+    if (!any) term_print("  no ide or sata disk found");
+    term_print("nvme scsi usb: no driver yet");
 }
 
 static void term_inst_start(void) {

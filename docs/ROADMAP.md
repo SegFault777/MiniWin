@@ -1,16 +1,17 @@
 # Roadmap and known limits
 
-## Where 1.1-alpha-1 stands
+## Where 1.1-alpha-2 stands
 
-New in this release: MiniFiles ([MINIFILES.md](MINIFILES.md)), `os-inst` ([OS-INSTALL.md](OS-INSTALL.md)) with the storage
+New in alpha-2: an AHCI driver (`sata` ids), a block layer, boot-disk location on every bus, and the Korean font stored
+compressed (kernel image ~337 KB of 512 KB). See [CHANGELOG.md](CHANGELOG.md). New in alpha-1: MiniFiles ([MINIFILES.md](MINIFILES.md)), `os-inst` ([OS-INSTALL.md](OS-INSTALL.md)) with the storage
 layer under it ([STORAGE-IDS.md](STORAGE-IDS.md), [BOOT-PROCESS.md](BOOT-PROCESS.md)), Terminal scrollback (Up/Down), the GPL-3.0
 license ([LICENSING.md](LICENSING.md)).
 
 ## Known limits
 
-* **Storage drivers.** Only legacy ATA (PIO, LBA28): IDE disks, and SATA disks that the firmware shows in IDE/compatibility
-  mode. AHCI-only SATA, NVMe, SCSI and USB storage are recognised in storage ids but have no driver, so `os-inst` cannot
-  reach them and a MiniWin installed on one could not run (the kernel itself reads its disk through these ports).
+* **Storage drivers.** Legacy ATA (PIO, LBA28: IDE disks, and SATA disks the firmware shows in IDE/compatibility mode) and AHCI
+  SATA (DMA; disks capped at the first 128 GB like IDE). NVMe, SCSI and USB storage are recognised in storage ids but have
+  no driver, so `os-inst` cannot reach them and a MiniWin installed on one could not run. AHCI has only been run on QEMU.
 * **Install targets.** An existing partition (MiniWin cannot create or resize partitions) of at least 1 MB, on a BIOS
   machine; whole-disk and primary-partition installs can start by themselves (the latter only behind a blank MBR),
   logical and GPT partitions need a boot manager; no UEFI loader.
@@ -20,21 +21,17 @@ license ([LICENSING.md](LICENSING.md)).
 * **A resolved ARP entry never expires**; the disk journal assumes a drive writes one sector atomically and in order.
 * **TLS.** TLS 1.2 only, no revocation checking, no name constraints (certificates that make either critical are refused).
 
-## The kernel size budget (the constraint that shapes the next releases)
+## The kernel size budget
 
-The kernel is loaded by real-mode BIOS calls into conventional memory (`0x10000`-`0x9FC00`), so image + `.bss` + stack must
-fit in about 576 KB, and the image has a 512 KB budget. At 1.1-alpha-1 about **6.5 KB** of each remain. Of the 517,614-byte
-image, **245,784 bytes are the Korean font bitmap** (`font8x8_ko`), nearly half of it. Options, cheapest first:
-
-1. Move the large `.bss` tables that never need to be low (`tls_conn` ~14 KB, the Notepad text buffers ~17 KB) to the
-   high-memory regions `memmap.h` already uses for network and engine buffers: a one-line macro per table plus zeroing at boot.
-2. Store the Korean font in a disk area (there is headroom at LBA 1935-2047, but only 56 KB of it, so 240 KB needs a layout change) and load
-   it into high memory at boot with the ATA driver that is already there; this frees almost half the image.
-3. Load the kernel above 1 MB (protected-mode loader), removing the 640 KB ceiling altogether.
+The kernel is loaded by real-mode BIOS calls into conventional memory (`0x10000`-`0x9FC00`), so image + `.bss` must fit in
+about 576 KB, and the image has a 512 KB budget. Since alpha-2 the 245,784-byte Korean font ships LZ4-compressed (62,755
+bytes, `kernel/lz.h`) and is inflated to `0x7D0000` at boot: the image is about 337 KB and `.bss` has about 186 KB of
+headroom, so the budget is no longer the constraint it was. Still available if it ever is: more tables inflated the
+same way (`tools/gen_hangul_font.py` has the compressor), moving `.bss` tables to high memory, loading the kernel above 1 MB.
 
 ## Ideas for the next alphas
 
-* **alpha-2:** an AHCI driver (SATA in native mode), the `sata` ids becoming real; a partition-table tool (`os-part`?);
-  MiniFiles: rename/copy, more slots; the kernel-size relief above (option 1 and 2 first).
+* **next:** SCSI (LSI Logic / MPT, what VMware and VirtualBox call "LSI Logic"), virtual-machine compatibility work; a
+  partition-table tool (`os-part`?); MiniFiles: rename/copy, more slots.
 * **later:** NVMe and USB storage; GPT/UEFI boot; reading a disk image into MiniFiles; per-file permissions are out of scope.
 * Translate MiniFiles' labels and messages to Korean.

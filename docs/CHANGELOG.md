@@ -1,5 +1,28 @@
 # Changelog
 
+## MiniWin 1.1-alpha-2 (2026-10)
+
+* **AHCI driver** (`kernel/ahci.h`): SATA disks behind an AHCI controller (PCI class 01:06:01) -- the way a PC in
+  native/AHCI mode, VirtualBox ("SATA"), VMware ("SATA") and QEMU's q35 / `ich9-ahci` present a disk. Polled, one command
+  at a time, 48-bit DMA through a bounce sector, a cache flush after every write, BIOS/OS ownership hand-off. The
+  `sata` storage ids are real: `sata1` is the first disk found. Before this a MiniWin booted from such a disk loaded
+  (the BIOS reads it) and then found no storage at all.
+* **Block layer** (`kernel/blk.h`): one numbered device table (ide1-4, then sata1-8) and `blk_read`/`blk_write`;
+  `ata_read_sector()`/`ata_write_sector()` keep their signatures and now dispatch to the boot device whatever bus it is on.
+  `ata_boot_pos`/`ata_boot_base` became `blk_boot_dev`/`blk_boot_base`.
+* **Finding the boot disk** now works on every bus: an installed system by its install id, a stock image by comparing
+  sector 0 with the copy the BIOS left at 0x7C00 (first match in table order). `pci_scan()` runs before it.
+  [BOOT-PROCESS.md](BOOT-PROCESS.md)
+* `os-inst`, `os-inst list` and MiniFiles' DISKS tab list and install onto `sataN` disks.
+* **Kernel size relief:** the Korean font (245,784 bytes, half the image) is stored LZ4-compressed (62,755 bytes,
+  `kernel/lz.h`, `tools/gen_hangul_font.py`) and inflated to `0x7D0000` at boot, verified by a checksum. Glyphs are
+  byte-identical; image 517,614 -> about 337 KB, `.bss` headroom 6.7 KB -> 186 KB.
+* Tests: `run_host_font.sh` (decoder + compressed table, ASan/UBSan), `qemu_storage.py` (eight boot topologies on IDE and
+  AHCI plus an `os-inst sata200` round trip), `run_host_storage.sh` 157 checks.
+
+Known: only QEMU's AHCI has been run; VirtualBox/VMware/real hardware use the same AHCI interface but are untested here.
+SATA ports behind a port multiplier, ATAPI, 4K-native disks and AHCI controllers in a RAID-mode (class 01:04) are not handled.
+
 ## MiniWin 1.1-alpha-1 (2026-10)
 
 * **MiniFiles** (`MINIFILES.MWP`): a file manager window with a FILES tab (documents and programs with size and a real

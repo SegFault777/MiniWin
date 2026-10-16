@@ -8,8 +8,8 @@
 * `build.sh` produces `build/os-image.img` (1 MB, the layout in [DISK-LAYOUT.md](DISK-LAYOUT.md)); `tools/install_all.sh`
   adds the sample program and the icon catalog. QEMU: `qemu-system-i386 -drive format=raw,file=build/os-image.img`.
 * Budgets that bite (all checked by `build.sh`): the **kernel image** has 512 KB (1024 sectors, 524,288 bytes) and
-  image + `.bss` + stack must end below `0x9FC00`. At 1.1-alpha-1 about **6.5 KB of image and 6.5 KB of `.bss`** remain; see
-  [ROADMAP.md](ROADMAP.md) for how that gets fixed. Check `build.sh`'s last lines before and after a feature.
+  image + `.bss` + stack must end below `0x9FC00`. At 1.1-alpha-2 about **187 KB of image and 186 KB of `.bss`** remain (the Korean font is stored compressed); see
+  [ROADMAP.md](ROADMAP.md) for the history of that budget. Check `build.sh`'s last lines before and after a feature.
 * The Terminal is **40 columns wide** and shows 14 rows (Up/Down scroll the history); every `term_print()` string must fit
   40 columns (it truncates silently).
 * Warnings are tracked: the build currently has 8 (2 come from the linker, the rest are old). A change should not add one.

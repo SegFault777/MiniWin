@@ -113,22 +113,19 @@ static inline void inst_begin(const st_target_t *t, u32 running_id) {
 static inline void inst_fail(int err, u32 lba) { inst.phase = INST_PHASE_FAILED; inst.err = err; inst.err_lba = lba; }
 
 static inline int inst_target_write(u32 lba, const u8 *buf) {
-    const ata_pos_t *p = &ata_positions[inst.t.pos];
-    return ata_at_write(p->io, p->slave, inst.t.base + lba, buf);
+    return blk_write(inst.t.pos, inst.t.base + lba, buf);
 }
 static inline int inst_target_read(u32 lba, u8 *buf) {
     for (int i = 0; i < 512; i++) buf[i] = 0;
-    const ata_pos_t *p = &ata_positions[inst.t.pos];
-    return ata_at_read(p->io, p->slave, inst.t.base + lba, buf);
+    return blk_read(inst.t.pos, inst.t.base + lba, buf);
 }
 
 /* After a PARTITION install: should the disk's own sector 0 learn how to start it? (see the INST_MBR_* notes) */
 static inline void inst_bootcode(void) {
     if (inst.t.whole) { inst.mbr_result = INST_MBR_NONE; return; }
-    const ata_pos_t *p = &ata_positions[inst.t.pos];
     u8 s[512];
     for (int i = 0; i < 512; i++) s[i] = 0;
-    if (!ata_at_read(p->io, p->slave, 0, s)) { inst.mbr_result = INST_MBR_KEPT; return; }   /* cannot even look: touch nothing */
+    if (!blk_read(inst.t.pos, 0, s)) { inst.mbr_result = INST_MBR_KEPT; return; }   /* cannot even look: touch nothing */
 
     int blank = 1;
     for (int i = 0; i < CHAIN_MBR_SIZE; i++) if (s[i]) { blank = 0; break; }
@@ -143,10 +140,10 @@ static inline void inst_bootcode(void) {
     for (int i = 0; i < CHAIN_MBR_SIZE; i++) s[i] = chain_mbr_code[i];
     for (int e = 0; e < 4; e++) s[446 + e * 16] = (e == (int)inst.t.part - 1) ? 0x80 : 0x00;   // exactly one active partition: ours
     s[510] = 0x55; s[511] = 0xAA;
-    if (!ata_at_write(p->io, p->slave, 0, s)) { inst.mbr_result = INST_MBR_KEPT; return; }
+    if (!blk_write(inst.t.pos, 0, s)) { inst.mbr_result = INST_MBR_KEPT; return; }
     u8 back[512];
     for (int i = 0; i < 512; i++) back[i] = 0;
-    if (!ata_at_read(p->io, p->slave, 0, back)) { inst.mbr_result = INST_MBR_KEPT; return; }
+    if (!blk_read(inst.t.pos, 0, back)) { inst.mbr_result = INST_MBR_KEPT; return; }
     for (int i = 0; i < 512; i++) if (back[i] != s[i]) { inst.mbr_result = INST_MBR_KEPT; return; }
     inst.mbr_result = INST_MBR_CHAIN;
 }
@@ -216,10 +213,9 @@ typedef struct {
 
 static inline void inst_probe(const st_target_t *t, inst_probe_t *out) {
     u8 s[512];
-    const ata_pos_t *p = &ata_positions[t->pos];
     out->readable = out->non_empty = out->has_mbr_sig = out->partitions = out->miniwin = 0;
     for (int i = 0; i < 512; i++) s[i] = 0;
-    if (!ata_at_read(p->io, p->slave, t->base, s)) return;
+    if (!blk_read(t->pos, t->base, s)) return;
     out->readable = 1;
     for (int i = 0; i < 512; i++) if (s[i]) { out->non_empty = 1; break; }
     out->has_mbr_sig = (s[510] == 0x55 && s[511] == 0xAA);

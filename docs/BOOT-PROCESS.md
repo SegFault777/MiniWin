@@ -30,17 +30,21 @@ grows past offset 432.
 
 ## Finding the boot disk
 
-The kernel reaches disks through the legacy ATA ports (`kernel/ata.h`). `kernel_boot()` calls
-`st_boot_locate(base, id)` (`kernel/storage.h`) before anything touches the disk:
+The kernel reaches disks through the legacy ATA ports (`kernel/ata.h`) and AHCI SATA ports (`kernel/ahci.h`), put in one
+device table by `kernel/blk.h`. `kernel_boot()` scans PCI, then calls `st_boot_locate(base, id)` (`kernel/storage.h`)
+before anything touches the disk. The BIOS can boot from any bus it has a driver for, and the kernel has to find the same
+disk again by itself; it walks the table in order (ide1-4, then sata1, sata2, ...) and takes the first disk whose sector
+at `base` matches:
 
-* `id == 0`: a stock image: primary master, base 0 (the behaviour before 1.1).
-* otherwise: identify each of the four IDE positions, read the sector at `base` and compare its offsets 432/436 with
-  `(base, id)`; the first match is the boot device. If nothing matches the kernel falls back to the primary master with
-  the base applied, and logs it.
+* `id != 0` (an installed system): offsets 432/436 equal `(base, id)`.
+* `id == 0` (a stock image): the sector equals the copy of the boot sector the BIOS left at `0x7C00`, compared on the
+  first 48 bytes (code) and bytes 432-511 (install fields, partition table, signature); `boot.asm` rewrites its own
+  disk-address packet in between, so the middle is not comparable.
 
-The result is the pair `ata_boot_pos` / `ata_boot_base`; `ata_read_sector()` and `ata_write_sector()` use them, so the
-filesystem, the icon catalog and the program loader need no change. The serial port logs
-`[BOOT] installation base LBA <n> on ide<k>`.
+If nothing matches (booted from a bus this build cannot drive) the kernel falls back to ide1 with the base applied, and
+logs it. The result is the pair `blk_boot_dev` / `blk_boot_base`; `ata_read_sector()` and `ata_write_sector()` use them, so
+the filesystem, the icon catalog and the program loader need no change. The serial port logs
+`[BOOT] installation base LBA <n> on <type><k>` (`ide1`, `sata2`, ...).
 
 ## The optional chain loader (`boot/chain_mbr.asm`)
 

@@ -28,6 +28,10 @@ static _Alignas(16) unsigned char g_rd_decls[RD_CSS_DECL_MAX * 12];
 static _Alignas(16) unsigned char g_rd_items[RD_ITEM_MAX * 32];
 static _Alignas(16) unsigned char g_rd_frags[RD_FRAG_MAX * 24];
 static _Alignas(16) unsigned char g_rd_scratch[RD_SCRATCH_SZ];
+/* The Korean font: the kernel inflates it to a fixed physical address (memmap.h MW_KFONT_ADDR); on the host it is this array.
+ * A test that draws Hangul calls ko_font_init() first (render.h pulls in font_ko_data.h, which defines it). */
+static _Alignas(16) unsigned char g_ko_font[0x3D000];
+#define MW_KFONT_ADDR ((size_t)g_ko_font)
 #define RD_NODES ((rd_node_t *)g_rd_nodes)
 #define RD_ATTRS ((rd_attr_t *)g_rd_attrs)
 #define RD_POOL  ((u8 *)g_rd_pool)

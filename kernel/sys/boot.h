@@ -21,6 +21,16 @@ static void kernel_boot(void) {
      * is exactly the unsafe operation being guarded against. */
     serial_init();
 
+    /* The Korean font ships compressed (font_ko_data.h) and has to be inflated before the first glyph is drawn. A
+     * failure here is a build bug, not a runtime condition: say so over serial and carry on (Hangul would be garbage,
+     * everything else works) rather than refuse to boot a machine whose only problem is a font. */
+    serial_puts(ko_font_init() ? "[BOOT] Korean font inflated and verified\n" : "[BOOT] WARNING: Korean font failed to inflate/verify\n");
+
+    /* The PCI bus has to be known before the disk is: the BIOS may have booted us from an AHCI SATA disk (or, later, a SCSI
+     * controller), and those are PCI devices the storage layer finds through this list. (It also dumps every device over
+     * serial, which is how real hardware IDs get confirmed before a driver is written against them.) */
+    pci_scan();
+
     /* Where does THIS installation live? The boot loader left two numbers at fixed low addresses (boot/boot.asm):
      * the sector this installation starts at, and its install id. A stock image has both 0 and owns the primary
      * master; one placed by os-inst may sit in a partition and/or on another IDE position, so find the disk that
@@ -28,9 +38,10 @@ static void kernel_boot(void) {
      * from here on is relative to this base on this device. */
     st_boot_locate(boot_info_u32(0x0504), boot_info_u32(0x0508));
     serial_puts("[BOOT] installation base LBA ");
-    serial_put_dec(ata_boot_base);
-    serial_puts(" on ide");
-    serial_put_dec((u32)ata_boot_pos + 1);
+    serial_put_dec(blk_boot_base);
+    serial_puts(" on ");
+    serial_puts(st_type_names[blk_type_of(blk_boot_dev)]);
+    serial_put_dec((u32)(blk_boot_dev - blk_first_of(blk_type_of(blk_boot_dev))) + 1);
     serial_putc('\n');
 
     vga_init_display();
@@ -75,12 +86,6 @@ static void kernel_boot(void) {
     mwp_syscalls.key_poll = keyboard_poll_key;
 
     mouse_init();
-
-    /* Diagnostic-only for now: dumps every PCI device found (including
-     * whatever network controller QEMU is presenting) out over the
-     * serial port, so real hardware IDs can be confirmed before writing
-     * a driver against them. Doesn't touch the GUI at all. */
-    pci_scan();
 
     /* If a supported NIC is present, bring the whole network stack up:
      * ARP cache, IPv4, ICMP, UDP, and a DHCP client that goes and asks

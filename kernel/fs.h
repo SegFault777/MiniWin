@@ -2,7 +2,7 @@
 #ifndef FS_H
 #define FS_H
 #include "io.h"
-#include "ata.h"
+#include "blk.h"
 
 /* This is NOT a filesystem. Let's be honest with each other. It's four
  * fixed parking spots on disk, each with a name tag already glued on.

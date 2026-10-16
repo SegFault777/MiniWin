@@ -177,21 +177,23 @@ static void files_refresh(void) {
         }
     } else {
         st_scan();
-        for (int d = 0; d < ATA_POSITIONS; d++) {
+        for (int d = 0; d < BLK_DEV_MAX; d++) {
             if (!st_devs[d].present) continue;
             char id[16];
-            st_format_id(ST_IDE, (u32)d + 1, 0, id);
-            int running_dev = (d == ata_boot_pos);
+            st_type_t dtype = (st_type_t)blk_type_of(d);
+            u32 dnum = (u32)(d - blk_first_of(dtype)) + 1;
+            st_format_id(dtype, dnum, 0, id);
+            int running_dev = (d == blk_boot_dev);
             files_add(FILES_KIND_DISK, (u8)d, (u8)running_dev, st_devs[d].sectors, id, running_dev ? "RUNNING" : "");
             st_part_t parts[8];
             int n = st_list_partitions(d, parts, 8);
             for (int i = 0; i < n; i++) {
-                st_format_id(ST_IDE, (u32)d + 1, (u32)parts[i].number, id);
+                st_format_id(dtype, dnum, (u32)parts[i].number, id);
                 const char *note = "";
                 int bad = 0;
                 if (parts[i].extended_container) { note = "EXTENDED"; bad = 1; }
                 else if (parts[i].sectors < ST_INSTALL_SECTORS) { note = "TOO SMALL"; bad = 1; }
-                else if (d == ata_boot_pos && st_overlap(parts[i].start, parts[i].sectors, ata_boot_base, ST_INSTALL_SECTORS)) { note = "RUNNING"; bad = 1; }
+                else if (d == blk_boot_dev && st_overlap(parts[i].start, parts[i].sectors, blk_boot_base, ST_INSTALL_SECTORS)) { note = "RUNNING"; bad = 1; }
                 files_add(FILES_KIND_PART, (u8)d, (u8)bad, parts[i].sectors, id, note);
             }
         }
