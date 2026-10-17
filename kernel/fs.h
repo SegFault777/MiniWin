@@ -628,7 +628,7 @@ static inline int prog_find_empty_slot(void) {
  * ============================================================ */
 #define ICON_BASE_LBA        1261
 #define ICON_SLOT_SECTORS    11    /* 1 header + 8 data (32x32) + 2 data (16x16) */
-#define ICON_MAX_SLOTS       56    /* the current bundle has 47 distinct icons; 9 spare */
+#define ICON_MAX_SLOTS       56    /* the current bundle has 55 distinct icons; 1 spare */
 #define ICON_NAME_MAXLEN     24    /* e.g. "TYPESCRIPT_CODE" -- room to spare */
 
 /* Compile-time guard: the journals must start after the icon catalog ends and the whole installation must fit

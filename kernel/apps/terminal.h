@@ -282,7 +282,7 @@ static void term_cmd_tick(void) {
  * this command is for -- just MiniWin-scaled: no CPU/GPU/package-count
  * detection to do when this whole OS IS the software stack. */
 static void term_cmd_fetch(void) {
-    term_print("  MiniWin 1.1-alpha-2");
+    term_print("  MiniWin 1.1-alpha-3");
     char line[TERM_COLS + 1]; u32 l = 0;
     append_str(line, &l, sizeof(line), "  display: ");
     append_uint(line, &l, sizeof(line), VGA_WIDTH);

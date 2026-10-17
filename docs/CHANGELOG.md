@@ -1,5 +1,14 @@
 # Changelog
 
+## MiniWin 1.1-alpha-3 (2026-10)
+
+* **Icon pack update** (`third_party/icon-bundle/`, installed by `tools/install_icons.py`): 55 distinct icons (was 47).
+  Renamed: `C#_Code` -> `CS_Code`, `C++_Code` -> `CPP_Code`, `Doc` -> `doc` (names are matched case-insensitively and
+  uppercased, so the catalog name `DOC` that the kernel looks up is unchanged). Added: `CSS_Code`, `Open`, `Open2`,
+  `Program`, `Refresh`, `USB_2_0`, `USB_3_0_3_1_3_2_Gen_1`, `USB_3_2_Gen_2`, and 16x16 versions of `NAS`, `FD_12`, `FD_144`,
+  `FD_50`, `Download_and_install` and `Upload`. Every previously existing icon is byte-identical, so no screen changes
+  (classic, dark and MiniFiles goldens still match). The 56-slot catalog now has one spare slot.
+
 ## MiniWin 1.1-alpha-2 (2026-10)
 
 * **AHCI driver** (`kernel/ahci.h`): SATA disks behind an AHCI controller (PCI class 01:06:01) -- the way a PC in
