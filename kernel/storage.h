@@ -22,7 +22,9 @@
  *   appearance, so an id keeps meaning the same drive when another one is added).
  *   `sata`: SATA disks behind an AHCI controller (ahci.h), numbered in discovery order: sata1 is the first disk of
  *   the first controller's lowest port. (Unlike IDE this number can shift when a disk is added or removed.)
- *   The other type names (nvme, scsi, usb) parse, so an id like "nvme101" gets a precise answer instead of "syntax
+ *   `scsi`: disks behind an LSI Logic / MPT controller (mpt.h: VMware and VirtualBox "LSI Logic", QEMU mptsas1068),
+ *   numbered the same way: controller by controller, SCSI target id by target id.
+ *   The other type names (nvme, usb) parse, so an id like "nvme101" gets a precise answer instead of "syntax
  *   error", and are reported as "no driver in this build". They are the next drivers to write, not an oversight.
  *
  * ---- Partition numbers -----------------------------------------------------------------------------------------
@@ -34,7 +36,7 @@
  */
 
 static const char *const st_type_names[ST_TYPE_COUNT] = { "ide", "sata", "nvme", "scsi", "usb" };
-static inline int st_type_has_driver(st_type_t t) { return t == ST_IDE || t == ST_SATA; }
+static inline int st_type_has_driver(st_type_t t) { return t == ST_IDE || t == ST_SATA || t == ST_SCSI; }
 
 /* result codes of st_parse_id() / st_resolve() */
 #define ST_OK              0
@@ -288,7 +290,7 @@ static inline const char *st_error_text(int e) {
     switch (e) {
         case ST_E_SYNTAX:       return "bad id: expected <type><device><2-digit partition>, e.g. ide101 (see os-inst ?)";
         case ST_E_UNKNOWN_TYPE: return "unknown storage type (known: ide sata nvme scsi usb)";
-        case ST_E_NO_DRIVER:    return "this build has no driver for that storage type yet (only ide, sata)";
+        case ST_E_NO_DRIVER:    return "this build has no driver for that storage type yet (only ide, sata, scsi)";
         case ST_E_NO_DEVICE:    return "no such device (see os-inst list)";
         case ST_E_NO_PARTITION: return "no such partition on that device (see os-inst list)";
         case ST_E_EXTENDED:     return "that is an extended-partition container; pick a logical partition inside it";
@@ -321,7 +323,7 @@ static inline int st_boot_sector_matches(const u8 *disk_sector) {
 
 /* The boot loader tells the kernel two numbers (see boot.asm): where this installation starts on its disk and its
  * unique install id (0 = a stock image that was never installed by os-inst). Which DISK is it on? The BIOS can boot
- * from IDE, AHCI SATA (and, later, SCSI) and the kernel has to find the same one again by itself:
+ * from IDE, AHCI SATA, SCSI (LSI Logic / MPT) and the kernel has to find the same one again by itself:
  *   - an installed system (id != 0): the device whose sector at `base` carries our base and id (ids are unique per
  *     install, os-inst makes sure a copy gets a different one);
  *   - a stock image (id == 0): the first device whose sector at `base` is the one the BIOS put at 0x7C00.

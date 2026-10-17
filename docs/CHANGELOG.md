@@ -1,5 +1,23 @@
 # Changelog
 
+## MiniWin 1.1-alpha-4 (2026-10)
+
+* **SCSI driver for LSI Logic / Fusion-MPT controllers** (`kernel/mpt.h`): the one message protocol behind VMware's "LSI
+  Logic" (parallel, PCI 1000:0030) and "LSI Logic SAS" (1000:0054) adapters, VirtualBox's "LsiLogic" and "LsiLogic SAS",
+  QEMU's `-device mptsas1068` and the real 1030/1064/1068 chips. Resets the IOC, runs IOC Facts / IOC Init / Port Enable
+  through the doorbell handshake, then polled SCSI I/O through request frames and the reply FIFO (one 512-byte sector per
+  command through a bounce buffer, SYNCHRONIZE CACHE after writes). Disks are found by probing target ids 0-15 (INQUIRY +
+  READ CAPACITY(10)); direct-access devices with 512-byte blocks only. `scsi1`, `scsi2`, ... are real storage ids now
+  (`os-inst list`, `os-inst scsiN00`, MiniFiles' DISKS tab), and the kernel finds a boot disk that sits behind a SCSI
+  controller like it does for IDE and SATA.
+* Tests: `tools/test/qemu_storage.py` gained six SCSI scenarios (boot from SCSI, two targets, `os-inst scsi200` written and
+  verified through MPT, the installed disk booted by install id, IDE boot with a SCSI disk present); the desktop golden is
+  pixel-identical when booted from SCSI; the three-bus topology (IDE image + AHCI + SCSI) boots.
+
+Known: run against QEMU's mptsas1068 only. VMware and VirtualBox implement the same MPI 1.x interface and the code follows
+the standard driver sequence, but neither has been run here. Not handled: BusLogic, VMware Paravirtual SCSI, virtio-scsi,
+NCR/Symbios 53C8xx, MPI2 chips (SAS2/SAS3: 1000:0072 and later), LUNs other than 0, disks with non-512-byte blocks.
+
 ## MiniWin 1.1-alpha-3 (2026-10)
 
 * **Icon pack update** (`third_party/icon-bundle/`, installed by `tools/install_icons.py`): 55 distinct icons (was 47).

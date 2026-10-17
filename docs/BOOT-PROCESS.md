@@ -30,10 +30,10 @@ grows past offset 432.
 
 ## Finding the boot disk
 
-The kernel reaches disks through the legacy ATA ports (`kernel/ata.h`) and AHCI SATA ports (`kernel/ahci.h`), put in one
+The kernel reaches disks through the legacy ATA ports (`kernel/ata.h`), AHCI SATA ports (`kernel/ahci.h`) and LSI Logic / MPT SCSI controllers (`kernel/mpt.h`), put in one
 device table by `kernel/blk.h`. `kernel_boot()` scans PCI, then calls `st_boot_locate(base, id)` (`kernel/storage.h`)
 before anything touches the disk. The BIOS can boot from any bus it has a driver for, and the kernel has to find the same
-disk again by itself; it walks the table in order (ide1-4, then sata1, sata2, ...) and takes the first disk whose sector
+disk again by itself; it walks the table in order (ide1-4, then sata1, sata2, ..., then scsi1, scsi2, ...) and takes the first disk whose sector
 at `base` matches:
 
 * `id != 0` (an installed system): offsets 432/436 equal `(base, id)`.

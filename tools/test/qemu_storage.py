@@ -74,4 +74,30 @@ log = qemu(["-drive", "file=%s,if=none,id=x,format=raw" % DISK2, "-device", "ide
             "-drive", "file=%s,if=none,id=y,format=raw" % IMG, "-device", "ide-hd,drive=y,bus=ide.0,unit=1,bootindex=0"], 12)
 check("IDE slave (ide2) boot", "LBA 0 on ide2" in boot_line(log), boot_line(log))
 
+# ---- SCSI (LSI Logic / MPT: QEMU's mptsas1068, the same message protocol VMware and VirtualBox emulate) ----
+def scsi(img, ident, boot=False):
+    n = "s%d" % ident
+    return ["-drive", "file=%s,if=none,id=%s,format=raw" % (img, n),
+            "-device", "scsi-hd,drive=%s,bus=scsi0.0,scsi-id=%d%s" % (n, ident, ",bootindex=0" if boot else "")]
+MPT = ["-device", "mptsas1068,id=scsi0"]
+
+log = qemu(MPT + scsi(IMG, 0, True), 12)
+check("SCSI: the kernel lists the disk", "[MPT] scsi1 = controller 0, target 0, 2048 sectors, QEMU QEMU HARDDISK" in log, log[-300:])
+check("SCSI: ...and finds its own boot disk", "LBA 0 on scsi1" in boot_line(log), boot_line(log))
+
+if os.path.exists(DISK2): os.remove(DISK2)
+subprocess.check_call(["truncate", "-s", "8M", DISK2])
+cmds = ["wait 14", "move 343 25", "click", "click", "wait 2", "move 300 307", "click", "type os-inst list", "key ret", "wait 2",
+        "type os-inst scsi200", "key ret", "wait 2", "type YES", "key ret", "wait 25", "shot /tmp/mw_storage_scsi_done.ppm"]
+log = qemu(MPT + scsi(IMG, 0, True) + scsi(DISK2, 3), mon_cmds=cmds)
+check("SCSI: two targets (0 and 3) are both found", "target 3, 16384 sectors" in log, log[-300:])
+a = open(DISK2, "rb").read(1048576)
+diff = sorted({i // 512 for i in range(1048576) if a[i] != b[i]})
+check("os-inst scsi200: written through the MPT controller and verified", diff[:1] == [0] and all(d == 0 or 1029 <= d <= 2047 for d in diff) and a[436:440] != b"\0\0\0\0", str(diff[:10]))
+log = qemu(MPT + scsi(IMG, 0) + scsi(DISK2, 3, True), 14)
+check("installed disk on SCSI target 3 is found by its install id", "LBA 0 on scsi2" in boot_line(log), boot_line(log))
+
+log = qemu(["-drive", "file=%s,format=raw" % IMG] + MPT + scsi(DISK2, 1), 14)
+check("IDE boot with an unrelated SCSI disk present stays on ide1", "LBA 0 on ide1" in boot_line(log), boot_line(log))
+
 print("%d failure(s)" % fails); sys.exit(1 if fails else 0)

@@ -205,8 +205,9 @@ kernel/mwp_link.ld  linker script for building a .mwp flat binary
 kernel/font_latin_data.h  generated 11x11 Latin glyph table (see tools/gen_latin_font.py)
 kernel/font_ko_data.h     generated 11x11 Hangul glyph table, LZ4-compressed (see tools/gen_hangul_font.py)
 kernel/lz.h              LZ4 block decoder (inflates the Korean font at boot)
-kernel/blk.h             block-device table + boot-disk sector I/O (ide, sata)
+kernel/blk.h             block-device table + boot-disk sector I/O (ide, sata, scsi)
 kernel/ahci.h            AHCI SATA driver
+kernel/mpt.h             LSI Logic / Fusion-MPT SCSI driver (VMware/VirtualBox "LSI Logic")
 kernel/nic.h        common NIC driver interface (rtl8139.h, e1000.h implement it)
 kernel/net.h        shared endianness/checksum helpers for the network stack
 kernel/arp.h        ARP cache + request/reply

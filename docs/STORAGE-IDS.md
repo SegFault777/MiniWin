@@ -39,6 +39,14 @@ ids, below), disks without LBA. Sizes are capped at what LBA28 can address (2^28
 number can shift when a disk is added or removed -- check `os-inst list` before installing. Sizes are capped at 2^28 - 1
 sectors like IDE.
 
+## scsi ids
+
+`scsi1`, `scsi2`, ... are SCSI disks behind LSI Logic / Fusion-MPT controllers (PCI vendor 1000, devices 0030, 0050, 0054,
+0056, 0058: what VMware and VirtualBox call "LSI Logic" / "LSI Logic SAS", and QEMU's `mptsas1068`), up to 8, numbered in
+discovery order: controller by controller, SCSI target id (0-15, LUN 0) by target id. Only direct-access devices with
+512-byte blocks are listed (CD-ROMs, tapes and 4K-block disks are skipped); sizes are capped at 2^28 - 1 sectors like IDE.
+Like `sata`, the number shifts when a disk is added or removed -- check `os-inst list` first.
+
 ## Partition numbers
 
 * **MBR.** `01`-`04` are the four primary entries by table position (a gap stays a gap: entries 1 and 3 in use are

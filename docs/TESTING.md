@@ -14,7 +14,7 @@ headers with `gcc` and need no emulator; the **QEMU** suites boot the real image
 | x509 | `tools/test/run_host_x509.sh` | certificate extensions: 19 OpenSSL-generated variants (critical/non-critical, keyUsage, CA flags) |
 | storage | `tools/test/run_host_storage.sh` | storage ids, IDENTIFY, MBR/EBR/GPT parsing, `st_resolve` refusals, and **the installer**: whole disk, partition, existing boot code, logical, GPT, write failures, silently lost writes, read failures, self-install. Fake four-position IDE controller; ASan + UBSan |
 
-Counts at 1.1-alpha-2: web 134, engine 68, crypto 952, critical 416, x509 22, storage 157, font 15 (`run_host_font.sh`); `tools/test/qemu_storage.py` boots eight IDE/AHCI disk topologies in QEMU. A suite prints
+Counts at 1.1-alpha-2: web 134, engine 68, crypto 952, critical 416, x509 22, storage 157, font 15 (`run_host_font.sh`); `tools/test/qemu_storage.py` boots fourteen IDE/AHCI/SCSI disk topologies in QEMU. A suite prints
 `N checks, M failures` and exits non-zero on any failure.
 
 ## QEMU suites (minutes)

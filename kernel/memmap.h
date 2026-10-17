@@ -142,12 +142,16 @@ typedef char mw_assert_netmem_fits[(MW_NETMEM_USED_END <= MW_NETMEM_END) ? 1 : -
 #define MW_AHCI_DEVS        8u
 #define MW_AHCI_DMA_ADDR    (MW_STOR_DMA_ADDR)
 #define MW_AHCI_DMA_SIZE    (MW_AHCI_DEV_STRIDE * MW_AHCI_DEVS)
+#define MW_MPT_DMA_ADDR     (MW_STOR_DMA_ADDR + 0x00004000u)   /* SCSI (LSI Logic / MPT): one 4 KB slice per controller */
+#define MW_MPT_CTRL_STRIDE  0x00001000u
+#define MW_MPT_CTRLS        2u
+#define MW_MPT_DMA_SIZE     (MW_MPT_CTRL_STRIDE * MW_MPT_CTRLS)
 
 typedef char mw_assert_rd_fits[(MW_RD_END <= MW_MISC_BASE) ? 1 : -1];
 typedef char mw_assert_misc_fits[((MW_MISC_BASE + MW_ICON_CACHE_SIZE) <= MW_MWP_SYSCALL_ADDR) ? 1 : -1];
 typedef char mw_assert_files_icons_fit[((MW_FILES_ICON_ADDR + MW_FILES_ICON_SIZE) <= MW_MWP_SYSCALL_ADDR) ? 1 : -1];
 typedef char mw_assert_kfont_fits[((0x007D0000u + MW_KFONT_SIZE) <= MW_MWP_SYSCALL_ADDR && 0x007D0000u >= (MW_MISC_BASE + MW_ICON_CACHE_SIZE + MW_FILES_ICON_SIZE)) ? 1 : -1];
-typedef char mw_assert_stor_dma_fits[((0x00810000u + MW_STOR_DMA_SIZE) <= MW_MWP_SYSCALL_ADDR && 0x00810000u >= (0x007D0000u + MW_KFONT_SIZE) && MW_AHCI_DMA_SIZE <= MW_STOR_DMA_SIZE) ? 1 : -1];
+typedef char mw_assert_stor_dma_fits[((0x00810000u + MW_STOR_DMA_SIZE) <= MW_MWP_SYSCALL_ADDR && 0x00810000u >= (0x007D0000u + MW_KFONT_SIZE) && MW_AHCI_DMA_SIZE <= 0x4000u && 0x4000u + MW_MPT_DMA_SIZE <= MW_STOR_DMA_SIZE) ? 1 : -1];
 typedef char mw_assert_rd_above_backbuf[(MW_RD_BASE >= 0x0052C000u) ? 1 : -1];
 typedef char mw_assert_mwp_in_ram[(MW_MWP_END <= 0x0092C000u) ? 1 : -1];
 
