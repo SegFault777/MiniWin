@@ -84,8 +84,9 @@ dap:
 dap_lba:
     dd 0, 0
 
-msg_noactive: db "MiniWin: no active partition", 0
-msg_readerr:  db "MiniWin: cannot read the partition", 0
-msg_badsig:   db "MiniWin: partition is not bootable", 0
+; Named like every other boot error (docs/BOOT-PROCESS.md, "Error codes"): MW-C* come from this partition chain loader.
+msg_noactive: db "MiniWin ERROR MW-C01 NO_ACTIVE_PARTITION", 0
+msg_readerr:  db "MiniWin ERROR MW-C02 PARTITION_READ_FAILED", 0
+msg_badsig:   db "MiniWin ERROR MW-C03 PARTITION_NOT_BOOTABLE", 0
 
 times 446 - ($ - $$) db 0

@@ -30,6 +30,7 @@
 #include "speaker.h"
 #include "rtc.h"
 #include "serial.h"
+#include "fatal.h"
 #include "pci.h"
 #include "nic.h"
 #include "rtl8139.h"

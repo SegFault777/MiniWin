@@ -1,9 +1,18 @@
+<p align="center">
+  <img src="docs/logo/MiniWin_LOGO_x6.png" alt="MiniWin 1.1" width="768" height="192">
+</p>
+
 # MiniWin
 
 A dependency-free 32-bit x86 desktop OS that boots from a single MBR
 disk image straight into a Windows-95-flavored GUI: real mode → protected
-mode by hand, a from-scratch VGA/mouse/keyboard/ATA stack, and a windowing
-system with no libc, no bootloader framework, and no borrowed kernel code.
+mode by hand, a from-scratch VGA/mouse/keyboard stack with its own disk
+drivers (IDE, SATA/AHCI, SCSI, NVMe), and a windowing system with no libc, no
+bootloader framework, and no borrowed kernel code.
+
+**Current version: 1.1-alpha-6** ([changelog](docs/CHANGELOG.md)). Developed and
+tested on QEMU; for VMware / VirtualBox see
+[docs/VIRTUAL-MACHINES.md](docs/VIRTUAL-MACHINES.md).
 
 ![Desktop](screenshots/01-boot-desktop.png)
 
@@ -13,7 +22,11 @@ system with no libc, no bootloader framework, and no borrowed kernel code.
   VBE (VESA) video mode via a genuine BIOS call, switches to protected
   mode, and loads the kernel via BIOS INT13h extended (LBA) reads, 512KB
   budget, all real addressing under 1MB so it works with no A20
-  shenanigans during load. Split into two stages (`boot/boot.asm`, an
+  shenanigans during load. The disk reads are written for unforgiving
+  BIOSes (packet rebuilt per call, nothing kept in registers across the
+  call, retry after a disk reset, then smaller reads), and every boot
+  error has a code and a name (`MW-B01` ... `MW-K10`, table in
+  `docs/BOOT-PROCESS.md`) instead of a generic message. Split into two stages (`boot/boot.asm`, an
   exactly-512-byte MBR, and `boot/stage2.asm`, everything else) once
   finding a real truecolor VBE mode by actually walking the BIOS's own
   mode list -- rather than just requesting a fixed, hoped-for mode
@@ -37,13 +50,18 @@ system with no libc, no bootloader framework, and no borrowed kernel code.
   silently corrupting memory on a machine too small for it.
 - **Kernel**: freestanding C (`kernel/kernel.c` + headers), no libc. A
   PS/2 mouse + keyboard driver, PC speaker beep, a tiny 4-slot
-  ATA-backed filesystem, PCI enumeration, and a COM1 serial debug log.
+  crash-safe filesystem on the boot disk, PCI enumeration, disk drivers
+  for legacy IDE, SATA (AHCI), SCSI (LSI Logic / Fusion-MPT) and NVMe
+  behind one block-device table, ACPI power-off, a CPU-exception handler
+  that shows a named error screen, and a COM1 serial debug log.
 - **Desktop**: draggable/resizable/minimizable/maximizable windows with
   real overlapping z-order (click a window, it comes to front), edge/
   corner resize handles that swap the cursor to a matching directional
   arrow (horizontal, vertical, or either diagonal) while hovering, a
   Windows-95-style Start Menu with a cascading Shut Down/Restart flyout
-  (both genuinely halt/reboot the machine), and a taskbar that lists
+  (Restart reboots; Shut Down powers the machine off through ACPI and
+  falls back to the classic "safe to turn off" screen where the firmware
+  has none), and a taskbar that lists
   minimized windows in the order you minimized them.
 - **Clock**: bottom-right of the taskbar, reading the real CMOS hardware
   clock (`kernel/rtc.h`) -- not a simulated counter. Shows "3:45 PM"
@@ -117,14 +135,13 @@ system with no libc, no bootloader framework, and no borrowed kernel code.
   is the from-scratch proof this actually works end to end: compiled
   independently, installed onto disk with `tools/install_mwp.py`,
   loaded and run at boot with no build-time link to the kernel at all.
-- **Icon bundle**: a hand-made set of 16x16/32x32 RGBA icons
-  (`third_party/icon-bundle/`, `tools/install_icons.py`) -- Notepad,
-  Setting, Web, TrashCan, Folder, PC, FileManager, and a set of
-  per-language file-type icons for a future File Manager -- installed
-  into a disk-based icon catalog (`kernel/fs.h`'s `ICON_*` constants).
-  Storage and read-back only for now; the desktop/window chrome still
-  draws the older hand-coded vector glyphs until a later pass swaps
-  the rendering over to blit these bitmaps instead.
+- **Icon bundle** (CC BY-SA 4.0, by SegFault777): a hand-made set of 61
+  16x16/32x32 RGBA icons (`third_party/icon-bundle/`,
+  `tools/install_icons.py`) -- apps, drives per bus, file types, status
+  icons (warning, error, help, ...) -- installed into a disk-based icon
+  catalog of 64 slots (`kernel/fs.h`'s `ICON_*` constants). The desktop
+  icons and MiniFiles draw from it; the rest are installed and waiting
+  for the UI to use them.
 - **Hangul**: a real IME (2-beolsik-style jamo composition) backed by a
   full modern-Hangul-syllable bitmap font (11,172 glyphs, generated from
   Galmuri11 -- see `tools/gen_hangul_font.py`). English text shares the
@@ -176,6 +193,13 @@ qemu-system-i386 -drive file=build/os-image.img,format=raw \
 platform's QEMU build supports -- run `qemu-system-i386 -audio-help` to
 list them.)
 
+Other disks and virtual machines: the same image boots from an IDE disk,
+an AHCI SATA disk (`-device ich9-ahci`), a SCSI disk on an LSI Logic
+controller (`-device mptsas1068`) or an NVMe SSD (`-device nvme`), and the
+kernel finds the disk it came from by itself. For VMware and VirtualBox
+(legacy BIOS, hard disk, supported controllers and NICs, error table) see
+[docs/VIRTUAL-MACHINES.md](docs/VIRTUAL-MACHINES.md).
+
 To attach a NIC (for PCI/driver work in progress -- see Roadmap):
 
 ```bash
@@ -208,6 +232,9 @@ kernel/lz.h              LZ4 block decoder (inflates the Korean font at boot)
 kernel/acpi.h            ACPI soft-off (real power-off in VMs and PCs)
 kernel/blk.h             block-device table + boot-disk sector I/O (ide, sata, scsi)
 kernel/ahci.h            AHCI SATA driver
+kernel/nvme.h            NVMe SSD driver
+kernel/cursor_data.h       generated mouse cursor shapes (icon pack, CC BY-SA 4.0)
+kernel/fatal.h           named full-screen errors + CPU exception handlers (IDT)
 kernel/mpt.h             LSI Logic / Fusion-MPT SCSI driver (VMware/VirtualBox "LSI Logic")
 kernel/nic.h        common NIC driver interface (rtl8139.h, e1000.h implement it)
 kernel/net.h        shared endianness/checksum helpers for the network stack
@@ -253,10 +280,14 @@ tools/bdf_common.py        shared BDF-parsing logic both generators above use
 tools/build_mwp.sh         compiles one programs/*.c into a loadable build/*.mwp
 tools/install_mwp.py       writes a built .mwp into an os-image.img program slot
 tools/install_icons.py     writes the icon bundle into an os-image.img icon catalog
+tools/gen_cursors.py       generates kernel/cursor_data.h (the mouse cursors) from the icon pack
+docs/logo/                 the MiniWin logo (original + the 6x nearest-neighbour version the README shows)
 tools/test/         host-side tests: run_host_engine.sh (HTML engine + fuzzer), run_host_web.sh (HTTP),
                     run_host_crypto.sh; ui_golden.sh (boots QEMU, drives the desktop, compares 15 screenshots
                     pixel-for-pixel against golden/ and golden_dark/); host_render.c (HTML -> PPM);
-                    qemu_shot.sh/qemu_mon.py (boot, click, drag, type, screenshot)
+                    qemu_shot.sh/qemu_mon.py (boot, click, drag, type, screenshot);
+                    run_host_storage.sh / run_host_font.sh; qemu_storage.py (boots IDE/AHCI/SCSI/NVMe
+                    disk topologies and runs os-inst across them); qemu_power.py (shutdown really powers off)
 third_party/        bundled font/icon source + each one's own license/notice
 build.sh            nasm + gcc + ld pipeline -> build/os-image.img
 screenshots/        yep
@@ -276,8 +307,8 @@ programs/ for what a real loadable one looks like.
 This is being actively built out. Current honest state of the bigger
 asks:
 
-- **Persistence**: real, already working -- saved files live on the ATA
-  disk image itself (`kernel/fs.h`), and survive across QEMU runs as long
+- **Persistence**: real, already working -- saved files live on the disk
+  image itself (`kernel/fs.h`), and survive across QEMU runs as long
   as `os-image.img` isn't rebuilt from scratch. Saves are crash-safe (a
   write-ahead journal plus a CRC-32 per file: after a power cut you get the
   old file or the whole new one, and damaged files are refused instead of
@@ -441,6 +472,13 @@ GPL-3.0-only` line.
 
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+The **icon pack** (`third_party/icon-bundle/`, also written into the icon
+catalog of every disk image) is *not* GPL: it is licensed
+**CC BY-SA 4.0** by its author, SegFault777 -- credit the author and share
+adaptations alike (<https://creativecommons.org/licenses/by-sa/4.0/>). Code and
+artwork are separate works under separate licenses, distributed together on the
+disk image.
 
 Bundled third-party material keeps the license of its own authors (the
 Galmuri and Dalmoori fonts, the CA root certificates, and the data files

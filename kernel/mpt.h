@@ -23,6 +23,13 @@
  * 512-byte blocks, capped at 2^28 - 1 sectors like the rest of the storage layer). Written against the MPI 1.5 message
  * layouts and run against QEMU's mptsas1068; not yet run on VMware, VirtualBox or real controllers. */
 
+/* The drivers fill DMA structures with ordinary stores and then ring a doorbell with a volatile access (and read results back
+ * the same way round): the compiler must not reorder the two, so each hand-off is bracketed with a compiler barrier. x86 itself
+ * keeps stores and loads in order for this purpose. */
+#ifndef MW_BARRIER
+#define MW_BARRIER() __asm__ volatile ("" ::: "memory")
+#endif
+
 #define MPT_MAX_CTRL  ((int)MW_MPT_CTRLS)
 #define MPT_MAX_DEVS  8
 #define MPT_PROBE_IDS 16
@@ -130,10 +137,12 @@ static inline int mpt_scsi(const mpt_ctrl_t *c, u8 target, const u8 *cdb, int cd
     /* one simple 32-bit scatter/gather element: last, end of buffer, end of list, direction */
     f[12] = (0x10u | 0x80u | 0x40u | 0x01u | (write ? 0x04u : 0u)) << 24 | len;
     f[13] = len ? (u32)(c->dma + MPT_OFF_BOUNCE) : 0;
+    MW_BARRIER();
     mpt_wr(c, MPT_REQ_FIFO, (u32)f);
     for (u32 i = 0; i < MPT_POLL * 8u; i++) {
         u32 r = mpt_rd(c, MPT_REPLY_FIFO);
         if (r == 0xFFFFFFFFu) continue;
+        MW_BARRIER();
         if (!(r & 0x80000000u)) return 1;                    /* context reply: the request succeeded */
         u32 frame = (r & 0x7FFFFFFFu) << 1;                  /* address reply: the IOC wrote a reply frame */
         const u8 *rp = (const u8 *)frame;

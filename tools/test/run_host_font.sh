@@ -6,6 +6,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 python3 ../gen_hangul_font.py --check
+python3 ../gen_cursors.py --check              # the cursor shapes are generated from the icon pack too
 python3 ../gen_hangul_font.py --dump-raw /tmp/ko_raw.bin
 gcc -O1 -g -Wall -Wextra -Wno-unused-function -Wno-int-to-pointer-cast -fsanitize=address,undefined -fno-sanitize-recover=undefined -o /tmp/host_lz_test host_lz_test.c
 /tmp/host_lz_test /tmp/ko_raw.bin

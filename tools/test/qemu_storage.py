@@ -100,4 +100,27 @@ check("installed disk on SCSI target 3 is found by its install id", "LBA 0 on sc
 log = qemu(["-drive", "file=%s,format=raw" % IMG] + MPT + scsi(DISK2, 1), 14)
 check("IDE boot with an unrelated SCSI disk present stays on ide1", "LBA 0 on ide1" in boot_line(log), boot_line(log))
 
+# ---- NVMe (QEMU's `nvme` device: one controller per -device, namespace 1 is the drive) ----
+def nvme(img, n, boot=False):
+    return ["-drive", "file=%s,if=none,id=n%d,format=raw" % (img, n), "-device", "nvme,drive=n%d,serial=mw%d%s" % (n, n, ",bootindex=0" if boot else "")]
+
+if os.path.exists(DISK2): os.remove(DISK2)
+subprocess.check_call(["truncate", "-s", "8M", DISK2])
+log = qemu(nvme(IMG, 0, True), 12)
+check("NVMe: the kernel lists the SSD", "[NVMe] nvme1 = controller 0, namespace 1, 2048 sectors" in log, log[-300:])
+check("NVMe: ...and finds its own boot disk", "LBA 0 on nvme1" in boot_line(log), boot_line(log))
+
+cmds = ["wait 14", "move 343 25", "click", "click", "wait 2", "move 300 307", "click", "type os-inst list", "key ret", "wait 2",
+        "type os-inst nvme200", "key ret", "wait 2", "type YES", "key ret", "wait 25", "shot /tmp/mw_storage_nvme_done.ppm"]
+log = qemu(nvme(IMG, 0, True) + nvme(DISK2, 1), mon_cmds=cmds)
+check("NVMe: two controllers are both found", "nvme2 = controller 1, namespace 1, 16384 sectors" in log, log[-300:])
+a = open(DISK2, "rb").read(1048576)
+diff = sorted({i // 512 for i in range(1048576) if a[i] != b[i]})
+check("os-inst nvme200: written through NVMe and verified", diff[:1] == [0] and all(d == 0 or 1029 <= d <= 2047 for d in diff) and a[436:440] != b"\0\0\0\0", str(diff[:10]))
+log = qemu(nvme(IMG, 0) + nvme(DISK2, 1, True), 14)
+check("installed disk on the 2nd NVMe controller is found by its install id", "LBA 0 on nvme2" in boot_line(log), boot_line(log))
+
+log = qemu(["-drive", "file=%s,format=raw" % IMG] + nvme(DISK2, 1), 14)
+check("IDE boot with an unrelated NVMe SSD present stays on ide1", "LBA 0 on ide1" in boot_line(log), boot_line(log))
+
 print("%d failure(s)" % fails); sys.exit(1 if fails else 0)

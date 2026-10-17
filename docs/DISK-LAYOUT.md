@@ -13,12 +13,12 @@ base**: 0 for an image or a whole-disk install, the partition's first sector for
 | 5-1028 | the kernel (budget 512 KB = 1024 sectors) |
 | 1029-1064 | 4 document slots, 9 sectors each (1 header + 8 data): `NEWDOC.TXT`, `NEWDOC_2.TXT`, `NEWDOC_3.TXT`, `NEWDOC_4.TXT` |
 | 1065-1260 | 4 program (`.mwp`) slots, 49 sectors each (1 header + 48 data) |
-| 1261-1876 | icon catalog: 56 slots x 11 sectors (1 header + 32x32 + 16x16 bitmaps; written offline by `tools/install_icons.py`) |
-| 1877-1885 | document journal (1 header + 8 data) |
-| 1886-1934 | program journal (1 header + 48 data) |
-| 1935-2047 | free headroom (~56 KB) |
+| 1261-1964 | icon catalog: 64 slots x 11 sectors (1 header + 32x32 + 16x16 bitmaps; written offline by `tools/install_icons.py`) |
+| 1965-1973 | document journal (1 header + 8 data) |
+| 1974-2022 | program journal (1 header + 48 data) |
+| 2023-2047 | free headroom (~12 KB) |
 
-`os-inst` copies LBA 0-1028 and 1261-1876, zeroes everything else, and patches the boot sector's install fields
+`os-inst` copies LBA 0-1028 and 1261-1964, zeroes everything else, and patches the boot sector's install fields
 ([OS-INSTALL.md](OS-INSTALL.md)).
 
 ## Slot headers

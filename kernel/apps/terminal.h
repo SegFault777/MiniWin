@@ -282,7 +282,7 @@ static void term_cmd_tick(void) {
  * this command is for -- just MiniWin-scaled: no CPU/GPU/package-count
  * detection to do when this whole OS IS the software stack. */
 static void term_cmd_fetch(void) {
-    term_print("  MiniWin 1.1-alpha-5");
+    term_print("  MiniWin 1.1-alpha-6");
     char line[TERM_COLS + 1]; u32 l = 0;
     append_str(line, &l, sizeof(line), "  display: ");
     append_uint(line, &l, sizeof(line), VGA_WIDTH);
@@ -373,11 +373,12 @@ static void term_inst_help(void) {
     term_print("        00 = the whole disk");
     term_print("  sata103 = sata disk 1, part 3");
     term_print("  ide200  = whole ide disk 2");
-    term_print("this build drives ide, sata, scsi:");
+    term_print("this build drives ide sata scsi nvme:");
     term_print("  ide1..4 = primary/secondary");
     term_print("            master/slave");
     term_print("  sata1.. = AHCI disks, in order");
     term_print("  scsi1.. = LSI Logic (MPT) disks");
+    term_print("  nvme1.. = NVMe SSDs (namespace 1)");
     term_print("It copies the system, not your");
     term_print("files, and asks before writing.");
     term_print("Never the disk it is running from.");
@@ -431,8 +432,8 @@ static void term_inst_list(void) {
         append_str(line, &l, sizeof(line), id);
         term_print(line);
     }
-    if (!any) term_print("  no ide, sata or scsi disk found");
-    term_print("nvme usb: no driver yet");
+    if (!any) term_print("  no ide/sata/scsi/nvme disk found");
+    term_print("usb: no driver yet");
 }
 
 static void term_inst_start(void) {

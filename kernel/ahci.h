@@ -21,6 +21,13 @@
  * BIOS memory: each port is stopped, pointed at OUR DMA area (memmap.h MW_AHCI_DMA_ADDR) and restarted, after the
  * BIOS/OS ownership hand-off the spec asks for. */
 
+/* The drivers fill DMA structures with ordinary stores and then ring a doorbell with a volatile access (and read results back
+ * the same way round): the compiler must not reorder the two, so each hand-off is bracketed with a compiler barrier. x86 itself
+ * keeps stores and loads in order for this purpose. */
+#ifndef MW_BARRIER
+#define MW_BARRIER() __asm__ volatile ("" ::: "memory")
+#endif
+
 #define AHCI_MAX_DEVS  ((int)MW_AHCI_DEVS)
 typedef struct {
     volatile u8 *hba;      /* the controller's register block (ABAR) */
@@ -127,11 +134,12 @@ static inline int ahci_run(int i, u8 command, u32 lba, int write, int with_data)
 
     ahci_wr(p, AHCI_P_SERR, 0xFFFFFFFFu);
     ahci_wr(p, AHCI_P_IS, 0xFFFFFFFFu);
+    MW_BARRIER();
     ahci_wr(p, AHCI_P_CI, 1);
     for (u32 n = 0; n < AHCI_POLL * 4u; n++) {
         u32 is = ahci_rd(p, AHCI_P_IS);
         if (is & (AHCI_IS_TFES | AHCI_IS_FATAL)) break;
-        if (!(ahci_rd(p, AHCI_P_CI) & 1)) return (ahci_rd(p, AHCI_P_TFD) & AHCI_TFD_ERR) ? 0 : 1;
+        if (!(ahci_rd(p, AHCI_P_CI) & 1)) { MW_BARRIER(); return (ahci_rd(p, AHCI_P_TFD) & AHCI_TFD_ERR) ? 0 : 1; }
     }
     /* error or silence: stop and restart the port so the next command starts from a known state */
     ahci_port_stop(p);

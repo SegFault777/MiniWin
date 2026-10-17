@@ -12,7 +12,7 @@
  *     LBA 0          the boot sector (boot/boot.asm) with its install fields patched: where this installation starts,
  *                    and a fresh random install id (so the kernel can find its own disk again at boot)
  *     LBA 1..1028    stage 2 + the kernel                     } copied from the disk MiniWin booted from
- *     LBA 1261..1876 the icon catalog                         }
+ *     LBA 1261..1964 the icon catalog                         }
  *     everything else (document slots, program slots, journals, headroom)  ->  zeros. A fresh system starts
  *                    with NO user data, and stale bytes in the target can never be mistaken for a file.
  * Only these 2048 sectors are written; the rest of a bigger partition is left alone.

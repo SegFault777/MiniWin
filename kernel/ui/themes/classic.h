@@ -23,7 +23,8 @@
 #define TH_WARNING_INK    COL_BLACK
 #define TH_SCROLL_TRACK   COL_DGRAY
 #define TH_SCROLL_THUMB   COL_LGRAY
-#define TH_CURSOR         COL_BLACK     /* the mouse pointer's ink */
+#define TH_CURSOR_OUTLINE 0x000000u     /* the mouse pointer: outline (the icon pack's cursors are black-and-white on purpose,  */
+#define TH_CURSOR_FILL    0xFFFFFFu     /* visible on any background) and fill -- a theme may recolour them */
 
 /* ---- metrics (pixels) ---- */
 #define TH_TITLEBAR_H     15

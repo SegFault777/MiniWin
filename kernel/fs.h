@@ -47,7 +47,7 @@
  *                    slot 1: LBA 1114-1162
  *                    slot 2: LBA 1163-1211
  *                    slot 3: LBA 1212-1260
- *   LBA 1261-1876 - the icon catalog, 11 sectors per icon x 56 icons (1
+ *   LBA 1261-1964 - the icon catalog, 11 sectors per icon x 64 icons (1
  *                  header + 8 data sectors for a 32x32 RGBA bitmap + 2
  *                  data sectors for a 16x16 RGBA bitmap) -- see this
  *                  file's ICON_* constants and tools/install_icons.py,
@@ -58,22 +58,24 @@
  *                  the installer and the kernel agree on one write
  *                  path instead of the installer poking the header
  *                  format directly).
- *   LBA 1877-1885 - the document JOURNAL (1 header + 8 data sectors): where a save is
+ *   LBA 1965-1973 - the document JOURNAL (1 header + 8 data sectors): where a save is
  *                  staged and committed before it is applied to its slot, so
  *                  an interrupted save can be completed (or never started)
  *                  instead of leaving a half-written file. See fsj_save().
- *   LBA 1886-1934 - the program journal (1 header + 48 data sectors), same idea.
- *   LBA 1935-2047 - unused headroom (~56KB) -- room for the kernel,
+ *   LBA 1974-2022 - the program journal (1 header + 48 data sectors), same idea.
+ *   LBA 2023-2047 - unused headroom (~12KB) -- room for the kernel,
  *                  the document area, the program area, or the icon
  *                  catalog to grow without immediately forcing the
  *                  image past the 1024KB line; see build.sh's size
  *                  check, which fails loudly if any of them ever does.
  * (Each area starts the sector immediately after the one before it ends
- * -- no gaps. Every sector between LBA 1 and LBA 1934 is now spoken for
+ * -- no gaps. Every sector between LBA 1 and LBA 2022 is now spoken for
  * on purpose. The icon catalog grew from 45 to 56 slots when the bundle with the drive
- * icons arrived (47 distinct icons); the journals, which sit right after it, moved from
- * LBA 1756/1765 to 1877/1886 -- only matters for a journal left pending by a crash on
- * an older image, which is simply discarded.)
+ * icons arrived (47 distinct icons), then to 64 for the 61-icon bundle of 1.1-alpha-6; the
+ * journals, which sit right after it, moved from LBA 1756/1765 to 1877/1886 and then to
+ * 1965/1974 -- only matters for a journal left pending by a crash on an older image, which
+ * is simply discarded. Disks installed before 1.1-alpha-6 keep working: their sectors
+ * 1877-1934 now read as icon slots 56-63, which fail the magic check and show nothing.)
  */
 
 #define FS_MAGIC           0x31573154u
@@ -132,8 +134,8 @@ static inline void fs_strcpy_fixed(char *dst, const char *src, u32 n) {
 #define FS_HDR_COMMIT_OFF  508
 #define FS_HDR_TARGET_OFF  496                 /* journal header only: 1 + the slot a staged save is destined for */
 #define FS_COMMIT_MAGIC    0x31544D43u         /* "CMT1" little-endian */
-#define FS_JOURNAL_LBA     1877                /* document journal (9 sectors) -- see the layout map */
-#define PROG_JOURNAL_LBA   1886                /* program journal (49 sectors) */
+#define FS_JOURNAL_LBA     1965                /* document journal (9 sectors) -- see the layout map */
+#define PROG_JOURNAL_LBA   1974                /* program journal (49 sectors) */
 
 /* Standard CRC-32 (IEEE 802.3, the one zlib/zip/PNG use: reflected, poly 0xEDB88320), bitwise -- no 1KB table in
  * a kernel that counts its bytes; 24KB of program is ~200K cheap operations, nothing next to the disk reads.
@@ -597,7 +599,7 @@ static inline int prog_find_empty_slot(void) {
 }
 
 /* ============================================================
- * Icon catalog -- 56 slots of real, hand-drawn (by a person, not this
+ * Icon catalog -- 64 slots of real, hand-drawn (by a person, not this
  * kernel) RGBA bitmap icons, replacing the hand-coded vector glyphs
  * (a few bb_rect()/bb_putpixel() calls apiece) the desktop and file
  * icons used to be drawn with. Each slot carries BOTH a 32x32 and a
@@ -628,7 +630,7 @@ static inline int prog_find_empty_slot(void) {
  * ============================================================ */
 #define ICON_BASE_LBA        1261
 #define ICON_SLOT_SECTORS    11    /* 1 header + 8 data (32x32) + 2 data (16x16) */
-#define ICON_MAX_SLOTS       56    /* the current bundle has 55 distinct icons; 1 spare */
+#define ICON_MAX_SLOTS       64    /* the current bundle has 61 distinct icons; 3 spare */
 #define ICON_NAME_MAXLEN     24    /* e.g. "TYPESCRIPT_CODE" -- room to spare */
 
 /* Compile-time guard: the journals must start after the icon catalog ends and the whole installation must fit

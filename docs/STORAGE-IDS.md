@@ -47,6 +47,12 @@ discovery order: controller by controller, SCSI target id (0-15, LUN 0) by targe
 512-byte blocks are listed (CD-ROMs, tapes and 4K-block disks are skipped); sizes are capped at 2^28 - 1 sectors like IDE.
 Like `sata`, the number shifts when a disk is added or removed -- check `os-inst list` first.
 
+## nvme ids
+
+`nvme1`, `nvme2`, ... are NVM Express SSDs (PCI class 01:08:02), one id per controller, always **namespace 1**, in discovery order.
+Namespaces formatted with a block size other than 512 bytes are skipped (with a line on the serial port); sizes are capped at
+2^28 - 1 sectors like the other buses.
+
 ## Partition numbers
 
 * **MBR.** `01`-`04` are the four primary entries by table position (a gap stays a gap: entries 1 and 3 in use are

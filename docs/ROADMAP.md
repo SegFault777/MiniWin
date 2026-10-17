@@ -1,6 +1,6 @@
 # Roadmap and known limits
 
-## Where 1.1-alpha-5 stands
+## Where 1.1-alpha-6 stands
 
 New in alpha-2: an AHCI driver (`sata` ids), a block layer, boot-disk location on every bus, and the Korean font stored
 compressed (kernel image ~337 KB of 512 KB). See [CHANGELOG.md](CHANGELOG.md). New in alpha-1: MiniFiles ([MINIFILES.md](MINIFILES.md)), `os-inst` ([OS-INSTALL.md](OS-INSTALL.md)) with the storage
@@ -11,7 +11,7 @@ license ([LICENSING.md](LICENSING.md)).
 
 * **Storage drivers.** Legacy ATA (PIO, LBA28: IDE disks, and SATA disks the firmware shows in IDE/compatibility mode) and AHCI
   SATA (DMA; disks capped at the first 128 GB like IDE) and LSI Logic / Fusion-MPT SCSI (VMware/VirtualBox "LSI Logic",
-  polled). NVMe and USB storage are recognised in storage ids but have no driver, so `os-inst` cannot reach them and a
+  polled). USB storage is recognised in storage ids but has no driver, so `os-inst` cannot reach them and a
   MiniWin installed on one could not run. AHCI and MPT have only been run on QEMU.
 * **Install targets.** An existing partition (MiniWin cannot create or resize partitions) of at least 1 MB, on a BIOS
   machine; whole-disk and primary-partition installs can start by themselves (the latter only behind a blank MBR),
@@ -33,6 +33,6 @@ same way (`tools/gen_hangul_font.py` has the compressor), moving `.bss` tables t
 ## Ideas for the next alphas
 
 * **next:** more virtual-machine / hardware compatibility (NICs: e1000e, vmxnet3, PCnet, virtio-net); more storage buses
-  (NVMe first -- what VMware 17 and every recent laptop use --, then virtio-scsi, VMware Paravirtual SCSI); a partition-table tool (`os-part`?); MiniFiles: rename/copy, more slots.
+  (virtio-scsi, VMware Paravirtual SCSI, NVMe namespaces beyond the first); a partition-table tool (`os-part`?); MiniFiles: rename/copy, more slots.
 * **later:** NVMe and USB storage; GPT/UEFI boot; reading a disk image into MiniFiles; per-file permissions are out of scope.
 * Translate MiniFiles' labels and messages to Korean.

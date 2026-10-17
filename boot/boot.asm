@@ -66,35 +66,65 @@ start:
     call print_string
 
     ; ---- Load stage 2 from disk (BIOS INT13h extended/LBA read) ----
-    ; One single read: STAGE2_SECTORS sectors starting at LBA 1 (LBA 0
-    ; is this sector), landing at 0x0000:0x0600. STAGE2_SECTORS comes in
-    ; via -D from build.sh, which is also what pads stage 2's own
-    ; assembled binary out to that many sectors on disk and what tells
-    ; stage2.asm itself (also via -D) where the kernel starts -- one
-    ; number, defined once by the build script, instead of three
-    ; hand-synchronized copies.
+    ; STAGE2_SECTORS sectors starting at LBA 1 (LBA 0 is this sector), landing at 0x0000:0x0600. STAGE2_SECTORS comes in
+    ; via -D from build.sh, which also pads stage 2's binary out to that many sectors and tells stage2.asm where the
+    ; kernel starts -- one number, defined once.
+    ;
+    ; BIOSes differ in ways that matter here, and QEMU's is the most forgiving of them all, so the read is written for
+    ; the unforgiving ones: the WHOLE disk address packet is rebuilt for every attempt (some BIOSes write the transfer
+    ; count, even the buffer, back into it), the segment registers are reloaded after the call, the first failure is
+    ; retried after a disk reset (AH=0), and nothing that has to survive the call lives in a register.
+    mov byte [tries], 3
+.try:
+    xor ax, ax                   ; DS = ES = 0 again, in case a BIOS call changed them
+    mov ds, ax
+    mov es, ax
+    mov byte [dap], 0x10         ; packet size
+    mov byte [dap+1], 0
     mov word [dap_sectors], STAGE2_SECTORS
+    mov word [dap_off], STAGE2_LOAD_OFF
+    mov word [dap_segment], STAGE2_LOAD_SEG
     mov eax, [install_base]
     inc eax                      ; stage 2 starts one sector after this one, relative to the installation
     mov [dap_lba], eax           ; (32-bit: a partition can start far beyond LBA 65535)
-    mov word [dap_segment], STAGE2_LOAD_SEG
+    mov dword [dap_lba+4], 0
     mov si, dap
     mov dl, [BOOT_DRIVE_ADDR]
     mov ah, 0x42
     int 0x13
-    jc disk_error
+    jnc .loaded
+    mov bl, ah                   ; the BIOS error code, kept in a register only until DS is known good again
+    xor ax, ax
+    mov ds, ax
+    mov [err_ah], bl
+    mov dl, [BOOT_DRIVE_ADDR]
+    int 0x13                     ; AH=0: reset the disk system, then try again
+    dec byte [tries]
+    jnz .try
 
-    ; Off to stage 2 -- a near jump (still real mode, same segment) to
-    ; the address we just loaded it at.
-    jmp STAGE2_LOAD_SEG:STAGE2_LOAD_OFF
-
-disk_error:
-    ; Something about the disk read went sideways. We don't have the
-    ; luxury of a stack trace or a debugger at this point in the universe's
-    ; existence, so all we can do is print this and freeze. Sorry.
-    mov si, msg_disk_err
+    ; Every attempt failed. Name the problem: AH=01h is "invalid function", i.e. this BIOS has no INT13h extensions (a
+    ; floppy, or a very old BIOS) -- not the same thing as a sector that would not read.
+    mov si, msg_err_lba
+    cmp byte [err_ah], 0x01
+    je .report
+    mov si, msg_err_s2
+.report:
+    call print_string
+    mov si, msg_ah
+    call print_string
+    mov al, [err_ah]
+    call print_hex8
+    mov si, msg_dl
+    call print_string
+    mov al, [BOOT_DRIVE_ADDR]
+    call print_hex8
+    mov si, msg_crlf
     call print_string
     jmp $
+
+.loaded:
+    ; Off to stage 2 -- a far jump to the address we just loaded it at.
+    jmp STAGE2_LOAD_SEG:STAGE2_LOAD_OFF
 
 ; ---- 16-bit helper: print null-terminated string at SI via BIOS teletype ----
 print_string:
@@ -111,8 +141,35 @@ print_string:
     popa
     ret
 
-msg_boot:      db "MiniWin: booting...", 13, 10, 0
-msg_disk_err:  db "MiniWin: DISK READ ERROR", 13, 10, 0
+; AL as two hex digits (the BIOS error code, the drive number).
+print_hex8:
+    pusha
+    mov bl, al
+    shr al, 4
+    call .nib
+    mov al, bl
+    and al, 15
+    call .nib
+    popa
+    ret
+.nib:
+    add al, '0'
+    cmp al, '9'
+    jbe .out
+    add al, 7
+.out:
+    mov ah, 0x0E
+    mov bh, 0
+    int 0x10
+    ret
+
+msg_boot:     db "MiniWin: booting...", 13, 10, 0
+; Boot errors have a code and a NAME (the full table is in docs/BOOT-PROCESS.md); stage 2 and the kernel use MW-B03 and up.
+msg_err_lba:  db "MiniWin ERROR MW-B01 BIOS_LBA_UNSUPPORTED", 0
+msg_err_s2:   db "MiniWin ERROR MW-B02 STAGE2_READ_FAILED", 0
+msg_ah:       db " (BIOS AH=", 0
+msg_dl:       db " DL=", 0
+msg_crlf:     db ")", 13, 10, 0
 
 ; ============================================================
 ; Disk Address Packet for the one-shot stage-2 read above. Standard
@@ -125,9 +182,11 @@ align 4
 dap:
     db 0x10, 0
 dap_sectors: dw 0
-             dw STAGE2_LOAD_OFF
+dap_off:     dw 0
 dap_segment: dw 0
 dap_lba:     dq 0
+tries:       db 0
+err_ah:      db 0
 
 ; ============================================================
 ; Install fields -- patched into this sector by os-inst, never by the build. Fixed offset (see INSTALL_FIELDS_OFF);

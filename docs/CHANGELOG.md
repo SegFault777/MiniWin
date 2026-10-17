@@ -1,5 +1,44 @@
 # Changelog
 
+## MiniWin 1.1-alpha-6 (2026-10)
+
+* **Boot fixes for VMware / VirtualBox ("MiniWin: DISK READ ERROR").** Two behaviours of the loader that only QEMU's BIOS
+  tolerates were removed: stage 2 kept its chunk counter in `CX` across INT 13h calls, and it reused one disk address packet
+  (some BIOSes write the transfer count back into it). Now nothing needed after an INT 13h lives in a register, the packet is
+  rebuilt for every call, `DS`/`ES` are reloaded, a failed read is retried after a disk reset and then with half as many sectors
+  per call down to one, and stage 1 retries too. I could not reproduce the original report (Bochs, whose BIOS is VirtualBox's
+  ancestor, boots the old loader fine; VMware has no emulator here), so this is a hardening against the known BIOS differences, not
+  a confirmed root cause -- the new messages will say exactly what failed if it still does. [BOOT-PROCESS.md](BOOT-PROCESS.md)
+* **Every boot error has a code and a name**, with the BIOS error code, sector and drive where they apply: `MW-B01
+  BIOS_LBA_UNSUPPORTED` (e.g. the image attached as a floppy), `MW-B02 STAGE2_READ_FAILED`, `MW-B03 KERNEL_READ_FAILED`,
+  `MW-B04`/`MW-B05` VBE, `MW-C01`-`C03` partition chain loader, `MW-K01 NOT_ENOUGH_RAM`, `MW-K02 VBE_PIXEL_FORMAT_UNSUPPORTED`.
+  Verified by booting the image as a floppy and from a truncated disk.
+* **CPU exceptions are caught** (`kernel/fatal.h`, IDT stubs in `kentry.asm`): the kernel had no interrupt descriptor table at
+  all, so any fault was a triple fault and a virtual machine just reset. Now a blue screen shows `MW-K10 CPU_EXCEPTION_<NAME>`,
+  the vector, error code, EIP and registers (also on serial).
+* **NVMe driver** (`kernel/nvme.h`): NVMe SSDs (class 01:08:02; what VMware 17 and recent laptops use) as `nvme1`, ...:
+  admin + one I/O queue pair, polled, 512-byte blocks through a bounce page, flush after writes, namespace 1. Boot disk location,
+  `os-inst`, MiniFiles and the Terminal handle `nvme` ids. Tested on QEMU's `nvme` device (boot, two controllers, `os-inst`
+  round trip, install-id boot, mixed with IDE).
+* **Icon pack update, 61 icons** (was 55): new `A11Y`, `ERROR`, `HELP`, `NEXT`, `POWER`, `SEARCH`, `SECURITY`, `WARNING`; `ARMASM_Code`
+  and `X86ASM_Code` are now one `ASM_Code` (with a 32x32); new sizes for `EARTH`, `PC`, `TERMINAL`. The catalog grew from 56 to
+  **64 slots**, so the journals moved again (documents 1877 -> 1965, programs 1886 -> 1974; disks installed earlier keep
+  working, see `kernel/fs.h`) and `os-inst` copies LBA 1261-1964.
+* **Mouse cursors from the icon pack** (`third_party/icon-bundle/Images/Cursor/`, 5 PNGs): the arrow and the four resize pointers
+  are now the pack's black-outline/white-fill shapes instead of the old single-colour ones (which disappeared on a black or white
+  window). `tools/gen_cursors.py` generates `kernel/cursor_data.h` from the PNGs (`--check` is part of `run_host_font.sh`);
+  `ui/cursor.h` draws them; the outline and fill colours are theme settings (`TH_CURSOR_OUTLINE`, `TH_CURSOR_FILL`). The resize
+  cursors are a little bigger (11x7 and 7x11). All 15 + 15 + 6 UI goldens were re-recorded; the only pixels that changed are
+  the cursor's.
+* **The icon pack is licensed CC BY-SA 4.0** (author: SegFault777), not GPL: `third_party/icon-bundle/LICENSE` and `NOTICE.md`,
+  [LICENSING.md](LICENSING.md), README.
+* README: MiniWin logo at the top (6x nearest-neighbour enlargement of the supplied 128x32 PNG, no smoothing, `docs/logo/`),
+  and the README text re-checked against the current version (storage drivers, shutdown, icons, boot errors, file and test
+  lists, a pointer to the new [VIRTUAL-MACHINES.md](VIRTUAL-MACHINES.md)).
+
+Known: nothing here has been run on VMware, VirtualBox or real hardware. Not handled: VMware's e1000e/vmxnet3, VirtualBox's PCnet,
+virtio, BusLogic, Paravirtual SCSI, NVMe namespaces other than 1 and 4K-block NVMe namespaces.
+
 ## MiniWin 1.1-alpha-5 (2026-10)
 
 * **Shutdown really powers off** (`kernel/acpi.h`): Shut Down / the Terminal's `off` paint the usual "safe to turn off"

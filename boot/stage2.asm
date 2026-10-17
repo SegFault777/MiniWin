@@ -75,23 +75,43 @@ stage2_entry:
     ; that still happens after, same as before. Legacy CHS reads (AH=02h)
     ; cap out at 255 sectors per call anyway, which is exactly the kind
     ; of limit an LBA-based DAP loop like this one sidesteps entirely.
-    mov word [dap_sectors], KERNEL_SECTORS_PER_CHUNK
+    ;
+    ; Written for BIOSes that are less forgiving than QEMU's (VMware's, VirtualBox's, real machines'). Three lessons are
+    ; baked in: (1) nothing that must survive an INT 13h call lives in a register -- the loop state is in memory, because
+    ; a BIOS is only obliged to preserve what its documentation says and some do not preserve CX (the old loop counted
+    ; its chunks in CX); (2) the disk address packet is rebuilt for every call, because some BIOSes write the transfer
+    ; count back into it; (3) a failed read is retried after a disk reset and then retried again with HALF the sectors
+    ; per call, down to one, because some BIOSes cap the count per call below 64. Only if even a single sector will not
+    ; read is it an error, and then the message names the LBA and the BIOS's own error code.
     mov eax, [BOOT_BASE_ADDR]
     add eax, KERNEL_START_LBA    ; relative to where this installation starts (0 for a whole-disk image)
-    mov [dap_lba], eax
-    mov word [dap_segment], KERNEL_LOAD_SEG
-    mov cx, KERNEL_CHUNKS
+    mov [rd_lba], eax
+    mov word [rd_seg], KERNEL_LOAD_SEG
+    mov word [rd_left], KERNEL_CHUNKS * KERNEL_SECTORS_PER_CHUNK
+    mov word [rd_chunk], KERNEL_SECTORS_PER_CHUNK
 
 .load_loop:
-    mov si, dap
-    mov dl, [BOOT_DRIVE_ADDR]
-    mov ah, 0x42
-    int 0x13
-    jc disk_error
+    mov ax, [rd_chunk]
+    cmp ax, [rd_left]
+    jbe .count_ok
+    mov ax, [rd_left]            ; (never more than what is left)
+.count_ok:
+    mov [rd_count], ax
+    call read_chunk
+    jnc .chunk_done
+    cmp word [rd_chunk], 1       ; failed even after retries: try again with half as many sectors per call
+    jbe disk_error
+    shr word [rd_chunk], 1
+    jmp .load_loop
 
-    add dword [dap_lba], KERNEL_SECTORS_PER_CHUNK   ; 32-bit: a partition's LBAs routinely exceed 65535
-    add word [dap_segment], 0x0800      ; += 32KB, in paragraph units
-    loop .load_loop
+.chunk_done:
+    movzx eax, word [rd_count]
+    add [rd_lba], eax            ; 32-bit: a partition's LBAs routinely exceed 65535
+    shl ax, 5                    ; sectors * 512 bytes / 16 = paragraphs
+    add [rd_seg], ax
+    mov ax, [rd_count]
+    sub [rd_left], ax
+    jnz .load_loop
 
     mov si, msg_loaded
     call print_string
@@ -275,12 +295,99 @@ vbe_done:
     jmp CODE_SEG:protected_mode_entry
 
 disk_error:
-    ; Something about the disk read went sideways. We don't have the
-    ; luxury of a stack trace or a debugger at this point in the universe's
-    ; existence, so all we can do is print this and freeze. Sorry.
-    mov si, msg_disk_err
+    ; Not even one sector would read. Say exactly what and where: error name, the BIOS's code, the LBA, the drive.
+    mov si, msg_err_kernel
+    call print_string
+    mov si, msg_ah
+    call print_string
+    mov al, [rd_ah]
+    call print_hex8
+    mov si, msg_lba
+    call print_string
+    mov eax, [rd_lba]
+    call print_hex32
+    mov si, msg_dl
+    call print_string
+    mov al, [BOOT_DRIVE_ADDR]
+    call print_hex8
+    mov si, msg_crlf
     call print_string
     jmp $
+
+; Reads [rd_count] sectors from LBA [rd_lba] to [rd_seg]:0000 with INT 13h AH=42h. CF=1 and [rd_ah] set if it failed three
+; times (with a disk reset between attempts). The packet is rebuilt on every attempt; DS/ES are reloaded after each call.
+read_chunk:
+    mov byte [rd_tries], 3
+.again:
+    xor ax, ax
+    mov ds, ax
+    mov es, ax
+    mov byte [dap], 0x10
+    mov byte [dap+1], 0
+    mov ax, [rd_count]
+    mov [dap_sectors], ax
+    mov word [dap_off], 0
+    mov ax, [rd_seg]
+    mov [dap_segment], ax
+    mov eax, [rd_lba]
+    mov [dap_lba], eax
+    mov dword [dap_lba+4], 0
+    mov si, dap
+    mov dl, [BOOT_DRIVE_ADDR]
+    mov ah, 0x42
+    int 0x13
+    jnc .ok
+    mov bl, ah
+    xor ax, ax
+    mov ds, ax
+    mov es, ax
+    mov [rd_ah], bl
+    mov dl, [BOOT_DRIVE_ADDR]
+    int 0x13                     ; AH=0: reset the disk system
+    dec byte [rd_tries]
+    jnz .again
+    stc
+    ret
+.ok:
+    xor ax, ax                   ; the BIOS may have changed DS/ES even on success
+    mov ds, ax
+    mov es, ax
+    clc
+    ret
+
+; AL as two hex digits / EAX as eight.
+print_hex8:
+    pusha
+    mov bl, al
+    shr al, 4
+    call .nib
+    mov al, bl
+    and al, 15
+    call .nib
+    popa
+    ret
+.nib:
+    add al, '0'
+    cmp al, '9'
+    jbe .out
+    add al, 7
+.out:
+    mov ah, 0x0E
+    mov bh, 0
+    int 0x10
+    ret
+print_hex32:
+    push eax
+    shr eax, 16
+    call print_hex16
+    pop eax
+print_hex16:
+    push ax
+    mov al, ah
+    call print_hex8
+    pop ax
+    call print_hex8
+    ret
 
 ; ---- 16-bit helper: print null-terminated string at SI via BIOS teletype ----
 print_string:
@@ -298,9 +405,15 @@ print_string:
     ret
 
 msg_loaded:    db "MiniWin: kernel loaded, entering 32-bit mode...", 13, 10, 0
-msg_disk_err:  db "MiniWin: DISK READ ERROR", 13, 10, 0
-msg_vbe_err:   db "MiniWin: VBE CALL FAILED", 13, 10, 0
-msg_no_truecolor: db "MiniWin: NO 640x480x32bpp TRUECOLOR VBE MODE FOUND", 13, 10, 0
+; Boot errors have a code and a NAME; the full table (what each means and what to try) is in docs/BOOT-PROCESS.md.
+; MW-B01/B02 live in stage 1 (boot.asm), MW-C* in the partition chain loader (chain_mbr.asm).
+msg_err_kernel: db "MiniWin ERROR MW-B03 KERNEL_READ_FAILED", 0
+msg_ah:        db " (BIOS AH=", 0
+msg_lba:       db " LBA=", 0
+msg_dl:        db " DL=", 0
+msg_crlf:      db ")", 13, 10, 0
+msg_vbe_err:   db "MiniWin ERROR MW-B04 VBE_INFO_UNAVAILABLE (the BIOS has no VESA mode list)", 13, 10, 0
+msg_no_truecolor: db "MiniWin ERROR MW-B05 VBE_NO_640x480x32_MODE (no 640x480 truecolor VESA mode)", 13, 10, 0
 
 ; Far pointer (segment:offset, kept as two separate words since real
 ; mode has no native 32-bit pointer type) to the BIOS's own list of
@@ -321,9 +434,18 @@ align 4
 dap:
     db 0x10, 0
 dap_sectors: dw 0
-             dw 0x0000
+dap_off:     dw 0x0000
 dap_segment: dw 0
 dap_lba:     dq 0
+
+; The kernel-load loop's state. All of it lives here, not in registers (see the comment above the loop).
+rd_lba:      dd 0
+rd_seg:      dw 0
+rd_count:    dw 0
+rd_chunk:    dw 0
+rd_left:     dw 0
+rd_tries:    db 0
+rd_ah:       db 0
 
 ; ============================================================
 ; Global Descriptor Table (flat memory model, because life's too short

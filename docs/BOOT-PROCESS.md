@@ -1,5 +1,42 @@
 # Boot process
 
+> **Error codes.** Every boot error has a code and a name -- never just "disk error". Stage 1 (`boot/boot.asm`), stage 2
+> (`boot/stage2.asm`), the partition chain loader (`boot/chain_mbr.asm`) and the kernel (`kernel/fatal.h`) all use this table.
+> Where it applies the message adds the BIOS's own error code (`AH=`), the sector (`LBA=`) and the BIOS drive number (`DL=`).
+>
+> | code | name | raised by | meaning |
+> |---|---|---|---|
+> | `MW-B01` | `BIOS_LBA_UNSUPPORTED` | stage 1 | INT 13h AH=42h answered "invalid function" (`AH=01`): a floppy, a CD or a very old BIOS. Attach the image as a hard disk |
+> | `MW-B02` | `STAGE2_READ_FAILED` | stage 1 | sector 1.. could not be read after three tries with a disk reset in between |
+> | `MW-B03` | `KERNEL_READ_FAILED` | stage 2 | a kernel sector could not be read even one sector at a time (`LBA` is the sector; `AH=04` near the end of the disk = disk shorter than the image) |
+> | `MW-B04` | `VBE_INFO_UNAVAILABLE` | stage 2 | INT 10h AX=4F00h failed: no VESA support |
+> | `MW-B05` | `VBE_NO_640x480x32_MODE` | stage 2 | the VESA mode list has no 640x480 32-bit direct-colour mode |
+> | `MW-C01` | `NO_ACTIVE_PARTITION` | chain loader | an MBR-booted installation inside a partition: no partition is marked active |
+> | `MW-C02` | `PARTITION_READ_FAILED` | chain loader | the active partition's first sector could not be read |
+> | `MW-C03` | `PARTITION_NOT_BOOTABLE` | chain loader | the active partition's first sector has no 0x55AA signature |
+> | `MW-K01` | `NOT_ENOUGH_RAM` | kernel (blue screen) | the BIOS reported less memory than the 640x480x32 back buffer needs (about 9.2 MB) |
+> | `MW-K02` | `VBE_PIXEL_FORMAT_UNSUPPORTED` | kernel (blue screen) | the video mode's colour channels are not in the usual red-green-blue order |
+> | `MW-K10` | `CPU_EXCEPTION_<NAME>` | kernel (blue screen) | an unexpected CPU exception (vector, error code, EIP, CS, EFLAGS and registers are shown); find the function with `nm -n build/kernel.elf` |
+>
+> Common BIOS `AH` codes: `01` invalid function, `02` address mark not found, `04` sector not found (past the end of the disk),
+> `07` drive parameter activity failed, `09` DMA crossed a 64 KB boundary, `0A` bad sector, `0C` unsupported track,
+> `20` controller failure, `40` seek failed, `80` timeout / not ready, `AA` drive not ready, `BB` undefined error.
+> Before 1.1-alpha-6 stage 1, stage 2 and the chain loader all printed the same "DISK READ ERROR", so the stage that failed
+> was a guess; see [VIRTUAL-MACHINES.md](VIRTUAL-MACHINES.md) for what to try.
+
+## Making the loader survive other BIOSes (1.1-alpha-6)
+
+QEMU's BIOS (SeaBIOS) is the most forgiving there is; the loader used to rely on behaviour other BIOSes do not promise.
+Stage 2 counted the 16 kernel chunks in `CX` across INT 13h calls (a BIOS only has to preserve the registers its
+documentation lists, and some change `CX`), and it filled the disk address packet once and reused it (some BIOSes write
+the transfer count back into it). Now: nothing needed after an INT 13h call lives in a register, the whole packet is
+rebuilt for every call, `DS`/`ES` are reloaded after every call, a failed read is retried after a disk reset (AH=0), and
+then retried again with half as many sectors per call, down to one, because some BIOSes cap the count per call below 64.
+Stage 1 does the same for its single read. These are the known classes of difference; whether one of them was the cause
+of the VMware / VirtualBox "DISK READ ERROR" reports could not be reproduced in Bochs (whose 16-bit BIOS is the ancestor
+of VirtualBox's), which boots the old loader fine -- which is why the new error messages exist: the next failure will say
+what it was.
+
 ## Stages
 
 1. **BIOS** loads the first sector of the boot disk to `0x7C00` and jumps there with `DL` = the BIOS drive number.

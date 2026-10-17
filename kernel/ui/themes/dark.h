@@ -23,7 +23,8 @@
 #define TH_WARNING_INK    0x0A0C0Fu
 #define TH_SCROLL_TRACK   0x15181Cu
 #define TH_SCROLL_THUMB   0x6B727Du
-#define TH_CURSOR         0xFFFFFFu
+#define TH_CURSOR_OUTLINE 0x000000u     /* the mouse pointer: outline and fill, see classic.h */
+#define TH_CURSOR_FILL    0xFFFFFFu
 
 #define TH_TITLEBAR_H     16
 #define TH_BTN_W          13

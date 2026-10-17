@@ -30,7 +30,7 @@ python3 - $B/src.img $B/whole.img <<'PY' && ok "whole disk: system sectors copie
 import struct, sys
 src=open(sys.argv[1],'rb').read(); t=open(sys.argv[2],'rb').read()
 sec=lambda d,l: d[l*512:(l+1)*512]
-system=list(range(1,1029))+list(range(1261,1877)); user=list(range(1029,1261))+list(range(1877,2048))
+system=list(range(1,1029))+list(range(1261,1965)); user=list(range(1029,1261))+list(range(1965,2048))
 assert all(sec(src,l)==sec(t,l) for l in system), "system sectors differ"
 assert not any(any(sec(t,l)) for l in user), "user area not zero"
 b=sec(t,0); assert struct.unpack('<II',b[432:440])[0]==0 and struct.unpack('<I',b[436:440])[0]!=0, "fields"
@@ -57,7 +57,7 @@ import struct, sys
 src=open(sys.argv[1],'rb').read(); t=open(sys.argv[2],'rb').read(); chain=open(sys.argv[3],'rb').read()
 base=10240
 sec=lambda d,l: d[l*512:(l+1)*512]
-assert all(sec(src,l)==sec(t,base+l) for l in list(range(1,1029))+list(range(1261,1877)))
+assert all(sec(src,l)==sec(t,base+l) for l in list(range(1,1029))+list(range(1261,1965)))
 assert t[:446]==chain and t[510:512]==b'\x55\xaa'
 assert [t[446+i*16] for i in range(4)]==[0,0x80,0,0]
 assert struct.unpack('<I',sec(t,base)[432:436])[0]==base

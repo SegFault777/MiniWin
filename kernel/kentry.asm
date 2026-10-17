@@ -54,3 +54,47 @@ _start:
     cli
     hlt
     jmp .hang
+
+; ---- CPU exception entry points (kernel/fatal.h installs them in the IDT) ----
+; The CPU pushes an error code for vectors 8, 10-14, 17, 21 and 30; for the others the stub pushes a 0 so every exception
+; leaves the same frame. Then: vector, save all registers, hand a pointer to the frame to cpu_fault(), which never returns.
+[extern cpu_fault]
+%macro ISR_NOERR 1
+isr%1:
+    push dword 0
+    push dword %1
+    jmp isr_common
+%endmacro
+%macro ISR_ERR 1
+isr%1:
+    push dword %1
+    jmp isr_common
+%endmacro
+%assign i 0
+%rep 32
+  %if i = 8 || (i >= 10 && i <= 14) || i = 17 || i = 21 || i = 30
+    ISR_ERR i
+  %else
+    ISR_NOERR i
+  %endif
+  %assign i i+1
+%endrep
+isr_common:
+    pushad
+    cld
+    push esp                  ; the frame
+    call cpu_fault
+.stop:
+    cli
+    hlt
+    jmp .stop
+
+section .data
+global isr_stub_table
+isr_stub_table:
+%assign i 0
+%rep 32
+    dd isr %+ i
+  %assign i i+1
+%endrep
+

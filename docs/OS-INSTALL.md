@@ -28,10 +28,10 @@ Examples: `sata103` = the 1st SATA disk, partition 3. `ide200` = the whole 2nd I
 3rd IDE position. The last two digits are always the partition, so `nvme1205` is disk 12, partition 05.
 Full rules and the error table are in [STORAGE-IDS.md](STORAGE-IDS.md).
 
-**This build drives IDE, SATA (AHCI) and SCSI (LSI Logic / MPT) disks.** `ide1`/`ide2` are the primary channel's
+**This build drives IDE, SATA (AHCI), SCSI (LSI Logic / MPT) and NVMe disks.** `ide1`/`ide2` are the primary channel's
 master/slave, `ide3`/`ide4` the secondary channel's; `sata1`, `sata2`, ... and `scsi1`, `scsi2`, ... are numbered in the
-order the disks are found (see [STORAGE-IDS.md](STORAGE-IDS.md)), so run `os-inst list` first. The other type names
-(`nvme`, `usb`) are recognised (so `nvme101` gets a precise answer rather than "syntax error") and reported as "no driver
+order the disks are found (see [STORAGE-IDS.md](STORAGE-IDS.md)), so run `os-inst list` first. The other type name
+(`usb`) is recognised (so `nvme101` gets a precise answer rather than "syntax error") and reported as "no driver
 in this build yet".
 
 ## A session
@@ -47,7 +47,7 @@ ide2  16 MB  QEMU HARDDISK
   whole disk: ide200
 ide3  (nothing)
 ide4  (nothing)
-nvme usb: no driver yet
+usb: no driver yet
 > os-inst ide200
 target: ide200  (whole disk)
   QEMU HARDDISK, 16 MB
@@ -127,7 +127,7 @@ Only those 2048 sectors are written; the rest of a larger partition or disk is n
 | message | meaning |
 |---|---|
 | `bad id: expected <type><device><2-digit partition>` | the id is not `<type><digits>` with at least a disk digit and 2 partition digits |
-| `this build has no driver for that storage type yet (only ide, sata, scsi)` | `nvme`/`usb` |
+| `this build has no driver for that storage type yet (only ide, sata, scsi, nvme)` | `usb` |
 | `no such device` / `no such partition on that device` | see `os-inst list` |
 | `that is an extended-partition container ...` | choose a logical partition inside it |
 | `target is smaller than 1 MB` | too small for a 2048-sector installation |

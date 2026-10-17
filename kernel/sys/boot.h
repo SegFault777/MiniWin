@@ -20,6 +20,10 @@ static void kernel_boot(void) {
      * only way left to say why, since writing to backbuf at that point
      * is exactly the unsafe operation being guarded against. */
     serial_init();
+    idt_init();                  /* from here a CPU exception shows a named error screen instead of resetting the machine */
+#ifdef MW_TEST_FAULT             /* test builds only (EXTRA_CFLAGS=-DMW_TEST_FAULT): provoke vector 6 to see the screen */
+    __asm__ volatile ("ud2");
+#endif
 
     /* The Korean font ships compressed (font_ko_data.h) and has to be inflated before the first glyph is drawn. A
      * failure here is a build bug, not a runtime condition: say so over serial and carry on (Hangul would be garbage,
@@ -56,11 +60,13 @@ static void kernel_boot(void) {
      * machine that fails this check gets a clear reason over serial
      * and a clean halt instead of silent memory corruption. */
     if (!vga_verify_memory_safe()) {
-        serial_puts("[FATAL] not enough RAM for the truecolor framebuffer "
-                     "(need ~");
-        serial_put_dec(VGA_MIN_RAM_KB / 1024);
-        serial_puts("MB, see kernel/vga.h VGA_MIN_RAM_KB) -- halting\n");
-        for (;;) { __asm__ volatile ("hlt"); }
+        char need[12], have[12];
+        fatal_hex(need, VGA_MIN_RAM_KB / 1024, 2); fatal_hex(have, boot_info_u32(0x9200) / 1024, 4);
+        char l3[64] = "need at least 0x", l4[64] = "the BIOS reported 0x";
+        fatal_cat(l3, 64, need); fatal_cat(l3, 64, " MB (hex), see vga.h"); fatal_cat(l4, 64, have); fatal_cat(l4, 64, " MB (hex)");
+        const char *const msg[] = { "MiniWin has stopped.", "", "ERROR MW-K01 NOT_ENOUGH_RAM", l3, l4,
+                                    "", "Give the machine more memory (64 MB is enough)." };
+        fatal_screen(msg, 7);
     }
     if (!vga_color_layout_is_standard()) {
         /* Every real 32bpp direct-color VBE implementation this kernel
@@ -70,9 +76,11 @@ static void kernel_boot(void) {
          * genuinely differs would render every color wrong in a way
          * that's much harder to diagnose from a garbled screen than
          * from this one clear line over serial. */
-        serial_puts("[FATAL] this VBE mode's color channel layout isn't "
-                     "the standard RGB order this kernel assumes -- halting\n");
-        for (;;) { __asm__ volatile ("hlt"); }
+        const char *const msg[] = { "MiniWin has stopped.", "", "ERROR MW-K02 VBE_PIXEL_FORMAT_UNSUPPORTED",
+                                    "the video mode's colour channels are not in the",
+                                    "standard red-green-blue order this kernel uses.",
+                                    "", "See docs/BOOT-PROCESS.md." };
+        fatal_screen(msg, 7);
     }
 
     /* Fills in the fixed-address syscall table loadable .mwp programs

@@ -1,19 +1,36 @@
 # MiniWin Icon Bundle
 
-Source: hand-made for this project by the user (SegFault777), supplied
-as a 16x16/32x32 PNG bundle (`MiniWin_IconsBundle_v1_0-preONLY.zip`).
-Not a third-party/external asset in the usual third_party/ sense (no
-separate upstream license applies: like the rest of the project's own
-material it is covered by the project license, GPL-3.0-only -- see
-the top-level LICENSE) -- vendored here purely so the
-bundle's original PNG sources sit alongside the disk-image installer
-that reads them, the same way third_party/galmuri-font/ keeps a font's
-source material next to the tool that consumes it.
+Source: hand-made for this project by SegFault777, supplied as a 16x16/32x32 PNG bundle.
+
+## License: CC BY-SA 4.0
+
+**The icons in this bundle are licensed under the Creative Commons Attribution-ShareAlike 4.0 International license
+(CC BY-SA 4.0)** -- <https://creativecommons.org/licenses/by-sa/4.0/> (legal code:
+<https://creativecommons.org/licenses/by-sa/4.0/legalcode>), by their author, SegFault777.
+SPDX identifier: `CC-BY-SA-4.0`. This is deliberately NOT the project's code license (GPL-3.0-only, see the top-level
+`LICENSE`): the code and the artwork are separate works under separate licenses.
+
+What that asks of you, in short (the license text governs, this is a summary): you may share and adapt the icons for any
+purpose, including commercially, as long as you (1) give appropriate credit -- for example "MiniWin icon pack by SegFault777,
+CC BY-SA 4.0" with a link to the license and a note of any changes you made -- and (2) distribute your adaptations under the
+same license (CC BY-SA 4.0, or a license CC lists as compatible).
+
+Where the icons end up: `tools/install_icons.py` converts the PNGs into bitmaps in the icon catalog of a disk image
+(`kernel/fs.h`, `ICON_*`). Those catalog sectors are the same artwork in another format, so they stay under CC BY-SA 4.0; the
+kernel and tools on the same disk image remain GPL-3.0-only. They are distributed together as a collection, not merged into one
+work, and neither license is changed by that. The one exception to "the pack is not part of the kernel binary" is the five
+**mouse cursors** (`Images/Cursor/`): `tools/gen_cursors.py` turns them into `kernel/cursor_data.h`, which is compiled into the
+kernel image. That header is the same artwork in another format and carries `SPDX-License-Identifier: CC-BY-SA-4.0`; the kernel
+binary therefore contains CC BY-SA 4.0 bitmaps next to GPL-3.0-only code (credit and share-alike apply to those bitmaps).
+
+This directory is vendored under `third_party/` so the bundle's original PNG sources sit alongside the disk-image installer
+that reads them, the same way `third_party/galmuri-font/` keeps a font's source material next to the tool that consumes it.
 
 `Images/16x16/` and `Images/32x32/` hold the individual icon PNGs
 (Notepad, Setting, Web, TrashCan, Folder, PC, FileManager, and a set of
 per-language "_Code" file-type icons for future use, e.g. by a File
-Manager app). `Color.txt` is the bundle's reference palette.
+Manager app); `Images/Cursor/` holds the five mouse cursors (arrow, horizontal,
+vertical and two diagonal resize pointers: black outline, white fill). `Color.txt` is the bundle's reference palette.
 
 These are installed into the OS disk image's icon catalog (see
 kernel/fs.h's ICON_* constants) by tools/install_icons.py -- run that

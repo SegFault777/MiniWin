@@ -393,10 +393,11 @@ int main(void) {
     CHECK(st_resolve("ide200", &t) == ST_OK, "a 3000-sector whole disk is big enough");
     CHECK(st_resolve("ide400", &t) == ST_E_NO_DEVICE, "an empty position: no such device");
     CHECK(st_resolve("ide501", &t) == ST_E_NO_DEVICE, "device 5 does not exist on IDE");
-    CHECK(st_resolve("nvme101", &t) == ST_E_NO_DRIVER && st_resolve("usb101", &t) == ST_E_NO_DRIVER, "types without a driver are named as such");
+    CHECK(st_resolve("usb101", &t) == ST_E_NO_DRIVER, "a type without a driver (usb) is named as such");
     CHECK(st_resolve("sata101", &t) == ST_E_NO_DEVICE && st_resolve("sata900", &t) == ST_E_NO_DEVICE
-          && st_resolve("scsi101", &t) == ST_E_NO_DEVICE && st_resolve("scsi900", &t) == ST_E_NO_DEVICE,
-          "sata and scsi have drivers: with no such disk attached the answer is 'no such device'");
+          && st_resolve("scsi101", &t) == ST_E_NO_DEVICE && st_resolve("scsi900", &t) == ST_E_NO_DEVICE
+          && st_resolve("nvme101", &t) == ST_E_NO_DEVICE && st_resolve("nvme900", &t) == ST_E_NO_DEVICE,
+          "sata, scsi and nvme have drivers: with no such disk attached the answer is 'no such device'");
     CHECK(st_resolve("hdx101", &t) == ST_E_UNKNOWN_TYPE && st_resolve("ide1", &t) == ST_E_SYNTAX, "syntax errors come through");
 
     /* never the running system */
