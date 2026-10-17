@@ -205,6 +205,7 @@ kernel/mwp_link.ld  linker script for building a .mwp flat binary
 kernel/font_latin_data.h  generated 11x11 Latin glyph table (see tools/gen_latin_font.py)
 kernel/font_ko_data.h     generated 11x11 Hangul glyph table, LZ4-compressed (see tools/gen_hangul_font.py)
 kernel/lz.h              LZ4 block decoder (inflates the Korean font at boot)
+kernel/acpi.h            ACPI soft-off (real power-off in VMs and PCs)
 kernel/blk.h             block-device table + boot-disk sector I/O (ide, sata, scsi)
 kernel/ahci.h            AHCI SATA driver
 kernel/mpt.h             LSI Logic / Fusion-MPT SCSI driver (VMware/VirtualBox "LSI Logic")
@@ -286,7 +287,7 @@ asks:
   NIC drivers sharing one common interface (`kernel/nic.h`):
   - **RTL8139** (`kernel/rtl8139.h`) -- pure port I/O, ring-buffer RX,
     4-slot round-robin TX.
-  - **e1000 / 82540EM** (`kernel/e1000.h`) -- memory-mapped registers
+  - **e1000 / 8254x** (`kernel/e1000.h`: 82540EM, 82545EM, 82544GC, 82543GC) -- memory-mapped registers
     (no port I/O at all) plus real RX/TX descriptor rings the card DMAs
     through on its own. Works because this kernel runs with paging
     disabled, so a physical address and a C pointer are the same

@@ -1,6 +1,6 @@
 # Roadmap and known limits
 
-## Where 1.1-alpha-4 stands
+## Where 1.1-alpha-5 stands
 
 New in alpha-2: an AHCI driver (`sata` ids), a block layer, boot-disk location on every bus, and the Korean font stored
 compressed (kernel image ~337 KB of 512 KB). See [CHANGELOG.md](CHANGELOG.md). New in alpha-1: MiniFiles ([MINIFILES.md](MINIFILES.md)), `os-inst` ([OS-INSTALL.md](OS-INSTALL.md)) with the storage
@@ -32,7 +32,7 @@ same way (`tools/gen_hangul_font.py` has the compressor), moving `.bss` tables t
 
 ## Ideas for the next alphas
 
-* **next:** virtual-machine compatibility work (ACPI power-off, more NIC models); more storage buses (virtio-scsi, VMware
-  Paravirtual SCSI, NVMe); a partition-table tool (`os-part`?); MiniFiles: rename/copy, more slots.
+* **next:** more virtual-machine / hardware compatibility (NICs: e1000e, vmxnet3, PCnet, virtio-net); more storage buses
+  (NVMe first -- what VMware 17 and every recent laptop use --, then virtio-scsi, VMware Paravirtual SCSI); a partition-table tool (`os-part`?); MiniFiles: rename/copy, more slots.
 * **later:** NVMe and USB storage; GPT/UEFI boot; reading a disk image into MiniFiles; per-file permissions are out of scope.
 * Translate MiniFiles' labels and messages to Korean.

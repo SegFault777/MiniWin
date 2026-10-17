@@ -26,7 +26,13 @@
  * ============================================================ */
 
 #define E1000_VENDOR_ID 0x8086
-#define E1000_DEVICE_ID 0x100E   /* 82540EM -- what QEMU's -device e1000 presents */
+/* The 8254x family models hypervisors present. All share the register map and descriptor format used below:
+ *   0x100E  82540EM  QEMU "e1000", VirtualBox "Intel PRO/1000 MT Desktop"
+ *   0x100F  82545EM  VMware "e1000", VirtualBox "Intel PRO/1000 MT Server", QEMU "e1000-82545em"
+ *   0x1004  82543GC  VirtualBox "Intel PRO/1000 T Server" (not run here: QEMU has no 82543GC model)
+ *   0x100C  82544GC  QEMU "e1000-82544gc"
+ * (VMware's other adapters -- e1000e/82574L, vmxnet3 -- are different hardware and are not handled.) */
+static const u16 e1000_device_ids[] = { 0x100E, 0x100F, 0x1004, 0x100C };
 
 /* Register byte offsets from the MMIO base (BAR0). */
 #define E1000_REG_CTRL    0x0000
@@ -180,7 +186,9 @@ static int e1000_recv(u8 *out, u16 max_len, u16 *out_len) {
 }
 
 static int e1000_init(void) {
-    pci_device_t *dev = pci_find_device(E1000_VENDOR_ID, E1000_DEVICE_ID);
+    pci_device_t *dev = 0;
+    for (unsigned i = 0; i < sizeof e1000_device_ids / sizeof e1000_device_ids[0] && !dev; i++)
+        dev = pci_find_device(E1000_VENDOR_ID, e1000_device_ids[i]);
     if (!dev) return 0;
 
     pci_enable_bus_mastering(dev->bus, dev->slot, dev->func);

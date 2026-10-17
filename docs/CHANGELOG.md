@@ -1,5 +1,22 @@
 # Changelog
 
+## MiniWin 1.1-alpha-5 (2026-10)
+
+* **Shutdown really powers off** (`kernel/acpi.h`): Shut Down / the Terminal's `off` paint the usual "safe to turn off"
+  message, then ask the machine to power off through ACPI S5 -- RSDP -> RSDT -> FADT (PM1a/PM1b control registers, SMI_CMD
+  hand-off if the chipset is not in ACPI mode) and the `_S5_` sleep type read out of the DSDT bytecode without an AML
+  interpreter. That covers QEMU, VMware, VirtualBox and ordinary PCs. Only under a hypervisor (CPUID bit) it also writes the
+  QEMU/Bochs (0x604, 0xB004) and VirtualBox (0x4004) power-off ports. Every table is length- and checksum-checked; a firmware
+  without usable tables just leaves the message on screen and halts, as before. Restart is unchanged (keyboard controller).
+* **e1000 NIC models**: besides 82540EM (0x100E, QEMU / VirtualBox "MT Desktop") the driver now takes 82545EM (0x100F: VMware's
+  "e1000", VirtualBox "MT Server"), 82543GC (0x1004: VirtualBox "T Server") and 82544GC (0x100C). DHCP verified on QEMU's
+  82540EM, 82545EM and 82544GC models; 82543GC has no QEMU model and is untested.
+* Tests: `tools/test/qemu_power.py` (Terminal `off` powers QEMU off on i440FX and Q35; with ACPI hidden it falls back and halts
+  cleanly).
+
+Known: VMware's e1000e (82574L) and vmxnet3, VirtualBox's PCnet-FAST III and virtio-net are not handled; the VirtualBox
+power-off port and the S5 path on real hardware are untested.
+
 ## MiniWin 1.1-alpha-4 (2026-10)
 
 * **SCSI driver for LSI Logic / Fusion-MPT controllers** (`kernel/mpt.h`): the one message protocol behind VMware's "LSI
