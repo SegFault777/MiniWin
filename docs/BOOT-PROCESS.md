@@ -6,8 +6,8 @@
 >
 > | code | name | raised by | meaning |
 > |---|---|---|---|
-> | `MW-B01` | `BIOS_LBA_UNSUPPORTED` | stage 1 | INT 13h AH=42h answered "invalid function" (`AH=01`): a floppy, a CD or a very old BIOS. Attach the image as a hard disk |
-> | `MW-B02` | `STAGE2_READ_FAILED` | stage 1 | sector 1.. could not be read after three tries with a disk reset in between |
+> | `MW-B01` | `BIOS_LBA_UNSUPPORTED` | (retired in 1.1-alpha-7) | was raised for a BIOS without extended reads, e.g. the image attached as a FLOPPY (`DL=00`, seen on VMware). That case now boots: stage 1 and stage 2 fall back to CHS reads and the kernel has a floppy driver |
+> | `MW-B02` | `STAGE2_READ_FAILED` | stage 1 | sector 1.. could not be read (extended read, then CHS) after three tries each with a disk reset in between |
 > | `MW-B03` | `KERNEL_READ_FAILED` | stage 2 | a kernel sector could not be read even one sector at a time (`LBA` is the sector; `AH=04` near the end of the disk = disk shorter than the image) |
 > | `MW-B04` | `VBE_INFO_UNAVAILABLE` | stage 2 | INT 10h AX=4F00h failed: no VESA support |
 > | `MW-B05` | `VBE_NO_640x480x32_MODE` | stage 2 | the VESA mode list has no 640x480 32-bit direct-colour mode |
@@ -23,6 +23,23 @@
 > `20` controller failure, `40` seek failed, `80` timeout / not ready, `AA` drive not ready, `BB` undefined error.
 > Before 1.1-alpha-6 stage 1, stage 2 and the chain loader all printed the same "DISK READ ERROR", so the stage that failed
 > was a guess; see [VIRTUAL-MACHINES.md](VIRTUAL-MACHINES.md) for what to try.
+
+## Booting from a floppy, and BIOSes without extended reads (1.1-alpha-7)
+
+BIOS drive 00h/01h is a floppy, and a floppy has no INT 13h extended (LBA) reads: the 1.1-alpha-6 loader answered that with
+`MW-B01 BIOS_LBA_UNSUPPORTED (BIOS AH=01 DL=00)` -- which is what VMware showed when the image was attached as its floppy.
+Since alpha-7 the whole chain works from a floppy:
+
+* **Stage 1** goes straight to CHS when `DL < 80h` (and falls back to CHS after a failed extended read on a hard disk that
+  starts at LBA 0): stage 2 always sits at cylinder 0, head 0, sectors 2.., on any geometry.
+* **Stage 2** asks the BIOS for the geometry (INT 13h AH=08h; a 1.44 MB default if it will not say), reads the kernel a track
+  piece at a time through a bounce buffer at `0x1000` (so the floppy DMA never crosses a 64 KB boundary), copies it to its
+  address, and passes the geometry to the kernel at `0x50C`/`0x50D`.
+* **The kernel** (`kernel/fdc.h`) drives the floppy controller and ISA DMA channel 2 for the floppy it booted from -- a
+  standard 1.44 MB disk, registered as `fd1` -- reading and caching a whole 18-sector track per access (a real floppy loses a
+  revolution per skipped sector otherwise). The motor stays on: there is no timer to turn it off.
+* `tools/install_all.sh` writes `build/os-image-floppy.img`, the image padded to 1,474,560 bytes. Use that as the floppy image
+  (a 1 MB file is not a floppy size VMware accepts everywhere).
 
 ## Making the loader survive other BIOSes (1.1-alpha-6)
 

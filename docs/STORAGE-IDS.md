@@ -53,6 +53,12 @@ Like `sata`, the number shifts when a disk is added or removed -- check `os-inst
 Namespaces formatted with a block size other than 512 bytes are skipped (with a line on the serial port); sizes are capped at
 2^28 - 1 sectors like the other buses.
 
+## fd ids
+
+`fd1` is the 1.44 MB floppy the machine was **booted from** (and only that one: a floppy is not probed when the machine booted from
+a hard disk, because an empty drive takes seconds to time out). It has no partitions; `os-inst fd100` is refused like any
+running system. Reads go through a whole-track cache (`kernel/fdc.h`).
+
 ## Partition numbers
 
 * **MBR.** `01`-`04` are the four primary entries by table position (a gap stays a gap: entries 1 and 3 in use are

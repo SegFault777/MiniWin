@@ -23,6 +23,7 @@ ORG 0x0600
 
 BOOT_BASE_ADDR  equ 0x0504      ; u32 written by stage 1: the LBA this installation starts at (see boot.asm)
 
+BOOT_GEOM_ADDR  equ 0x050C      ; u8 sectors-per-track, u8 heads: the BIOS geometry when the boot disk is read by CHS (floppy)
 BOOT_DRIVE_ADDR equ 0x0500      ; fixed, low-memory scratch address both
                                  ; stage 1 and stage 2 agree on independently
                                  ; for the one byte of state that needs to
@@ -83,6 +84,12 @@ stage2_entry:
     ; count back into it; (3) a failed read is retried after a disk reset and then retried again with HALF the sectors
     ; per call, down to one, because some BIOSes cap the count per call below 64. Only if even a single sector will not
     ; read is it an error, and then the message names the LBA and the BIOS's own error code.
+    ; A FLOPPY (BIOS drive 00h/01h) has no extended reads: use CHS from the start. (A hard disk whose BIOS lacks the
+    ; extensions is switched over inside read_chunk, on its first "invalid function".)
+    cmp byte [BOOT_DRIVE_ADDR], 0x80
+    jae .edd_mode
+    call setup_chs
+.edd_mode:
     mov eax, [BOOT_BASE_ADDR]
     add eax, KERNEL_START_LBA    ; relative to where this installation starts (0 for a whole-disk image)
     mov [rd_lba], eax
@@ -317,6 +324,8 @@ disk_error:
 ; Reads [rd_count] sectors from LBA [rd_lba] to [rd_seg]:0000 with INT 13h AH=42h. CF=1 and [rd_ah] set if it failed three
 ; times (with a disk reset between attempts). The packet is rebuilt on every attempt; DS/ES are reloaded after each call.
 read_chunk:
+    cmp byte [use_chs], 0
+    jne read_chunk_chs
     mov byte [rd_tries], 3
 .again:
     xor ax, ax
@@ -346,12 +355,135 @@ read_chunk:
     int 0x13                     ; AH=0: reset the disk system
     dec byte [rd_tries]
     jnz .again
+    cmp byte [rd_ah], 0x01       ; "invalid function": this BIOS has no extended reads (floppy / old BIOS) -> CHS instead
+    jne .failed
+    call setup_chs
+    jmp read_chunk
+.failed:
     stc
     ret
 .ok:
     xor ax, ax                   ; the BIOS may have changed DS/ES even on success
     mov ds, ax
     mov es, ax
+    clc
+    ret
+
+; ---- CHS reads (floppies, and hard disks whose BIOS has no INT 13h extensions) ----
+; setup_chs: switch read_chunk to CHS and ask the BIOS for the drive geometry (AH=08h); if it will not say, assume a 1.44 MB
+; floppy (18 sectors per track, 2 heads).
+setup_chs:
+    mov byte [use_chs], 1
+    mov byte [chs_spt], 18
+    mov byte [chs_heads], 2
+    xor ax, ax
+    mov es, ax
+    mov di, ax                   ; (ES:DI = 0:0, as the call asks for floppies)
+    mov ah, 0x08
+    mov dl, [BOOT_DRIVE_ADDR]
+    int 0x13
+    xor ax, ax                   ; the call may have changed anything: DS/ES back first
+    mov ds, ax
+    mov es, ax
+    jc .geom_done
+    mov al, cl
+    and al, 0x3F                 ; CL bits 0-5: sectors per track
+    jz .geom_done
+    mov [chs_spt], al
+    inc dh                       ; DH: highest head number
+    jz .geom_done
+    mov [chs_heads], dh
+.geom_done:
+    mov al, [chs_spt]            ; hand the geometry to the kernel's floppy driver (kernel/fdc.h)
+    mov [BOOT_GEOM_ADDR], al
+    mov al, [chs_heads]
+    mov [BOOT_GEOM_ADDR + 1], al
+    ret
+
+; Reads [rd_count] sectors from LBA [rd_lba] to [rd_seg]:0000, one track piece at a time (a floppy read must not cross a
+; track), through a bounce buffer below 64 KB (so the floppy controller's DMA never crosses a 64 KB boundary), then copies
+; to the kernel's address with a real-mode string move. CF=1 and [rd_ah] set on failure.
+CHS_BOUNCE equ 0x1000            ; 0x1000..0x5000: clear of stage 2 (0x600-0xE00), the boot-sector copy (0x7C00) and the stack
+read_chunk_chs:
+    mov eax, [rd_lba]
+    mov [c_lba], eax
+    mov ax, [rd_count]
+    mov [c_left], ax
+    mov ax, [rd_seg]
+    mov [c_seg], ax
+.next:
+    mov eax, [c_lba]
+    xor edx, edx
+    movzx ebx, byte [chs_spt]
+    div ebx                      ; eax = track number, edx = 0-based sector in the track
+    mov [c_sect], dl
+    xor edx, edx
+    movzx ebx, byte [chs_heads]
+    div ebx                      ; eax = cylinder, edx = head
+    mov [c_head], dl
+    mov [c_cyl], ax
+    movzx ax, byte [chs_spt]
+    movzx bx, byte [c_sect]
+    sub ax, bx                   ; sectors left in this track
+    cmp ax, 32
+    jbe .cap_ok
+    mov ax, 32                   ; (a 63-sector track would overrun the bounce buffer)
+.cap_ok:
+    cmp ax, [c_left]
+    jbe .n_ok
+    mov ax, [c_left]
+.n_ok:
+    mov [c_n], ax
+    mov byte [rd_tries], 3
+.again:
+    xor ax, ax
+    mov ds, ax
+    mov es, ax
+    mov ax, [c_cyl]
+    mov ch, al                   ; cylinder bits 0-7
+    shr ax, 2
+    and al, 0xC0                 ; cylinder bits 8-9 go to CL bits 6-7
+    mov cl, [c_sect]
+    inc cl                       ; CHS sectors count from 1
+    or cl, al
+    mov dh, [c_head]
+    mov dl, [BOOT_DRIVE_ADDR]
+    mov bx, CHS_BOUNCE
+    mov al, [c_n]
+    mov ah, 0x02
+    int 0x13
+    jnc .read_ok
+    mov bl, ah
+    xor ax, ax
+    mov ds, ax
+    mov es, ax
+    mov [rd_ah], bl
+    mov dl, [BOOT_DRIVE_ADDR]
+    int 0x13                     ; reset (a floppy often needs it right after the motor has spun up)
+    dec byte [rd_tries]
+    jnz .again
+    stc
+    ret
+.read_ok:
+    xor ax, ax
+    mov ds, ax
+    mov ax, [c_seg]
+    mov es, ax
+    mov si, CHS_BOUNCE
+    xor di, di
+    mov cx, [c_n]
+    shl cx, 8                    ; sectors * 256 words
+    cld
+    rep movsw
+    xor ax, ax
+    mov es, ax
+    movzx eax, word [c_n]
+    add [c_lba], eax
+    shl ax, 5                    ; sectors * 512 / 16 = paragraphs
+    add [c_seg], ax
+    mov ax, [c_n]
+    sub [c_left], ax
+    jnz .next
     clc
     ret
 
@@ -446,6 +578,16 @@ rd_chunk:    dw 0
 rd_left:     dw 0
 rd_tries:    db 0
 rd_ah:       db 0
+use_chs:     db 0
+chs_spt:     db 18
+chs_heads:   db 2
+c_sect:      db 0
+c_head:      db 0
+c_cyl:       dw 0
+c_n:         dw 0
+c_left:      dw 0
+c_seg:       dw 0
+c_lba:       dd 0
 
 ; ============================================================
 ; Global Descriptor Table (flat memory model, because life's too short

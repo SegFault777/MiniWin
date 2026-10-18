@@ -150,12 +150,14 @@ typedef char mw_assert_netmem_fits[(MW_NETMEM_USED_END <= MW_NETMEM_END) ? 1 : -
 #define MW_NVME_CTRL_STRIDE 0x00006000u
 #define MW_NVME_CTRLS       2u
 #define MW_NVME_DMA_SIZE    (MW_NVME_CTRL_STRIDE * MW_NVME_CTRLS)
+#define MW_FD_DMA_ADDR      (MW_NVME_DMA_ADDR + MW_NVME_DMA_SIZE)   /* floppy: one 9 KB track buffer + one sector (ISA DMA: below 16 MB, no 64 KB crossing) */
+#define MW_FD_DMA_SIZE      0x00002800u
 
 typedef char mw_assert_rd_fits[(MW_RD_END <= MW_MISC_BASE) ? 1 : -1];
 typedef char mw_assert_misc_fits[((MW_MISC_BASE + MW_ICON_CACHE_SIZE) <= MW_MWP_SYSCALL_ADDR) ? 1 : -1];
 typedef char mw_assert_files_icons_fit[((MW_FILES_ICON_ADDR + MW_FILES_ICON_SIZE) <= MW_MWP_SYSCALL_ADDR) ? 1 : -1];
 typedef char mw_assert_kfont_fits[((0x007D0000u + MW_KFONT_SIZE) <= MW_MWP_SYSCALL_ADDR && 0x007D0000u >= (MW_MISC_BASE + MW_ICON_CACHE_SIZE + MW_FILES_ICON_SIZE)) ? 1 : -1];
-typedef char mw_assert_stor_dma_fits[((0x00810000u + MW_STOR_DMA_SIZE) <= MW_MWP_SYSCALL_ADDR && 0x00810000u >= (0x007D0000u + MW_KFONT_SIZE) && MW_AHCI_DMA_SIZE <= 0x4000u && 0x4000u + MW_MPT_DMA_SIZE + MW_NVME_DMA_SIZE <= MW_STOR_DMA_SIZE && (MW_NVME_DMA_ADDR & 0xFFFu) == 0) ? 1 : -1];
+typedef char mw_assert_stor_dma_fits[((0x00810000u + MW_STOR_DMA_SIZE) <= MW_MWP_SYSCALL_ADDR && 0x00810000u >= (0x007D0000u + MW_KFONT_SIZE) && MW_AHCI_DMA_SIZE <= 0x4000u && 0x4000u + MW_MPT_DMA_SIZE + MW_NVME_DMA_SIZE + MW_FD_DMA_SIZE <= MW_STOR_DMA_SIZE && (MW_NVME_DMA_ADDR & 0xFFFu) == 0 && (MW_FD_DMA_ADDR >> 16) == ((MW_FD_DMA_ADDR + MW_FD_DMA_SIZE - 1) >> 16) && (MW_FD_DMA_ADDR + MW_FD_DMA_SIZE) < 0x01000000u) ? 1 : -1];
 typedef char mw_assert_rd_above_backbuf[(MW_RD_BASE >= 0x0052C000u) ? 1 : -1];
 typedef char mw_assert_mwp_in_ram[(MW_MWP_END <= 0x0092C000u) ? 1 : -1];
 

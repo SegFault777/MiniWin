@@ -110,6 +110,7 @@ static void io_wait(void) {}
 /* The sector the BIOS left at 0x7C00: st_boot_locate() fingerprints it. On the host it is this array. */
 static u8 fake_bootsect[512];
 #define MW_BOOTSECT_COPY ((const u8 *)fake_bootsect)
+#define MW_BOOT_INFO8(addr) ((u8)0x80)          /* "booted from the first hard disk": the floppy driver stays out of it */
 
 #include "../../kernel/storage.h"
 #include "../../kernel/os_inst.h"

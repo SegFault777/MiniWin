@@ -36,8 +36,8 @@
  *        protective MBR (type 0xEE) plus a valid "EFI PART" header; only 32-bit LBAs are supported.
  */
 
-static const char *const st_type_names[ST_TYPE_COUNT] = { "ide", "sata", "nvme", "scsi", "usb" };
-static inline int st_type_has_driver(st_type_t t) { return t == ST_IDE || t == ST_SATA || t == ST_SCSI || t == ST_NVME; }
+static const char *const st_type_names[ST_TYPE_COUNT] = { "ide", "sata", "nvme", "scsi", "usb", "fd" };
+static inline int st_type_has_driver(st_type_t t) { return t == ST_IDE || t == ST_SATA || t == ST_SCSI || t == ST_NVME || t == ST_FD; }
 
 /* result codes of st_parse_id() / st_resolve() */
 #define ST_OK              0
@@ -291,7 +291,7 @@ static inline const char *st_error_text(int e) {
     switch (e) {
         case ST_E_SYNTAX:       return "bad id: expected <type><device><2-digit partition>, e.g. ide101 (see os-inst ?)";
         case ST_E_UNKNOWN_TYPE: return "unknown storage type (known: ide sata nvme scsi usb)";
-        case ST_E_NO_DRIVER:    return "this build has no driver for that storage type yet (only ide, sata, scsi, nvme)";
+        case ST_E_NO_DRIVER:    return "this build has no driver for that storage type yet (only ide, sata, scsi, nvme, fd)";
         case ST_E_NO_DEVICE:    return "no such device (see os-inst list)";
         case ST_E_NO_PARTITION: return "no such partition on that device (see os-inst list)";
         case ST_E_EXTENDED:     return "that is an extended-partition container; pick a logical partition inside it";

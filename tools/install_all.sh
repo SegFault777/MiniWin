@@ -18,3 +18,8 @@ tools/build_mwp.sh programs/greeter.c
 python3 tools/install_mwp.py "$IMG" 0 GREETER.MWP build/greeter.mwp
 python3 tools/install_icons.py "$IMG" third_party/icon-bundle
 echo "install_all: GREETER.MWP + icon catalog written to $IMG"
+# The same image padded to a 1.44 MB floppy: what VMware / VirtualBox want when the image is attached as a floppy (the BIOS then boots
+# it as drive 00h; the loader reads it by CHS and the kernel's floppy driver, kernel/fdc.h, keeps using it). A raw copy, nothing else.
+FLOPPY="${IMG%.img}-floppy.img"
+cp "$IMG" "$FLOPPY" && truncate -s 1474560 "$FLOPPY"
+echo "install_all: $FLOPPY (1.44 MB floppy copy)"

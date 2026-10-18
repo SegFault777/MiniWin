@@ -5,6 +5,7 @@
 #include "ahci.h"
 #include "mpt.h"
 #include "nvme.h"
+#include "fdc.h"
 
 /* blk.h -- "the disks": one numbered table of every block device the kernel can drive, whatever bus it sits on, and
  * the read/write that dispatches to the right driver. Above this file nothing cares whether a sector comes through
@@ -16,23 +17,25 @@
  *      4..11   sata  -- in discovery order, controller by controller, port by port: sata1, sata2, ...
  *      12..19  scsi  -- LSI Logic / MPT controllers (mpt.h), controller by controller, target id by target id
  *      20..23  nvme  -- NVM Express SSDs (nvme.h), namespace 1 of each controller
+ *      24      fd    -- the floppy the machine booted from (fdc.h), only when it did
  * and a storage id's device number is 1-based within its type ("sata2" = the second AHCI disk found).
  *
  * The BOOT device (blk_boot_dev) is the disk this installation runs from, and ata_read_sector()/ata_write_sector() --
  * the calls fs.h, the icon cache and the program slots have always used -- talk to it, relative to blk_boot_base (the
  * first sector of this installation: non-zero only when MiniWin lives inside a partition, see storage.h). */
 
-typedef enum { ST_IDE = 0, ST_SATA, ST_NVME, ST_SCSI, ST_USB, ST_TYPE_COUNT } st_type_t;
+typedef enum { ST_IDE = 0, ST_SATA, ST_NVME, ST_SCSI, ST_USB, ST_FD, ST_TYPE_COUNT } st_type_t;
 
 #define BLK_IDE_FIRST   0
 #define BLK_SATA_FIRST  (BLK_IDE_FIRST + ATA_POSITIONS)
 #define BLK_SCSI_FIRST  (BLK_SATA_FIRST + AHCI_MAX_DEVS)
 #define BLK_NVME_FIRST  (BLK_SCSI_FIRST + MPT_MAX_DEVS)
-#define BLK_DEV_MAX     (BLK_NVME_FIRST + NVME_MAX_DEVS)
+#define BLK_FD_FIRST    (BLK_NVME_FIRST + NVME_MAX_DEVS)
+#define BLK_DEV_MAX     (BLK_FD_FIRST + FD_MAX_DEVS)
 
-static inline int blk_type_of(int d) { return d < BLK_SATA_FIRST ? ST_IDE : d < BLK_SCSI_FIRST ? ST_SATA : d < BLK_NVME_FIRST ? ST_SCSI : ST_NVME; }
-static inline int blk_first_of(int type) { return type == ST_IDE ? BLK_IDE_FIRST : type == ST_SATA ? BLK_SATA_FIRST : type == ST_SCSI ? BLK_SCSI_FIRST : type == ST_NVME ? BLK_NVME_FIRST : -1; }
-static inline int blk_count_of(int type) { return type == ST_IDE ? ATA_POSITIONS : type == ST_SATA ? AHCI_MAX_DEVS : type == ST_SCSI ? MPT_MAX_DEVS : type == ST_NVME ? NVME_MAX_DEVS : 0; }
+static inline int blk_type_of(int d) { return d < BLK_SATA_FIRST ? ST_IDE : d < BLK_SCSI_FIRST ? ST_SATA : d < BLK_NVME_FIRST ? ST_SCSI : d < BLK_FD_FIRST ? ST_NVME : ST_FD; }
+static inline int blk_first_of(int type) { return type == ST_IDE ? BLK_IDE_FIRST : type == ST_SATA ? BLK_SATA_FIRST : type == ST_SCSI ? BLK_SCSI_FIRST : type == ST_NVME ? BLK_NVME_FIRST : type == ST_FD ? BLK_FD_FIRST : -1; }
+static inline int blk_count_of(int type) { return type == ST_IDE ? ATA_POSITIONS : type == ST_SATA ? AHCI_MAX_DEVS : type == ST_SCSI ? MPT_MAX_DEVS : type == ST_NVME ? NVME_MAX_DEVS : type == ST_FD ? FD_MAX_DEVS : 0; }
 /* storage id (type, 1-based device number) -> device index, or -1 when no such slot can exist */
 static inline int blk_index(int type, u32 number) {
     if (number < 1 || number > (u32)blk_count_of(type)) return -1;
@@ -53,14 +56,16 @@ static inline int blk_read(int d, u32 lba, void *buf) {
     if (d < BLK_SATA_FIRST) return ata_at_read(ata_positions[d].io, ata_positions[d].slave, lba, buf);
     if (d < BLK_SCSI_FIRST) return ahci_read(d - BLK_SATA_FIRST, lba, buf);
     if (d < BLK_NVME_FIRST) return mpt_read(d - BLK_SCSI_FIRST, lba, buf);
-    return nvme_read(d - BLK_NVME_FIRST, lba, buf);
+    if (d < BLK_FD_FIRST) return nvme_read(d - BLK_NVME_FIRST, lba, buf);
+    return fd_read(d - BLK_FD_FIRST, lba, buf);
 }
 static inline int blk_write(int d, u32 lba, const void *buf) {
     if (d < 0 || d >= BLK_DEV_MAX) return 0;
     if (d < BLK_SATA_FIRST) return ata_at_write(ata_positions[d].io, ata_positions[d].slave, lba, buf);
     if (d < BLK_SCSI_FIRST) return ahci_write(d - BLK_SATA_FIRST, lba, buf);
     if (d < BLK_NVME_FIRST) return mpt_write(d - BLK_SCSI_FIRST, lba, buf);
-    return nvme_write(d - BLK_NVME_FIRST, lba, buf);
+    if (d < BLK_FD_FIRST) return nvme_write(d - BLK_NVME_FIRST, lba, buf);
+    return fd_write(d - BLK_FD_FIRST, lba, buf);
 }
 
 /* Brings the bus drivers up (once) and fills st_devs[]. Cheap to repeat: IDE is re-identified, the other buses report
@@ -69,6 +74,7 @@ static inline void st_scan(void) {
     ahci_init();
     mpt_init();
     nvme_init();
+    fd_init();
     for (int i = 0; i < BLK_DEV_MAX; i++) { st_devs[i].present = 0; st_devs[i].sectors = 0; st_devs[i].model[0] = 0; }
     for (int i = 0; i < ATA_POSITIONS; i++) {
         ata_ident_t id;
@@ -92,6 +98,12 @@ static inline void st_scan(void) {
         st_dev_t *s = &st_devs[BLK_NVME_FIRST + i];
         s->present = 1; s->sectors = nvme_devs[i].sectors;
         for (int k = 0; k < 41; k++) s->model[k] = nvme_devs[i].model[k];
+    }
+    if (fd_dev_count) {
+        st_dev_t *s = &st_devs[BLK_FD_FIRST];
+        static const char fm[] = "3.5in 1.44MB floppy";
+        s->present = 1; s->sectors = FD_SECTORS;
+        for (int k = 0; k < (int)sizeof fm; k++) s->model[k] = fm[k];
     }
     st_scanned = 1;
 }

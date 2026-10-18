@@ -100,6 +100,20 @@ check("installed disk on SCSI target 3 is found by its install id", "LBA 0 on sc
 log = qemu(["-drive", "file=%s,format=raw" % IMG] + MPT + scsi(DISK2, 1), 14)
 check("IDE boot with an unrelated SCSI disk present stays on ide1", "LBA 0 on ide1" in boot_line(log), boot_line(log))
 
+# ---- floppy: the same image padded to 1.44 MB, booted as drive A: (VMware / VirtualBox "floppy image file") ----
+FLOPPY = "/tmp/mw_floppy.img"
+subprocess.check_call(["cp", IMG, FLOPPY]); subprocess.check_call(["truncate", "-s", "1474560", FLOPPY])
+fargs = ["-drive", "file=%s,format=raw,if=floppy" % FLOPPY, "-boot", "a"]
+log = qemu(fargs, 40)
+check("floppy: the kernel reads itself in by CHS and registers the boot floppy", "[FDC] fd1 = the boot floppy (drive 0), 2880 sectors" in log, log[-300:])
+check("floppy: ...and finds its own boot disk", "LBA 0 on fd1" in boot_line(log), boot_line(log))
+before = open(FLOPPY, "rb").read()
+cmds = ["wait 40", "move 50 25", "click", "click", "wait 2", "type Floppy write test", "wait 1", "move 40 38", "click", "wait 1", "move 40 66", "click", "wait 8"]
+qemu(fargs, mon_cmds=cmds)
+after = open(FLOPPY, "rb").read()
+changed = sorted({i // 512 for i in range(len(before)) if before[i] != after[i]})
+check("floppy: a Notepad save is written to the floppy (document header, content, journal sectors change)", 1029 in changed and 1030 in changed, str(changed[:10]))
+
 # ---- NVMe (QEMU's `nvme` device: one controller per -device, namespace 1 is the drive) ----
 def nvme(img, n, boot=False):
     return ["-drive", "file=%s,if=none,id=n%d,format=raw" % (img, n), "-device", "nvme,drive=n%d,serial=mw%d%s" % (n, n, ",bootindex=0" if boot else "")]

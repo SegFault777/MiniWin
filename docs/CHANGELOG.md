@@ -1,5 +1,18 @@
 # Changelog
 
+## MiniWin 1.1-alpha-7 (2026-10)
+
+* **Floppy boot (the VMware `MW-B01 BIOS_LBA_UNSUPPORTED (BIOS AH=01 DL=00)` error).** `DL=00` is BIOS drive 0: VMware had booted the
+  image as a floppy, which has no extended (LBA) reads. Fixed end to end: stage 1 reads stage 2 by CHS when `DL < 80h` (and as a
+  fallback after a failed extended read), stage 2 reads the kernel by CHS (geometry from INT 13h AH=08h, one track piece at a time
+  through a bounce buffer, handed to the kernel at 0x50C), and the kernel has a floppy-controller driver (`kernel/fdc.h`, with
+  `kernel/delay.h`, a PIT-based wait) so the system keeps running from the floppy as `fd1` (reads cached per 18-sector
+  track, writes through). `build/os-image-floppy.img` (the image padded to 1.44 MB) is written by `tools/install_all.sh`.
+  `MW-B01` is retired. QEMU: boot from a floppy, desktop with icons identical to the golden, a Notepad save lands on the floppy;
+  not run on VMware itself.
+* Tests: `qemu_storage.py` gained the three floppy scenarios.
+
+
 ## MiniWin 1.1-alpha-6 (2026-10)
 
 * **Boot fixes for VMware / VirtualBox ("MiniWin: DISK READ ERROR").** Two behaviours of the loader that only QEMU's BIOS

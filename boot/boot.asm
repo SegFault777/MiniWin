@@ -74,6 +74,8 @@ start:
     ; the unforgiving ones: the WHOLE disk address packet is rebuilt for every attempt (some BIOSes write the transfer
     ; count, even the buffer, back into it), the segment registers are reloaded after the call, the first failure is
     ; retried after a disk reset (AH=0), and nothing that has to survive the call lives in a register.
+    cmp byte [BOOT_DRIVE_ADDR], 0x80
+    jb .chs                      ; BIOS drive 00h/01h is a FLOPPY: it has no extended (LBA) reads at all -> CHS straight away
     mov byte [tries], 3
 .try:
     xor ax, ax                   ; DS = ES = 0 again, in case a BIOS call changed them
@@ -102,13 +104,36 @@ start:
     dec byte [tries]
     jnz .try
 
-    ; Every attempt failed. Name the problem: AH=01h is "invalid function", i.e. this BIOS has no INT13h extensions (a
-    ; floppy, or a very old BIOS) -- not the same thing as a sector that would not read.
-    mov si, msg_err_lba
-    cmp byte [err_ah], 0x01
-    je .report
+    ; The extended read failed on a hard disk. A BIOS without INT13h extensions still has the classic CHS call, and stage 2
+    ; (LBA 1..STAGE2_SECTORS) always lies at cylinder 0, head 0, sectors 2.. -- on ANY geometry, so no geometry call is needed
+    ; here. That only holds for an installation that starts at LBA 0; inside a partition the geometry would matter.
+.chs:
+    cmp dword [install_base], 0
+    jne .fail
+    mov byte [tries], 3
+.chs_try:
+    xor ax, ax
+    mov ds, ax
+    mov es, ax
+    mov ax, 0x0200 + STAGE2_SECTORS   ; AH=02h read, AL = sector count
+    mov bx, STAGE2_LOAD_OFF           ; ES:BX = 0000:0600
+    mov cx, 0x0002                    ; cylinder 0, sector 2 (CHS sectors count from 1)
+    mov dh, 0                         ; head 0
+    mov dl, [BOOT_DRIVE_ADDR]
+    int 0x13
+    jnc .loaded
+    mov bl, ah
+    xor ax, ax
+    mov ds, ax
+    mov [err_ah], bl
+    mov dl, [BOOT_DRIVE_ADDR]
+    int 0x13                     ; reset (a floppy often needs this after its motor has just spun up)
+    dec byte [tries]
+    jnz .chs_try
+
+    ; Every attempt failed: say what the BIOS said.
+.fail:
     mov si, msg_err_s2
-.report:
     call print_string
     mov si, msg_ah
     call print_string
@@ -164,8 +189,8 @@ print_hex8:
     ret
 
 msg_boot:     db "MiniWin: booting...", 13, 10, 0
-; Boot errors have a code and a NAME (the full table is in docs/BOOT-PROCESS.md); stage 2 and the kernel use MW-B03 and up.
-msg_err_lba:  db "MiniWin ERROR MW-B01 BIOS_LBA_UNSUPPORTED", 0
+; Boot errors have a code and a NAME (the full table is in docs/BOOT-PROCESS.md). MW-B01 (no LBA reads) is retired: a BIOS
+; without them now gets the CHS path; stage 2 and the kernel use MW-B03 and up.
 msg_err_s2:   db "MiniWin ERROR MW-B02 STAGE2_READ_FAILED", 0
 msg_ah:       db " (BIOS AH=", 0
 msg_dl:       db " DL=", 0

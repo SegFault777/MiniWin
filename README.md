@@ -10,7 +10,7 @@ mode by hand, a from-scratch VGA/mouse/keyboard stack with its own disk
 drivers (IDE, SATA/AHCI, SCSI, NVMe), and a windowing system with no libc, no
 bootloader framework, and no borrowed kernel code.
 
-**Current version: 1.1-alpha-6** ([changelog](docs/CHANGELOG.md)). Developed and
+**Current version: 1.1-alpha-7** ([changelog](docs/CHANGELOG.md)). Developed and
 tested on QEMU; for VMware / VirtualBox see
 [docs/VIRTUAL-MACHINES.md](docs/VIRTUAL-MACHINES.md).
 
@@ -194,7 +194,7 @@ platform's QEMU build supports -- run `qemu-system-i386 -audio-help` to
 list them.)
 
 Other disks and virtual machines: the same image boots from an IDE disk,
-an AHCI SATA disk (`-device ich9-ahci`), a SCSI disk on an LSI Logic
+an AHCI SATA disk (`-device ich9-ahci`), a 1.44 MB floppy (`build/os-image-floppy.img`, `-drive if=floppy -boot a`), a SCSI disk on an LSI Logic
 controller (`-device mptsas1068`) or an NVMe SSD (`-device nvme`), and the
 kernel finds the disk it came from by itself. For VMware and VirtualBox
 (legacy BIOS, hard disk, supported controllers and NICs, error table) see
@@ -232,6 +232,8 @@ kernel/lz.h              LZ4 block decoder (inflates the Korean font at boot)
 kernel/acpi.h            ACPI soft-off (real power-off in VMs and PCs)
 kernel/blk.h             block-device table + boot-disk sector I/O (ide, sata, scsi)
 kernel/ahci.h            AHCI SATA driver
+kernel/fdc.h             floppy controller driver (boot from a floppy image: VMware / VirtualBox)
+kernel/delay.h           PIT-based millisecond waits
 kernel/nvme.h            NVMe SSD driver
 kernel/cursor_data.h       generated mouse cursor shapes (icon pack, CC BY-SA 4.0)
 kernel/fatal.h           named full-screen errors + CPU exception handlers (IDT)
