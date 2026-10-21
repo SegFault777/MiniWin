@@ -14,7 +14,18 @@ headers with `gcc` and need no emulator; the **QEMU** suites boot the real image
 | x509 | `tools/test/run_host_x509.sh` | certificate extensions: 19 OpenSSL-generated variants (critical/non-critical, keyUsage, CA flags) |
 | storage | `tools/test/run_host_storage.sh` | storage ids, IDENTIFY, MBR/EBR/GPT parsing, `st_resolve` refusals, and **the installer**: whole disk, partition, existing boot code, logical, GPT, write failures, silently lost writes, read failures, self-install. Fake four-position IDE controller; ASan + UBSan |
 
-Counts at 1.1-alpha-2: web 134, engine 68, crypto 952, critical 416, x509 22, storage 157, font 15 (`run_host_font.sh`); `tools/test/qemu_storage.py` boots IDE/AHCI/SCSI/NVMe disk topologies in QEMU; `tools/test/qemu_power.py` checks that `off` powers the VM off. A suite prints
+Counts at 1.1-alpha-8: web 134, engine 68, crypto 952, critical 416, x509 22, storage 157, font + cursor 15 (`run_host_font.sh`).
+Other checks:
+
+| script | what it checks | time |
+|---|---|---|
+| `tools/test/check_docs.py` | every relative link in the README and `docs/` resolves, every `docs/...` path mentioned in the sources exists, `SOURCE-MAP.md` is current | seconds |
+| `tools/test/check_version.sh` | `kernel/version.h`, the README ("Current version") and the first CHANGELOG entry name the same version | seconds |
+| `tools/test/qemu_storage.py` | boots IDE, AHCI, SCSI, NVMe, floppy and ATAPI topologies in QEMU: boot disk found, `os-inst` onto a second disk and booting the result, a Notepad save landing on the floppy, a known disc read back | about 9 minutes |
+| `tools/test/qemu_power.py` | the Terminal's `off` powers QEMU off (i440FX, Q35; ACPI hidden -> fallback) | 1 minute |
+| `tools/test/ui_golden.sh`, `ui_golden_files.sh` | pixel-exact screenshot tours (classic and dark themes, MiniFiles) | 3 minutes each |
+
+A suite prints
 `N checks, M failures` and exits non-zero on any failure.
 
 ## QEMU suites (minutes)

@@ -2,7 +2,7 @@
 #ifndef MW_UI_ICONS_H
 #define MW_UI_ICONS_H
 
-/* ui/icons.h -- desktop icon geometry, the 32x32 icon cache, and the four launcher icons.
+/* ui/icons.h -- the desktop icon grid, the 32x32 icon cache, and the five app launcher icons.
  * (Split out of kernel.c in pre-29; it is still one translation unit, so modules are included by
  * kernel.c in dependency order -- see the module map there.) */
 
@@ -29,6 +29,18 @@
 #define ICON_X   6
 #define ICON_Y   8
 #define ICON_W   ICON_SLOT_W
+
+/* The desktop grid. EVERY desktop icon -- the five built-in apps, then documents, then program shortcuts (desktop_files.h) --
+ * sits in one vertical list at a constant pitch (ICON_H): top to bottom from ICON_Y, and when the next cell would end below
+ * DESK_BOTTOM_Y it starts at the top of the column to the RIGHT. Cell n (0-based) is at (DESK_CELL_X(n), DESK_CELL_Y(n)).
+ * The columns are 10px wider than an icon slot, which is what the old horizontal row used: "MINIFILES" is a glyph wider than
+ * the slot and spills into that gap. */
+#define DESK_BOTTOM_Y     (VGA_HEIGHT - 48)                    /* a cell must end above this (status line + taskbar) */
+#define DESK_COL_W        (ICON_SLOT_W + 10)
+#define DESK_PER_COLUMN   ((DESK_BOTTOM_Y - ICON_Y) / ICON_H)
+#define DESK_CELL_X(n)    (ICON_X + ((n) / DESK_PER_COLUMN) * DESK_COL_W)
+#define DESK_CELL_Y(n)    (ICON_Y + ((n) % DESK_PER_COLUMN) * ICON_H)
+#define DESK_BUILTIN_COUNT 5                                   /* NOTEPAD, SETTING, WEB, TERMINAL, MINIFILES */
 #define ICON_H   (ICON_GLYPH_H + 4 + 11 + 1 + 11)   /* glyph + gap + two label lines */
 
 /* ------------------------------------------------------------
@@ -48,10 +60,11 @@
 #define ICONC_DOC     3
 #define ICONC_TERM    4
 #define ICONC_FILES   5
-#define ICONC_COUNT   6
+#define ICONC_PROG    6          /* the program shortcut glyph (the pack's "Program") */
+#define ICONC_COUNT   7
 
-static const char *const icon_cache_names[ICONC_COUNT] = { "NOTEPAD", "SETTING", "WEB", "DOCX", "TERMINAL", "FILEMANAGER" };
-/* 24KB: lives in memmap.h's MISC area, not .bss (always filled by icon_cache_init() before it is read) */
+static const char *const icon_cache_names[ICONC_COUNT] = { "NOTEPAD", "SETTING", "WEB", "DOCX", "TERMINAL", "FILEMANAGER", "PROGRAM" };
+/* 28KB: lives in memmap.h's MISC area, not .bss (always filled by icon_cache_init() before it is read) */
 #define icon_cache ((u32 (*)[32 * 32])MW_ICON_CACHE_ADDR)
 static u8  icon_cache_ok[ICONC_COUNT];
 
@@ -112,11 +125,11 @@ static void draw_desktop_icon(void) {
     draw_icon_with_label(ICON_X, ICON_Y, ICONC_NOTEPAD, "NOTEPAD", 7, ".MWP", 4);
 }
 
-/* SETTING.MWP -- sits next to NOTEPAD.MWP in the same top row.
+/* SETTING.MWP -- the second cell of the desktop grid, under NOTEPAD.MWP.
  * Double-clicking opens the real SYSTEM settings window (Language, IME)
  * defined further down, right alongside Notepad's own window code. */
-#define ICON2_X  (ICON_X + ICON_SLOT_W + 10)
-#define ICON2_Y  8
+#define ICON2_X  DESK_CELL_X(1)
+#define ICON2_Y  DESK_CELL_Y(1)
 #define ICON2_W  ICON_SLOT_W
 #define ICON2_H  ICON_H
 
@@ -124,12 +137,12 @@ static void draw_desktop_icon2(void) {
     draw_icon_with_label(ICON2_X, ICON2_Y, ICONC_SETTING, "SETTING", 7, ".MWP", 4);
 }
 
-/* WEB.MWP -- third icon in the same top row. Double-clicking opens
+/* WEB.MWP -- the third cell. Double-clicking opens
  * MiniWeb, the small HTTP client browser built on kernel/http.h and
  * kernel/tcp.h -- this OS's actual "layer above the network stack,"
  * not just a diagnostic harness proving the stack works. */
-#define ICON3_X  (ICON2_X + ICON_SLOT_W + 10)
-#define ICON3_Y  8
+#define ICON3_X  DESK_CELL_X(2)
+#define ICON3_Y  DESK_CELL_Y(2)
 #define ICON3_W  ICON_SLOT_W
 #define ICON3_H  ICON_H
 
@@ -137,11 +150,11 @@ static void draw_desktop_icon3(void) {
     draw_icon_with_label(ICON3_X, ICON3_Y, ICONC_WEB, "WEB", 3, ".MWP", 4);
 }
 
-/* TERMINAL.MWP -- fourth icon in the same top row (it used to be
+/* TERMINAL.MWP -- the fourth cell (it used to be
  * reachable from the Start Menu only, because Terminal.png hadn't been
  * supplied yet). Double-click opens the command-line window. */
-#define ICON4_X  (ICON3_X + ICON_SLOT_W + 10)
-#define ICON4_Y  8
+#define ICON4_X  DESK_CELL_X(3)
+#define ICON4_Y  DESK_CELL_Y(3)
 #define ICON4_W  ICON_SLOT_W
 #define ICON4_H  ICON_H
 
@@ -149,10 +162,10 @@ static void draw_desktop_icon4(void) {
     draw_icon_with_label(ICON4_X, ICON4_Y, ICONC_TERM, "TERMINAL", 8, ".MWP", 4);
 }
 
-/* MINIFILES.MWP -- fifth icon in the same row (the file manager). Double-click opens it. "MINIFILES" is one glyph
- * wider than the slot; the label simply spills into the 10px gap on each side, where nothing else draws. */
-#define ICON5_X  (ICON4_X + ICON_SLOT_W + 10)
-#define ICON5_Y  8
+/* MINIFILES.MWP -- the fifth cell (the file manager). Double-click opens it. "MINIFILES" is one glyph wider than the slot; the
+ * label simply spills into the 10px column gap on each side, where nothing else draws. */
+#define ICON5_X  DESK_CELL_X(4)
+#define ICON5_Y  DESK_CELL_Y(4)
 #define ICON5_W  ICON_SLOT_W
 #define ICON5_H  ICON_H
 

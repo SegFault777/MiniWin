@@ -19,7 +19,7 @@ def run(name, machine_args, expect_exit=True):
         for _ in range(50):
             if os.path.exists(MON): break
             time.sleep(0.2)
-        cmds = ["wait 14", "move 343 25", "click", "click", "wait 2", "move 300 307", "click", "type off", "key ret"]
+        cmds = ["wait 14", "move 50 202", "click", "click", "wait 2", "move 300 307", "click", "type off", "key ret"]
         subprocess.run(["python3", os.path.join(HERE, "qemu_mon.py"), MON] + cmds, timeout=120, capture_output=True)
         for _ in range(60):                                   # up to ~12 s for the guest to cut power
             if q.poll() is not None: break

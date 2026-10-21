@@ -52,18 +52,28 @@ static void draw_confirm_dialog(int mx, int my) {
     /* Title bar -- deliberately just an X, no minimize/maximize. This is
      * a modal warning, not a document window; the only two things you
      * can do with it are answer it or dismiss it. */
-    ui_titlebar(x, y, CONFIRM_W, "Warning!");
+    ui_titlebar(x, y, CONFIRM_W, active_np->confirm_mode == CONFIRM_SAVEAS ? "Save As" : "Warning!");
     int clx = confirm_close_x(), cy = confirm_close_y();
     int p_close = (pressed_btn_kind == BTN_CONFIRM_CLOSE && pressed_btn_win == active_np->id);
     ui_glyph_close(clx, cy, p_close, 1);
 
     int body_y = y + TITLEBAR_H + 3;
+    if (active_np->confirm_mode == CONFIRM_SAVEAS) {
+        /* Save As: the same frame, but a file-name field instead of the question. */
+        ko_draw_mixed_string(x + 10, body_y + 1, t(STR_FILE_NAME), TH_TEXT);
+        int fx = x + 10, fy = body_y + 14, fw = CONFIRM_W - 20;
+        ui_field(fx, fy, fw, 14, TH_FIELD, 1);
+        font_draw_string(fx + 3, fy + 2, active_np->saveas_name, TH_FIELD_TEXT);
+        int cx = fx + 3 + FONT_CELL * active_np->saveas_len;       /* the caret */
+        if (cx + 2 < fx + fw) bb_fillrect(cx, fy + 2, 2, 10, TH_FIELD_TEXT);
+    } else {
     draw_warning_icon(x + 8, body_y);
     ko_draw_mixed_string(x + 26, body_y + 1,  t(STR_SAVE_CHANGES), TH_TEXT);
     if (active_np->confirm_mode == CONFIRM_CLOSE) {
         ko_draw_mixed_string(x + 26, body_y + 11, t(STR_BEFORE_CLOSING), TH_TEXT);
     } else {
         ko_draw_mixed_string(x + 26, body_y + 11, t(STR_BEFORE_NEW), TH_TEXT);
+    }
     }
 
     int yb = confirm_btn_y();
@@ -74,7 +84,8 @@ static void draw_confirm_dialog(int mx, int my) {
     /* Yes/No labels are centered in their buttons via ko_string_width()
      * rather than hardcoded offsets, since "아니오" isn't the same pixel
      * width as "No" -- can't just reuse the English magic numbers. */
-    const char *yes_label = t(STR_YES), *no_label = t(STR_NO);
+    const char *yes_label = t(active_np->confirm_mode == CONFIRM_SAVEAS ? STR_SAVE : STR_YES);
+    const char *no_label = t(active_np->confirm_mode == CONFIRM_SAVEAS ? STR_CANCEL : STR_NO);
     int yes_tx = yesx + (CONFIRM_BTN_W - ko_string_width(yes_label)) / 2;
     int no_tx  = nox  + (CONFIRM_BTN_W - ko_string_width(no_label)) / 2;
 

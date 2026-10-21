@@ -35,7 +35,9 @@ typedef struct {
     u32  text_len;
     int  bound_slot;                 /* which FS slot this document is saved to, -1 = unbound */
     int  file_menu_open;
-    int  confirm_mode;               /* CONFIRM_NONE / CONFIRM_NEW / CONFIRM_CLOSE, this window's own */
+    int  confirm_mode;               /* CONFIRM_NONE / CONFIRM_NEW / CONFIRM_CLOSE / CONFIRM_SAVEAS, this window's own */
+    char saveas_name[FS_NAME_MAXLEN + 1];   /* the Save As dialog's file-name field */
+    int  saveas_len;
 } notepad_t;
 
 static notepad_t notepads[NOTEPAD_MAX];

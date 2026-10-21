@@ -10,9 +10,14 @@ mode by hand, a from-scratch VGA/mouse/keyboard stack with its own disk
 drivers (IDE, SATA/AHCI, SCSI, NVMe), and a windowing system with no libc, no
 bootloader framework, and no borrowed kernel code.
 
-**Current version: 1.1-alpha-7** ([changelog](docs/CHANGELOG.md)). Developed and
+**Current version: 1.1-alpha-8** ([changelog](docs/project/CHANGELOG.md)). Developed and
 tested on QEMU; for VMware / VirtualBox see
-[docs/VIRTUAL-MACHINES.md](docs/VIRTUAL-MACHINES.md).
+[docs/user/VIRTUAL-MACHINES.md](docs/user/VIRTUAL-MACHINES.md).
+
+**Documentation:** [docs/README.md](docs/README.md) -- guides for people who run MiniWin
+([getting started](docs/user/GETTING-STARTED.md), [troubleshooting](docs/user/TROUBLESHOOTING.md), [FAQ](docs/user/FAQ.md)) and for
+people who change it ([architecture](docs/dev/ARCHITECTURE.md), [source map](docs/dev/SOURCE-MAP.md),
+[contributing](docs/dev/CONTRIBUTING.md)).
 
 ![Desktop](screenshots/01-boot-desktop.png)
 
@@ -26,7 +31,7 @@ tested on QEMU; for VMware / VirtualBox see
   BIOSes (packet rebuilt per call, nothing kept in registers across the
   call, retry after a disk reset, then smaller reads), and every boot
   error has a code and a name (`MW-B01` ... `MW-K10`, table in
-  `docs/BOOT-PROCESS.md`) instead of a generic message. Split into two stages (`boot/boot.asm`, an
+  `docs/dev/BOOT-PROCESS.md`) instead of a generic message. Split into two stages (`boot/boot.asm`, an
   exactly-512-byte MBR, and `boot/stage2.asm`, everything else) once
   finding a real truecolor VBE mode by actually walking the BIOS's own
   mode list -- rather than just requesting a fixed, hoped-for mode
@@ -49,11 +54,13 @@ tested on QEMU; for VMware / VirtualBox see
   through it, refusing to boot with a clear message rather than risk
   silently corrupting memory on a machine too small for it.
 - **Kernel**: freestanding C (`kernel/kernel.c` + headers), no libc. A
-  PS/2 mouse + keyboard driver, PC speaker beep, a tiny 4-slot
-  crash-safe filesystem on the boot disk, PCI enumeration, disk drivers
-  for legacy IDE, SATA (AHCI), SCSI (LSI Logic / Fusion-MPT) and NVMe
-  behind one block-device table, ACPI power-off, a CPU-exception handler
-  that shows a named error screen, and a COM1 serial debug log.
+  PS/2 mouse + keyboard driver, PC speaker beep, a tiny crash-safe
+  filesystem on the boot disk (4 document slots and 4 program slots for
+  now; documents have names of their own since Save As), PCI enumeration,
+  disk drivers for legacy IDE, ATAPI CD/DVD (read-only), SATA (AHCI), SCSI
+  (LSI Logic / Fusion-MPT), NVMe and the boot floppy behind one
+  block-device table, ACPI power-off, a CPU-exception handler that shows
+  a named error screen, and a COM1 serial debug log.
 - **Desktop**: draggable/resizable/minimizable/maximizable windows with
   real overlapping z-order (click a window, it comes to front), edge/
   corner resize handles that swap the cursor to a matching directional
@@ -74,8 +81,14 @@ tested on QEMU; for VMware / VirtualBox see
   have, on top of the HTTP client it now does (see Networking below).
   Honest manual setting now, real automatic detection once DNS exists
   to ask a service by hostname instead of a hardcoded IP.
+- **Desktop**: one vertical list of icons at a constant spacing -- the five
+  apps (NOTEPAD, SETTING, WEB, TERMINAL, MINIFILES), then a shortcut for every
+  saved document, then one for every installed program -- top to bottom, and
+  when the next one would not fit above the taskbar it continues at the top of
+  the column to the right. Double-click opens a document or runs a program.
 - **Apps**: NOTEPAD.MWP (supports opening several documents at once, each
-  in its own window, saving to real persistent disk storage),
+  in its own window, saving to real persistent disk storage -- File > Save As
+  asks for a name, Save keeps the document's own),
   SETTING.MWP (System language switch between English/한국어 -- actually
   retranslates the whole UI live -- and a multi-select IME picker that
   controls what Right Alt cycles through while typing), and WEB.MWP
@@ -198,7 +211,7 @@ an AHCI SATA disk (`-device ich9-ahci`), a 1.44 MB floppy (`build/os-image-flopp
 controller (`-device mptsas1068`) or an NVMe SSD (`-device nvme`), and the
 kernel finds the disk it came from by itself. For VMware and VirtualBox
 (legacy BIOS, hard disk, supported controllers and NICs, error table) see
-[docs/VIRTUAL-MACHINES.md](docs/VIRTUAL-MACHINES.md).
+[docs/user/VIRTUAL-MACHINES.md](docs/user/VIRTUAL-MACHINES.md).
 
 To attach a NIC (for PCI/driver work in progress -- see Roadmap):
 
@@ -232,6 +245,9 @@ kernel/lz.h              LZ4 block decoder (inflates the Korean font at boot)
 kernel/acpi.h            ACPI soft-off (real power-off in VMs and PCs)
 kernel/blk.h             block-device table + boot-disk sector I/O (ide, sata, scsi)
 kernel/ahci.h            AHCI SATA driver
+kernel/atapi.h           ATAPI CD/DVD driver (read-only, `cd1`..`cd4`)
+kernel/sysinfo.h         CPUID/TSC, PCI display adapter, VBE and RAM facts for `fetch`
+kernel/version.h         the one place the version number lives
 kernel/fdc.h             floppy controller driver (boot from a floppy image: VMware / VirtualBox)
 kernel/delay.h           PIT-based millisecond waits
 kernel/nvme.h            NVMe SSD driver
@@ -271,7 +287,6 @@ kernel/ui/          the desktop shell: theme.h + themes/ (the whole look), widge
                     window/taskbar/startmenu/clock/icons/cursor/compose, input.h (mouse + keyboard dispatch)
 kernel/apps/        the apps: notepad/*, setting, web/* (state, address, fetch, page, view), terminal
 kernel/sys/         util, lang (language + IME), power, boot (everything before the main loop)
-docs/ARCHITECTURE.md  how the layers fit, the design module's rules, how to add a theme/widget/app
 kernel/net_stack.h  wires all of the above into one init()/poll() pair
 programs/           .mwp source, built independently of the kernel (see tools/build_mwp.sh)
 programs/mwp_api.h  the syscall-table contract a .mwp includes to talk to the OS
@@ -283,6 +298,9 @@ tools/build_mwp.sh         compiles one programs/*.c into a loadable build/*.mwp
 tools/install_mwp.py       writes a built .mwp into an os-image.img program slot
 tools/install_icons.py     writes the icon bundle into an os-image.img icon catalog
 tools/gen_cursors.py       generates kernel/cursor_data.h (the mouse cursors) from the icon pack
+tools/gen_source_map.py    generates docs/dev/SOURCE-MAP.md (one line per source file)
+docs/                      all documentation, see docs/README.md: user/ (using MiniWin), dev/ (changing it:
+                           ARCHITECTURE.md, SOURCE-MAP.md, DRIVERS.md, MEMORY-MAP.md, ...), project/ (changelog, roadmap, licensing)
 docs/logo/                 the MiniWin logo (original + the 6x nearest-neighbour version the README shows)
 tools/test/         host-side tests: run_host_engine.sh (HTML engine + fuzzer), run_host_web.sh (HTTP),
                     run_host_crypto.sh; ui_golden.sh (boots QEMU, drives the desktop, compares 15 screenshots
@@ -476,7 +494,7 @@ GPL-3.0-only` line.
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 The **icon pack** (`third_party/icon-bundle/`, also written into the icon
-catalog of every disk image) is *not* GPL: it is licensed
+catalog of every disk image) and the **logo** (`docs/logo/`) are *not* GPL: they are licensed
 **CC BY-SA 4.0** by its author, SegFault777 -- credit the author and share
 adaptations alike (<https://creativecommons.org/licenses/by-sa/4.0/>). Code and
 artwork are separate works under separate licenses, distributed together on the
@@ -485,5 +503,5 @@ disk image.
 Bundled third-party material keeps the license of its own authors (the
 Galmuri and Dalmoori fonts, the CA root certificates, and the data files
 generated from them); see `third_party/*/NOTICE.md` and
-[docs/LICENSING.md](docs/LICENSING.md) for the full picture, including
+[docs/project/LICENSING.md](docs/project/LICENSING.md) for the full picture, including
 what changed from the earlier MIT-licensed versions.

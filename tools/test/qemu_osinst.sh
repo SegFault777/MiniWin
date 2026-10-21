@@ -20,7 +20,7 @@ run() {   # run TAG "drive args" mon-commands...
     for p in $(pgrep -f "^qemu-system-i386 -m 128 .*serial_$tag"); do kill $p 2>/dev/null; done
     sleep 0.5
 }
-TERM_OPEN=("wait 20" "move 343 25" "click" "click" "wait 2" "move 300 307" "click")
+TERM_OPEN=("wait 20" "move 50 202" "click" "click" "wait 2" "move 300 307" "click")
 
 # ---- 1. whole disk ----
 truncate -s 16M $B/whole.img

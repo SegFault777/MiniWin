@@ -59,6 +59,14 @@ Namespaces formatted with a block size other than 512 bytes are skipped (with a 
 a hard disk, because an empty drive takes seconds to time out). It has no partitions; `os-inst fd100` is refused like any
 running system. Reads go through a whole-track cache (`kernel/fdc.h`).
 
+## cd ids
+
+`cd1`..`cd4` are ATAPI CD/DVD drives with a readable disc, numbered by IDE **position** like `ide1`..`ide4` (`cd3` = the secondary
+master). They are **read-only**: `os-inst cd300` answers "that is a CD/DVD: read-only", and writes through the block layer fail.
+A disc has 2048-byte sectors; the kernel serves each as four 512-byte ones with a one-block cache. A drive with no disc (or one
+that does not become ready) is not listed. There is no ISO 9660 layer yet, so a disc shows up in `os-inst list` and MiniFiles'
+DISKS tab with its size and no partitions.
+
 ## Partition numbers
 
 * **MBR.** `01`-`04` are the four primary entries by table position (a gap stays a gap: entries 1 and 3 in use are

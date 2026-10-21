@@ -22,7 +22,7 @@
 > `07` drive parameter activity failed, `09` DMA crossed a 64 KB boundary, `0A` bad sector, `0C` unsupported track,
 > `20` controller failure, `40` seek failed, `80` timeout / not ready, `AA` drive not ready, `BB` undefined error.
 > Before 1.1-alpha-6 stage 1, stage 2 and the chain loader all printed the same "DISK READ ERROR", so the stage that failed
-> was a guess; see [VIRTUAL-MACHINES.md](VIRTUAL-MACHINES.md) for what to try.
+> was a guess; see [VIRTUAL-MACHINES.md](../user/VIRTUAL-MACHINES.md) for what to try.
 
 ## Booting from a floppy, and BIOSes without extended reads (1.1-alpha-7)
 
@@ -113,4 +113,4 @@ jumps to it with `DL` and `DS:SI` set as the classic convention says. It prints 
 Kernel image + `.bss` + stack must fit **below `0x9FC00`** (the end of conventional memory) starting at `0x10000`:
 the image is loaded by real-mode BIOS calls, which cannot reach above 1 MB. `build.sh` checks both limits and prints the
 remaining headroom (the kernel binary against its 512 KB budget, `.bss` against the stack guard band). See
-[ROADMAP.md](ROADMAP.md): at 1.1-alpha-1 there are only a few KB left, and about half of the image is the Korean font.
+[ROADMAP.md](../project/ROADMAP.md): at 1.1-alpha-1 there are only a few KB left, and about half of the image is the Korean font.

@@ -3,7 +3,7 @@
 ## The project: GPL-3.0-only
 
 From **MiniWin 1.1-alpha-1** the project is licensed under the **GNU General Public License, version 3**
-(SPDX identifier `GPL-3.0-only`). The complete text is in [`LICENSE`](../LICENSE). Every hand-written source file
+(SPDX identifier `GPL-3.0-only`). The complete text is in [`LICENSE`](../../LICENSE). Every hand-written source file
 (`kernel/`, `boot/`, `tools/`, `build.sh`, the test programs) starts with the line
 
     SPDX-License-Identifier: GPL-3.0-only
@@ -26,6 +26,7 @@ Third-party material keeps its authors' license. Nothing in `third_party/` was r
 | Galmuri11 bitmap font (Hangul/Latin glyphs) | `third_party/galmuri-font/` and the data generated from it (`kernel/font_ko_data.h`, `kernel/font_latin_data.h`) | SIL Open Font License 1.1 |
 | Dalmoori font | `third_party/dalmoori-font/` | Apache-2.0 |
 | CA root certificates (the trust store) | `kernel/trusted_roots.h` | the Mozilla CA bundle's terms (MPL-2.0) |
+| the MiniWin logo | `docs/logo/` | **CC BY-SA 4.0** (`CC-BY-SA-4.0`), by SegFault777 |
 | the MiniWin icon bundle | `third_party/icon-bundle/`, the icon catalog written into disk images, and `kernel/cursor_data.h` (the mouse cursors, compiled into the kernel) | **CC BY-SA 4.0** (`CC-BY-SA-4.0`), by its author SegFault777: credit the author and share adaptations alike. Not GPL: art and code are separate works. See `third_party/icon-bundle/NOTICE.md` |
 | the generated test vectors | `tools/test/ecc_tests.h` | derived from public cryptographic test data; not labelled |
 
@@ -51,7 +52,8 @@ the five mouse cursors are the one part of the pack compiled into the kernel ima
 changing a pack icon and shipping it means shipping that change under CC BY-SA 4.0 too. CC BY-SA 4.0 is one of the licenses the
 FSF and Creative Commons recognise as compatible in one direction with GPLv3 (BY-SA 4.0 material may be adapted into a GPLv3
 work), but the pack is data kept separate from the code, so this project does not rely on that. The MiniWin logo
-(`docs/logo/`) is project artwork supplied by its author; no separate license has been stated for it yet.
+(`docs/logo/`) is project artwork by the same author and is licensed **CC BY-SA 4.0** as well (from 1.1-alpha-8; see
+`docs/logo/LICENSE`).
 
 ## History: the earlier MIT releases
 

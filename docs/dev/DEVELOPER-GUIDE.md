@@ -9,7 +9,7 @@
   adds the sample program and the icon catalog. QEMU: `qemu-system-i386 -drive format=raw,file=build/os-image.img`.
 * Budgets that bite (all checked by `build.sh`): the **kernel image** has 512 KB (1024 sectors, 524,288 bytes) and
   image + `.bss` + stack must end below `0x9FC00`. At 1.1-alpha-2 about **187 KB of image and 186 KB of `.bss`** remain (the Korean font is stored compressed); see
-  [ROADMAP.md](ROADMAP.md) for the history of that budget. Check `build.sh`'s last lines before and after a feature.
+  [ROADMAP.md](../project/ROADMAP.md) for the history of that budget. Check `build.sh`'s last lines before and after a feature.
 * The Terminal is **40 columns wide** and shows 14 rows (Up/Down scroll the history); every `term_print()` string must fit
   40 columns (it truncates silently).
 * Warnings are tracked: the build currently has 8 (2 come from the linker, the rest are old). A change should not add one.
@@ -39,7 +39,7 @@ works for free.
 
 ## Conventions
 
-* New source files begin with `SPDX-License-Identifier: GPL-3.0-only` ([LICENSING.md](LICENSING.md)).
+* New source files begin with `SPDX-License-Identifier: GPL-3.0-only` ([LICENSING.md](../project/LICENSING.md)).
 * Comments explain *why* (and what used to go wrong); the existing code is the style reference.
 * Anything that talks to hardware or parses data from outside gets a bounded loop, a size check and a defined failure
   result, and a test that injects the failure. "It can't happen" has been wrong in this code base more than once.

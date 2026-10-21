@@ -161,7 +161,7 @@ static void term_cmd_peek(void) {
         append_str(line, &l, sizeof(line), "  ");
         append_uint(line, &l, sizeof(line), i + 1);
         append_str(line, &l, sizeof(line), ": ");
-        append_str(line, &l, sizeof(line), fs_slot_names[i]);
+        append_str(line, &l, sizeof(line), fs_doc_name(i));
         append_str(line, &l, sizeof(line), " (");
         append_uint(line, &l, sizeof(line), (int)len);
         append_str(line, &l, sizeof(line), " bytes)");
@@ -281,32 +281,117 @@ static void term_cmd_tick(void) {
  * family of "here's what this machine is" tools, which is exactly what
  * this command is for -- just MiniWin-scaled: no CPU/GPU/package-count
  * detection to do when this whole OS IS the software stack. */
-static void term_cmd_fetch(void) {
-    term_print("  MiniWin 1.1-alpha-7");
+/* ---- fetch: a fastfetch-style summary. The Terminal is 40 columns wide, so no logo beside the text: key, then value. ---- */
+static void term_fetch_kv(const char *key, const char *val) {
     char line[TERM_COLS + 1]; u32 l = 0;
-    append_str(line, &l, sizeof(line), "  display: ");
-    append_uint(line, &l, sizeof(line), VGA_WIDTH);
-    append_str(line, &l, sizeof(line), "x");
-    append_uint(line, &l, sizeof(line), VGA_HEIGHT);
-    append_str(line, &l, sizeof(line), " truecolor");
+    append_str(line, &l, sizeof(line), "  ");
+    append_str(line, &l, sizeof(line), key);
+    while (l < 11) line[l++] = ' ';
+    line[l] = 0;
+    append_str(line, &l, sizeof(line), val);
     term_print(line);
+}
+/* "a.b" for a size given in KB, in MiB with one decimal ("1.2", "16.0") */
+static void term_fetch_mib(char *out, u32 *l, u32 cap, u32 kb) {
+    u32 tenths = (kb * 10u + 512u) / 1024u;
+    append_uint(out, l, cap, (int)(tenths / 10u));
+    append_str(out, l, cap, ".");
+    append_uint(out, l, cap, (int)(tenths % 10u));
+}
+
+static void term_cmd_fetch(void) {
+    char v[TERM_COLS + 1]; u32 l;
+    term_print("  miniwin@terminal");
+    term_print("  ----------------");
+    term_fetch_kv("OS", "MiniWin " MW_VERSION " i386");
+
+    u32 s = net_wall_elapsed(sysinfo_boot_s);
+    l = 0;
+    if (s >= 3600u) { append_uint(v, &l, sizeof(v), (int)(s / 3600u)); append_str(v, &l, sizeof(v), " h "); }
+    if (s >= 60u) { append_uint(v, &l, sizeof(v), (int)((s / 60u) % 60u)); append_str(v, &l, sizeof(v), " min "); }
+    append_uint(v, &l, sizeof(v), (int)(s % 60u)); append_str(v, &l, sizeof(v), " s");
+    term_fetch_kv("Uptime", v);
+
+    term_fetch_kv("Shell", "Terminal.mwp");
+    l = 0;
+    append_uint(v, &l, sizeof(v), VGA_WIDTH); append_str(v, &l, sizeof(v), "x"); append_uint(v, &l, sizeof(v), VGA_HEIGHT);
+    append_str(v, &l, sizeof(v), " truecolor");
+    term_fetch_kv("Display", v);
+    l = 0;
+    append_str(v, &l, sizeof(v), TH_NAME); append_str(v, &l, sizeof(v), ", ");
+    append_str(v, &l, sizeof(v), sys_language == LANG_KOREAN ? "Korean" : "English");
+    term_fetch_kv("Theme", v);
+
+    char cpu[49];
+    sysinfo_cpu_name(cpu);
+    {                                                   /* the brand string can be 40+ characters: two rows if needed */
+        int n = 0; while (cpu[n]) n++;
+        if (n <= 29) term_fetch_kv("CPU", cpu);
+        else {
+            char first[30]; int cut = 29;
+            while (cut > 12 && cpu[cut] != ' ') cut--;
+            for (int i = 0; i < cut; i++) first[i] = cpu[i];
+            first[cut] = 0;
+            term_fetch_kv("CPU", first);
+            term_fetch_kv("", cpu + cut + (cpu[cut] == ' ' ? 1 : 0));
+        }
+    }
+    l = 0;
+    u32 mhz = sysinfo_cpu_mhz();
+    if (mhz) { append_uint(v, &l, sizeof(v), (int)mhz); append_str(v, &l, sizeof(v), " MHz"); }
+    else append_str(v, &l, sizeof(v), "speed unknown");
+    int load = sysinfo_cpu_load();
+    if (load >= 0) { append_str(v, &l, sizeof(v), ", load "); append_uint(v, &l, sizeof(v), load); append_str(v, &l, sizeof(v), "%"); }
+    term_fetch_kv("", v);
+
+    char gpu[40];
+    sysinfo_gpu_name(gpu);
+    term_fetch_kv("GPU", gpu);
+    l = 0;
+    u32 vram = sysinfo_vram_kb();
+    u32 fb_kb = (u32)VGA_WIDTH * (u32)VGA_HEIGHT * 4u / 1024u;
+    if (vram) { append_str(v, &l, sizeof(v), "VRAM "); term_fetch_mib(v, &l, sizeof(v), fb_kb); append_str(v, &l, sizeof(v), " / ");
+                term_fetch_mib(v, &l, sizeof(v), vram); append_str(v, &l, sizeof(v), " MiB in use"); }
+    else { append_str(v, &l, sizeof(v), "VRAM size unknown, "); term_fetch_mib(v, &l, sizeof(v), fb_kb); append_str(v, &l, sizeof(v), " MiB shown"); }
+    term_fetch_kv("", v);
+
+    l = 0;
+    u32 ram = sysinfo_ram_kb();
+    term_fetch_mib(v, &l, sizeof(v), sysinfo_ram_reserved_kb()); append_str(v, &l, sizeof(v), " reserved / ");
+    if (ram) { term_fetch_mib(v, &l, sizeof(v), ram); append_str(v, &l, sizeof(v), " MiB"); } else append_str(v, &l, sizeof(v), "? MiB");
+    term_fetch_kv("Memory", v);
+
+    if (!st_scanned) st_scan();
+    {
+        int type = blk_type_of(blk_boot_dev);
+        char id[16];
+        st_format_id((st_type_t)type, (u32)(blk_boot_dev - blk_first_of(type)) + 1, 0, id);
+        { int n = 0; while (id[n]) n++; id[n - 2] = 0; }
+        l = 0;
+        append_str(v, &l, sizeof(v), id); append_str(v, &l, sizeof(v), " ");
+        term_fetch_mib(v, &l, sizeof(v), st_devs[blk_boot_dev].sectors / 2u); append_str(v, &l, sizeof(v), " MiB (boot)");
+        term_fetch_kv("Disk", v);
+    }
+    l = 0;
+    if (net_cfg.ready) {
+        u32 ip = net_cfg.my_ip;
+        append_uint(v, &l, sizeof(v), (int)((ip >> 24) & 0xFF)); append_str(v, &l, sizeof(v), ".");
+        append_uint(v, &l, sizeof(v), (int)((ip >> 16) & 0xFF)); append_str(v, &l, sizeof(v), ".");
+        append_uint(v, &l, sizeof(v), (int)((ip >> 8) & 0xFF));  append_str(v, &l, sizeof(v), ".");
+        append_uint(v, &l, sizeof(v), (int)(ip & 0xFF));
+    } else append_str(v, &l, sizeof(v), "offline");
+    term_fetch_kv("Network", v);
 
     int docs = 0;
     for (int i = 0; i < FS_MAX_FILES; i++) { u32 x; if (fs_check_slot(i, &x)) docs++; }
     int progs = 0;
     for (int i = 0; i < PROG_MAX_SLOTS; i++) { u32 x; if (prog_check_slot(i, &x, 0, 0)) progs++; }
     l = 0;
-    append_str(line, &l, sizeof(line), "  documents: ");
-    append_uint(line, &l, sizeof(line), docs);
-    append_str(line, &l, sizeof(line), "/");
-    append_uint(line, &l, sizeof(line), FS_MAX_FILES);
-    term_print(line);
-    l = 0;
-    append_str(line, &l, sizeof(line), "  programs: ");
-    append_uint(line, &l, sizeof(line), progs);
-    append_str(line, &l, sizeof(line), "/");
-    append_uint(line, &l, sizeof(line), PROG_MAX_SLOTS);
-    term_print(line);
+    append_uint(v, &l, sizeof(v), docs); append_str(v, &l, sizeof(v), "/"); append_uint(v, &l, sizeof(v), FS_MAX_FILES);
+    append_str(v, &l, sizeof(v), " docs, ");
+    append_uint(v, &l, sizeof(v), progs); append_str(v, &l, sizeof(v), "/"); append_uint(v, &l, sizeof(v), PROG_MAX_SLOTS);
+    append_str(v, &l, sizeof(v), " programs");
+    term_fetch_kv("Files", v);
 }
 
 static void term_cmd_wipe(void) {

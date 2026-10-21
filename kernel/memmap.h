@@ -118,8 +118,8 @@ typedef char mw_assert_netmem_fits[(MW_NETMEM_USED_END <= MW_NETMEM_END) ? 1 : -
  * every KB the engine's own state costs there is a KB the rest of the kernel can't have. So the biggest
  * pure-cache arrays get a fixed home out here instead (they are always initialised before they are read). */
 #define MW_MISC_BASE        0x007C0000u
-#define MW_ICON_CACHE_ADDR  (MW_MISC_BASE)               /* 6 icons x 32x32 x u32 = 24KB */
-#define MW_ICON_CACHE_SIZE  0x00006000u
+#define MW_ICON_CACHE_ADDR  (MW_MISC_BASE)               /* 7 icons x 32x32 x u32 = 28KB */
+#define MW_ICON_CACHE_SIZE  0x00007000u
 #define MW_FILES_ICON_ADDR  (MW_MISC_BASE + MW_ICON_CACHE_SIZE)   /* MiniFiles: 4 small icons x 16x16 x u32 = 4KB */
 #define MW_FILES_ICON_SIZE  0x00001000u
 

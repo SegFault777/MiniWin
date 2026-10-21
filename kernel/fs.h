@@ -92,6 +92,34 @@ static const char *fs_slot_names[FS_MAX_FILES] = {
     "NEWDOC_4.TXT",
 };
 
+/* Document names. Each slot starts out with its default name (above); Notepad's Save As gives a document a name of its own,
+ * which is stored in the slot's header (bytes 8..39, as it always was) and read back by fs_check_slot(). fs_doc_names[] is the
+ * live copy; an empty entry means "the default". The name is what the desktop label, MiniFiles, the Terminal's `ls` and the
+ * "SAVED:" status show. */
+#define FS_NAME_MAXLEN 31
+static char fs_doc_names[FS_MAX_FILES][FS_NAME_MAXLEN + 1];
+static inline const char *fs_doc_name(int slot) { return fs_doc_names[slot][0] ? fs_doc_names[slot] : fs_slot_names[slot]; }
+
+/* A usable document name: 1..31 characters from A-Z a-z 0-9 . _ - , not starting with a dot. */
+static inline int fs_name_ok(const char *name) {
+    int n = 0;
+    for (; name[n]; n++) {
+        char c = name[n];
+        int ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-';
+        if (!ok || n >= FS_NAME_MAXLEN) return 0;
+    }
+    return n > 0 && name[0] != '.';
+}
+static inline int fs_name_eq(const char *a, const char *b) {          /* case-insensitive, like the DOS names these imitate */
+    for (;; a++, b++) {
+        char x = *a, y = *b;
+        if (x >= 'a' && x <= 'z') x = (char)(x - 32);
+        if (y >= 'a' && y <= 'z') y = (char)(y - 32);
+        if (x != y) return 0;
+        if (!x) return 1;
+    }
+}
+
 static inline u32 fs_slot_header_lba(int slot) { return FS_BASE_LBA + (u32)slot * FS_SLOT_SECTORS; }
 static inline u32 fs_slot_data_lba(int slot)   { return fs_slot_header_lba(slot) + 1; }
 
@@ -277,10 +305,21 @@ static inline int fs_save_slot(int slot, const char *data, u32 len) {
     fs_zero(header, 512);
     *(u32*)(header + 0) = FS_MAGIC;
     *(u32*)(header + 4) = len;
-    fs_strcpy_fixed((char*)(header + 8), fs_slot_names[slot], 32);
+    fs_strcpy_fixed((char*)(header + 8), fs_doc_name(slot), 32);
     int ok = fsj_save(FS_JOURNAL_LBA, FS_BASE_LBA, FS_SLOT_SECTORS, slot, header, (const u8 *)data, len);
     if (!ok) fs_doc_journal_ok = 0;            /* the journal may hold a committed copy: re-check on the next access */
     return ok;
+}
+
+/* Saves under a (new) name: the slot's name is changed first and put back if the save fails. 1 = saved. */
+static inline int fs_save_slot_as(int slot, const char *name, const char *data, u32 len) {
+    if (slot < 0 || slot >= FS_MAX_FILES || !fs_name_ok(name)) return 0;
+    char old[FS_NAME_MAXLEN + 1];
+    fs_strcpy_fixed(old, fs_doc_names[slot], FS_NAME_MAXLEN + 1);
+    fs_strcpy_fixed(fs_doc_names[slot], name, FS_NAME_MAXLEN + 1);
+    if (fs_save_slot(slot, data, len)) return 1;
+    fs_strcpy_fixed(fs_doc_names[slot], old, FS_NAME_MAXLEN + 1);
+    return 0;
 }
 
 /* Erases a slot by zeroing its header sector -- specifically, zeroing
@@ -298,6 +337,7 @@ static inline int fs_delete_slot(int slot) {
     fs_doc_recover();                         /* settle any pending save first, so it cannot resurrect the file */
     u8 header[512];
     fs_zero(header, 512);
+    fs_doc_names[slot][0] = 0;                /* back to the default name */
     return ata_write_sector(fs_slot_header_lba(slot), header);
 }
 /* Returns 1 if this slot has a valid saved file: reads back the header and checks
@@ -325,8 +365,21 @@ static inline int fs_check_slot(int slot, u32 *out_len) {
     u32 len = *(u32*)(header + 4);
     if (len > FS_MAX_FILE_BYTES) return 0;   /* no save can ever write this: a damaged header, not a file */
     if (out_len) *out_len = len;
+    header[8 + FS_NAME_MAXLEN] = 0;          /* the name field is 32 bytes: make sure it ends */
+    fs_doc_names[slot][0] = 0;
+    if (fs_name_ok((const char *)(header + 8))) fs_strcpy_fixed(fs_doc_names[slot], (const char *)(header + 8), FS_NAME_MAXLEN + 1);
     return 1;
 }
+
+/* The slot holding a document with this name (case-insensitive), or -1. */
+static inline int fs_find_by_name(const char *name) {
+    for (int i = 0; i < FS_MAX_FILES; i++) {
+        u32 l;
+        if (fs_check_slot(i, &l) && fs_name_eq(fs_doc_name(i), name)) return i;
+    }
+    return -1;
+}
+
 
 /* Reads `slot`'s contents back into dst. All-or-nothing, like prog_load_slot(): returns 1 and sets *out_len only
  * if the slot is valid, `maxlen` can hold the whole file, every sector read cleanly, and (for a committed slot)

@@ -537,7 +537,7 @@ print_string:
     ret
 
 msg_loaded:    db "MiniWin: kernel loaded, entering 32-bit mode...", 13, 10, 0
-; Boot errors have a code and a NAME; the full table (what each means and what to try) is in docs/BOOT-PROCESS.md.
+; Boot errors have a code and a NAME; the full table (what each means and what to try) is in docs/dev/BOOT-PROCESS.md.
 ; MW-B01/B02 live in stage 1 (boot.asm), MW-C* in the partition chain loader (chain_mbr.asm).
 msg_err_kernel: db "MiniWin ERROR MW-B03 KERNEL_READ_FAILED", 0
 msg_ah:        db " (BIOS AH=", 0

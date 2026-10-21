@@ -1,5 +1,39 @@
 # Changelog
 
+## MiniWin 1.1-alpha-8 (2026-10)
+
+* **Desktop grid.** All desktop icons are now one vertical list at a constant spacing: the five apps (NOTEPAD, SETTING, WEB,
+  TERMINAL, MINIFILES), then a shortcut for every saved document, then one for every installed program (new `PROGRAM` icon from
+  the pack), top to bottom, continuing at the top of the column to the right when the next one would not fit above the taskbar
+  (`kernel/ui/icons.h` `DESK_CELL_X/Y`, `ui/desktop_files.h`). A double-click opens a document in Notepad or runs a program.
+  Labels are two lines (name, extension) because names are user-chosen now. The UI test scripts' icon coordinates and all
+  goldens were updated for the new layout (an intended change).
+* **Notepad: Save As.** File > Save As opens a dialog with a file-name field (suggesting the current name, or `NEWDOC.TXT`);
+  Enter or Save writes the document under that name into a free slot (a copy: the original stays) -- or just saves it if the
+  name is its own -- Esc/Cancel/X leave everything untouched. Names are 1-31 characters of `A-Z a-z 0-9 . _ -`; a name another
+  document already has is refused (case-insensitive) and the dialog stays open. Document names live in the slot header
+  (`fs_doc_names[]`, `fs_name_ok`, `fs_save_slot_as`, `fs_find_by_name` in `kernel/fs.h`), so they survive reboots and show on the
+  desktop, in MiniFiles, in `ls` and in the status line. The limit of 4 document slots is unchanged until the new filesystem.
+* **`fetch`, fastfetch style** (Terminal): OS and version, uptime, shell, display, theme and language, CPU (brand string, measured
+  MHz, load), GPU (name by PCI id, VRAM in use / total), memory (reserved / total), boot disk, IP address, document and program
+  counts. `kernel/sysinfo.h` reads CPUID, the TSC against the PIT, the PCI list, the VESA controller block and the BIOS memory
+  figure. "CPU load" is the share of each main-loop pass spent working rather than in the pacing spin (the kernel never halts the
+  CPU, so the core itself is always busy); memory is what the kernel has reserved, not touched.
+* **ATAPI CD/DVD driver** (`kernel/atapi.h`): `cd1`..`cd4`, read-only, polled PIO, 2048-byte sectors served as four 512-byte ones
+  with a block cache. Verified on QEMU's `-cdrom` against a known file (byte sums of two sectors match). `os-inst` refuses a disc.
+* **Version in one place** (`kernel/version.h`): the desktop hint said "1.1-ALPHA-1" for six releases; it, `ver` and `fetch` now
+  follow `MW_VERSION`, and `tools/test/check_version.sh` compares it with the README and this file.
+* **Logo license**: CC BY-SA 4.0 (`docs/logo/LICENSE`, LICENSING.md).
+* **Documentation reorganised** into `docs/user/` (for people who run MiniWin), `docs/dev/` (for people who change it) and
+  `docs/project/` (changelog, roadmap, licensing), with an index in `docs/README.md`. New user pages: getting started, desktop and
+  apps, Terminal commands (with `fetch` explained), files and disks, troubleshooting (every start-up error in plain words), FAQ.
+  New developer pages: contributing, drivers overview, adding a driver, memory map, `.MWP` programs, UI framework, and a
+  **generated source map** (`tools/gen_source_map.py`: one line per file from its own header comment). `tools/test/check_docs.py`
+  fails on a broken link or a mention of a `docs/` path that does not exist.
+
+Not done yet from the alpha-8 list: OHCI/EHCI/xHCI (USB keyboard and mouse first), memory-management modernisation, the SDK and a
+real MWP API, removing the 4 document / 4 program limits (needs the new filesystem). Not run on VMware/VirtualBox/real hardware.
+
 ## MiniWin 1.1-alpha-7 (2026-10)
 
 * **Floppy boot (the VMware `MW-B01 BIOS_LBA_UNSUPPORTED (BIOS AH=01 DL=00)` error).** `DL=00` is BIOS drive 0: VMware had booted the
@@ -21,7 +55,7 @@
   rebuilt for every call, `DS`/`ES` are reloaded, a failed read is retried after a disk reset and then with half as many sectors
   per call down to one, and stage 1 retries too. I could not reproduce the original report (Bochs, whose BIOS is VirtualBox's
   ancestor, boots the old loader fine; VMware has no emulator here), so this is a hardening against the known BIOS differences, not
-  a confirmed root cause -- the new messages will say exactly what failed if it still does. [BOOT-PROCESS.md](BOOT-PROCESS.md)
+  a confirmed root cause -- the new messages will say exactly what failed if it still does. [BOOT-PROCESS.md](../dev/BOOT-PROCESS.md)
 * **Every boot error has a code and a name**, with the BIOS error code, sector and drive where they apply: `MW-B01
   BIOS_LBA_UNSUPPORTED` (e.g. the image attached as a floppy), `MW-B02 STAGE2_READ_FAILED`, `MW-B03 KERNEL_READ_FAILED`,
   `MW-B04`/`MW-B05` VBE, `MW-C01`-`C03` partition chain loader, `MW-K01 NOT_ENOUGH_RAM`, `MW-K02 VBE_PIXEL_FORMAT_UNSUPPORTED`.
@@ -47,7 +81,7 @@
   [LICENSING.md](LICENSING.md), README.
 * README: MiniWin logo at the top (6x nearest-neighbour enlargement of the supplied 128x32 PNG, no smoothing, `docs/logo/`),
   and the README text re-checked against the current version (storage drivers, shutdown, icons, boot errors, file and test
-  lists, a pointer to the new [VIRTUAL-MACHINES.md](VIRTUAL-MACHINES.md)).
+  lists, a pointer to the new [VIRTUAL-MACHINES.md](../user/VIRTUAL-MACHINES.md)).
 
 Known: nothing here has been run on VMware, VirtualBox or real hardware. Not handled: VMware's e1000e/vmxnet3, VirtualBox's PCnet,
 virtio, BusLogic, Paravirtual SCSI, NVMe namespaces other than 1 and 4K-block NVMe namespaces.
@@ -108,7 +142,7 @@ NCR/Symbios 53C8xx, MPI2 chips (SAS2/SAS3: 1000:0072 and later), LUNs other than
   `ata_boot_pos`/`ata_boot_base` became `blk_boot_dev`/`blk_boot_base`.
 * **Finding the boot disk** now works on every bus: an installed system by its install id, a stock image by comparing
   sector 0 with the copy the BIOS left at 0x7C00 (first match in table order). `pci_scan()` runs before it.
-  [BOOT-PROCESS.md](BOOT-PROCESS.md)
+  [BOOT-PROCESS.md](../dev/BOOT-PROCESS.md)
 * `os-inst`, `os-inst list` and MiniFiles' DISKS tab list and install onto `sataN` disks.
 * **Kernel size relief:** the Korean font (245,784 bytes, half the image) is stored LZ4-compressed (62,755 bytes,
   `kernel/lz.h`, `tools/gen_hangul_font.py`) and inflated to `0x7D0000` at boot, verified by a checksum. Glyphs are
@@ -123,23 +157,23 @@ SATA ports behind a port multiplier, ATAPI, 4K-native disks and AHCI controllers
 
 * **MiniFiles** (`MINIFILES.MWP`): a file manager window with a FILES tab (documents and programs with size and a real
   CRC health check, open / run, two-click delete) and a DISKS tab (IDE disks and partitions with their storage ids).
-  Desktop icon, start-menu entry, task-bar button. [MINIFILES.md](MINIFILES.md)
+  Desktop icon, start-menu entry, task-bar button. [MINIFILES.md](../user/MINIFILES.md)
 * **`os-inst`**: `os-inst ?` (usage), `os-inst list`, `os-inst <id>` installs MiniWin on another disk or partition.
   Ids are `<type><disk><2-digit partition>` (`sata103`, `ide200` = whole disk). Confirmation required, never the running
   system, sector 0 written last, everything read back; an installation can live in a partition and on any IDE position.
-  [OS-INSTALL.md](OS-INSTALL.md), [STORAGE-IDS.md](STORAGE-IDS.md), [BOOT-PROCESS.md](BOOT-PROCESS.md)
+  [OS-INSTALL.md](../user/INSTALLING.md), [STORAGE-IDS.md](../dev/STORAGE-IDS.md), [BOOT-PROCESS.md](../dev/BOOT-PROCESS.md)
 * **Storage layer** (`kernel/storage.h`, a generalised `kernel/ata.h`): four IDE positions, IDENTIFY, MBR/EBR/GPT
   partitions. The boot loader passes the installation's base LBA and install id; the kernel finds its disk by them.
 * Terminal: Up/Down scroll the history.
 * The project is now licensed **GPL-3.0-only** (it was MIT up to 1.0); `SPDX-License-Identifier` in every source file.
   [LICENSING.md](LICENSING.md)
-* Documentation: the guides listed in [README.md](README.md).
+* Documentation: the guides listed in [README.md](../README.md).
 * New test suites: `run_host_storage.sh` (153 checks, including the installer), `ui_golden_files.sh`, `qemu_osinst.sh`.
   The UI goldens were re-recorded (new desktop icon, start-menu entry, version text).
 
 * New icon bundle (47 icons, adds the storage/drive icons): the catalog grew from 45 to 56 slots, so the write-ahead journals
   moved to LBA 1877/1886 (free headroom is now LBA 1935-2047); `build.sh` now also checks the journals against the
-  catalog. MiniFiles rows show 16x16 icons. [DISK-LAYOUT.md](DISK-LAYOUT.md)
+  catalog. MiniFiles rows show 16x16 icons. [DISK-LAYOUT.md](../dev/DISK-LAYOUT.md)
 
 Known: kernel image 517,614 of 524,288 bytes; see [ROADMAP.md](ROADMAP.md).
 

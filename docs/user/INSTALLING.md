@@ -26,11 +26,11 @@ os-inst <id>       install onto <id>
 
 Examples: `sata103` = the 1st SATA disk, partition 3. `ide200` = the whole 2nd IDE disk. `ide302` = partition 2 of the
 3rd IDE position. The last two digits are always the partition, so `nvme1205` is disk 12, partition 05.
-Full rules and the error table are in [STORAGE-IDS.md](STORAGE-IDS.md).
+Full rules and the error table are in [STORAGE-IDS.md](../dev/STORAGE-IDS.md).
 
 **This build drives IDE, SATA (AHCI), SCSI (LSI Logic / MPT) and NVMe disks.** `ide1`/`ide2` are the primary channel's
 master/slave, `ide3`/`ide4` the secondary channel's; `sata1`, `sata2`, ... and `scsi1`, `scsi2`, ... are numbered in the
-order the disks are found (see [STORAGE-IDS.md](STORAGE-IDS.md)), so run `os-inst list` first. The other type name
+order the disks are found (see [STORAGE-IDS.md](../dev/STORAGE-IDS.md)), so run `os-inst list` first. The other type name
 (`usb`) is recognised (so `nvme101` gets a precise answer rather than "syntax error") and reported as "no driver
 in this build yet".
 
@@ -67,7 +67,7 @@ Type YES to install; else cancels.
 
 ## What is written
 
-One complete installation is the fixed 2048-sector (1 MB) layout described in [DISK-LAYOUT.md](DISK-LAYOUT.md),
+One complete installation is the fixed 2048-sector (1 MB) layout described in [DISK-LAYOUT.md](../dev/DISK-LAYOUT.md),
 placed at the target's first sector (sector 0 for a whole disk, the partition's first sector for a partition):
 
 * the **boot sector** with two patched fields: where this installation starts, and a fresh random *install id*;
@@ -110,7 +110,7 @@ Only those 2048 sectors are written; the rest of a larger partition or disk is n
   * A **logical** partition or a **GPT** disk cannot be started by the built-in loader (it boots the active *primary*
     partition of a classic MBR); the install is still complete, `os-inst` says so, and a boot manager can chainload it.
 * The disk may be on **any IDE position**: at boot the kernel looks for the disk whose boot sector carries its own install
-  id ([BOOT-PROCESS.md](BOOT-PROCESS.md)), so a MiniWin installed from `ide2` still boots when it is later the only disk,
+  id ([BOOT-PROCESS.md](../dev/BOOT-PROCESS.md)), so a MiniWin installed from `ide2` still boots when it is later the only disk,
   on the primary or the secondary channel.
 
 ## What `os-inst` does not do
@@ -119,7 +119,7 @@ Only those 2048 sectors are written; the rest of a larger partition or disk is n
 * It does not copy your documents or programs (a fresh system is empty by design).
 * It needs a BIOS-bootable machine (legacy/CSM boot); there is no UEFI loader.
 * It reaches disks through the legacy ATA ports: an IDE disk, or a SATA disk the firmware exposes in IDE/compatibility
-  mode. AHCI-only SATA, NVMe, SCSI and USB storage are the next drivers to write ([ROADMAP.md](ROADMAP.md)).
+  mode. AHCI-only SATA, NVMe, SCSI and USB storage are the next drivers to write ([ROADMAP.md](../project/ROADMAP.md)).
 * LBA28: only the first 128 GB of a disk are addressable.
 
 ## Messages

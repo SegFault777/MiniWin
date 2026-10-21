@@ -189,7 +189,7 @@ print_hex8:
     ret
 
 msg_boot:     db "MiniWin: booting...", 13, 10, 0
-; Boot errors have a code and a NAME (the full table is in docs/BOOT-PROCESS.md). MW-B01 (no LBA reads) is retired: a BIOS
+; Boot errors have a code and a NAME (the full table is in docs/dev/BOOT-PROCESS.md). MW-B01 (no LBA reads) is retired: a BIOS
 ; without them now gets the CHS path; stage 2 and the kernel use MW-B03 and up.
 msg_err_s2:   db "MiniWin ERROR MW-B02 STAGE2_READ_FAILED", 0
 msg_ah:       db " (BIOS AH=", 0

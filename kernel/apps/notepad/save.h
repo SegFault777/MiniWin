@@ -18,7 +18,7 @@ static const char *format_saved_status(int slot) {
     u32 i = 0;
     const char *prefix = t(STR_SAVED_PREFIX);
     while (*prefix) status_buf[i++] = *prefix++;
-    const char *name = fs_slot_names[slot];
+    const char *name = fs_doc_name(slot);
     while (*name && i < sizeof(status_buf) - 1) status_buf[i++] = *name++;
     status_buf[i] = 0;
     return status_buf;
@@ -116,7 +116,48 @@ static int open_document_slot(int slot) {
 /* Shared Yes/No handling for the confirm dialog, used by both mouse
  * clicks and the Y/N keyboard shortcuts. What "Yes"/"No" actually do
  * depends on why the dialog was opened (active_np->confirm_mode). */
+/* ---- Save As ---- */
+/* Opens the dialog, suggesting the document's current name (or NEWDOC.TXT for one that was never saved). */
+static void saveas_begin(void) {
+    if (ko_ime_is_composing()) ko_ime_commit(active_np->text_buf, &active_np->text_len, sizeof(active_np->text_buf));
+    const char *suggest = active_np->bound_slot >= 0 ? fs_doc_name(active_np->bound_slot) : "NEWDOC.TXT";
+    int n = 0;
+    while (suggest[n] && n < FS_NAME_MAXLEN) { active_np->saveas_name[n] = suggest[n]; n++; }
+    active_np->saveas_name[n] = 0;
+    active_np->saveas_len = n;
+    active_np->confirm_mode = CONFIRM_SAVEAS;
+}
+
+/* The dialog's Save: validates the name, finds the slot (the document's own if the name is unchanged, a free one for a new
+ * name -- Save As makes a COPY and leaves the original alone), writes it and rebinds the window to the new document.
+ * A bad or taken name keeps the dialog open so the name can be fixed; a full disk or a failed write closes it with a message. */
+static void saveas_do(void) {
+    const char *name = active_np->saveas_name;
+    if (!fs_name_ok(name)) { status = t(STR_BAD_FILE_NAME); return; }
+    int existing = fs_find_by_name(name), slot;
+    if (existing >= 0 && existing == active_np->bound_slot) slot = existing;
+    else if (existing >= 0) { status = t(STR_NAME_EXISTS); return; }
+    else {
+        slot = fs_find_empty_slot();
+        if (slot < 0) { status = t(STR_STORAGE_FULL_NOT_SAVED); active_np->confirm_mode = CONFIRM_NONE; return; }
+    }
+    if (!fs_save_slot_as(slot, name, active_np->text_buf, active_np->text_len)) {
+        u32 l = 0;
+        desktop_file_exists[slot] = fs_check_slot(slot, &l) ? 1 : 0;
+        desktop_file_len[slot] = l;
+        status = t(STR_SAVE_FAILED);
+        active_np->confirm_mode = CONFIRM_NONE;
+        return;
+    }
+    desktop_file_exists[slot] = 1;
+    desktop_file_len[slot] = active_np->text_len;
+    active_np->bound_slot = slot;
+    status = format_saved_status(slot);
+    active_np->confirm_mode = CONFIRM_NONE;
+}
+
 static void confirm_yes_action(void) {
+    if (active_np->confirm_mode == CONFIRM_SAVEAS) { saveas_do(); return; }
     int saved_slot = save_current_document();
     if (saved_slot == SAVE_ERR_WRITE) {
         /* The text could not be written. "Yes, save it, then close/clear" must NOT go on to close/clear:
@@ -142,6 +183,11 @@ static void confirm_yes_action(void) {
 }
 
 static void confirm_no_action(void) {
+    if (active_np->confirm_mode == CONFIRM_SAVEAS) {            /* Cancel: nothing is discarded, the document stays as it was */
+        active_np->confirm_mode = CONFIRM_NONE;
+        status = t(STR_SAVE_AS_CANCELLED);
+        return;
+    }
     if (active_np->confirm_mode == CONFIRM_NEW) {
         active_np->text_len = 0; active_np->text_buf[0] = 0; active_np->bound_slot = -1; ko_ime_reset();
         status = t(STR_NEW_DOCUMENT_NOT_SAVED);

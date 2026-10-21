@@ -3,7 +3,7 @@
 MiniWin is developed and tested on **QEMU**. Everything below about VMware and VirtualBox comes from their documented
 hardware and from running the *same device models* QEMU emulates; it has **not** been run on VMware Workstation/Player or
 VirtualBox by the developer. If something here does not match what you see, the boot error name and numbers
-([BOOT-PROCESS.md](BOOT-PROCESS.md), "Error codes") are what is needed to fix it.
+([BOOT-PROCESS.md](../dev/BOOT-PROCESS.md), "Error codes") are what is needed to fix it.
 
 ## The three things that decide whether it boots
 

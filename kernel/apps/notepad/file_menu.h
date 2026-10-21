@@ -23,6 +23,7 @@ static int start_menu_open = 0;
 #define CONFIRM_NONE  0
 #define CONFIRM_NEW   1  /* "Save changes before New?" */
 #define CONFIRM_CLOSE 2  /* "Save changes before closing?" */
+#define CONFIRM_SAVEAS 3 /* the Save As dialog: a file-name field with Save / Cancel */
 
 /* Desktop file icons: which of the FS_MAX_FILES slots currently hold a
  * saved file (either saved earlier this session, or found already present
@@ -30,12 +31,26 @@ static int start_menu_open = 0;
 static int desktop_file_exists[FS_MAX_FILES];
 static u32 desktop_file_len[FS_MAX_FILES];
 
+static int  desktop_prog_exists[PROG_MAX_SLOTS];
+static char desktop_prog_name[PROG_MAX_SLOTS][PROG_NAME_MAXLEN + 1];
+
+/* Re-reads which program slots hold a program (at boot, and after one is deleted). */
+static void desktop_refresh_programs(void) {
+    for (int i = 0; i < PROG_MAX_SLOTS; i++) {
+        u32 len = 0;
+        desktop_prog_exists[i] = prog_check_slot(i, &len, 0, desktop_prog_name[i]) ? 1 : 0;
+        if (!desktop_prog_exists[i]) desktop_prog_name[i][0] = 0;
+    }
+}
+
+
+
 /* (active_np->bound_slot is per-window now too -- see notepad_t.active_np->bound_slot -- since
  * each open document binds to its own file slot independently.) */
 
 /* Shared status-line message, file scope so helper functions below (save
  * logic, confirm dialog actions) can set it directly. */
-static const char *status = "MINIWIN 1.1-ALPHA-1 - DOUBLE-CLICK NOTEPAD.MWP TO OPEN";
+static const char *status = "MINIWIN " MW_VERSION_UP " - DOUBLE-CLICK NOTEPAD.MWP TO OPEN";
 static char status_buf[48]; /* scratch space for status messages that embed a filename */
 
 #define MENU_FILE_LABEL_W 46   /* clickable width for the "File" label */

@@ -20,6 +20,7 @@ static void kernel_boot(void) {
      * only way left to say why, since writing to backbuf at that point
      * is exactly the unsafe operation being guarded against. */
     serial_init();
+    sysinfo_probe();             /* CPUID / TSC availability, before anything reads the TSC */
     idt_init();                  /* from here a CPU exception shows a named error screen instead of resetting the machine */
 #ifdef MW_TEST_FAULT             /* test builds only (EXTRA_CFLAGS=-DMW_TEST_FAULT): provoke vector 6 to see the screen */
     __asm__ volatile ("ud2");
@@ -79,7 +80,7 @@ static void kernel_boot(void) {
         const char *const msg[] = { "MiniWin has stopped.", "", "ERROR MW-K02 VBE_PIXEL_FORMAT_UNSUPPORTED",
                                     "the video mode's colour channels are not in the",
                                     "standard red-green-blue order this kernel uses.",
-                                    "", "See docs/BOOT-PROCESS.md." };
+                                    "", "See docs/dev/BOOT-PROCESS.md." };
         fatal_screen(msg, 7);
     }
 
@@ -102,6 +103,7 @@ static void kernel_boot(void) {
      * Only one NIC is ever "active" (see nic.h) -- try RTL8139 first,
      * then e1000, whichever one QEMU (or real hardware) actually
      * presented on the PCI bus. */
+    sysinfo_boot_s = net_wall_seconds();          /* uptime reference for `fetch` */
     if (rtl8139_init() || e1000_init()) {
         net_stack_init();
     }
@@ -116,6 +118,8 @@ static void kernel_boot(void) {
             desktop_file_len[slot] = loaded_len;
         }
     }
+
+    desktop_refresh_programs();                 /* the program shortcuts */
 
     /* Each of the NOTEPAD_MAX window slots gets its own cascaded default
      * position (each one nudged 16px right/down from the last) so that

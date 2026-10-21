@@ -3,7 +3,7 @@
  *
  * The whole kernel is ONE translation unit (every module is a header of `static` code), so the order of the
  * includes below IS the dependency order: a module may use anything included above it and nothing below.
- * That order is the architecture; docs/ARCHITECTURE.md explains each layer and the rules between them.
+ * That order is the architecture; docs/dev/ARCHITECTURE.md explains each layer and the rules between them.
  *
  *   hardware & protocols   io vga font keyboard mouse ata storage fs os_inst speaker rtc serial pci  nic rtl8139 e1000
  *   (flat headers in       net arp ip icmp udp dns dhcp tcp tls http https           net_stack mwp
@@ -16,6 +16,7 @@
  * kmain() is only boot + loop: kernel_boot() (sys/boot.h), then forever { handle_mouse(); handle_keyboard();
  * poll the network and the web fetch; render_frame(); }.
  */
+#include "version.h"
 #include "io.h"
 #include "vga.h"
 #include "font.h"
@@ -31,6 +32,7 @@
 #include "rtc.h"
 #include "serial.h"
 #include "fatal.h"
+#include "sysinfo.h"
 #include "pci.h"
 #include "nic.h"
 #include "rtl8139.h"
@@ -97,6 +99,7 @@ void kmain(void) {
     render_frame(mx, my, status);
 
     while (1) {
+        u32 pass_start = sysinfo_tsc32();          /* for `fetch`'s CPU load: work vs the pacing spin below */
         tick++;
 
         handle_mouse();
@@ -122,10 +125,12 @@ void kmain(void) {
 #endif
 
         render_frame(mx, my, status);
+        u32 work_end = sysinfo_tsc32();
         delay(2000); /* lowered further from 8000 -- mouse felt sluggish/
                       * capped at 8000; this loop's real-world speed varies
                       * a lot by CPU, so double_click_window above is
                       * scaled proportionally to keep the same real-time
                       * double-click window. */
+        sysinfo_account(work_end - pass_start, sysinfo_tsc32() - work_end);
     }
 }

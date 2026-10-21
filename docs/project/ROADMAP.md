@@ -3,8 +3,8 @@
 ## Where 1.1-alpha-6 stands
 
 New in alpha-2: an AHCI driver (`sata` ids), a block layer, boot-disk location on every bus, and the Korean font stored
-compressed (kernel image ~337 KB of 512 KB). See [CHANGELOG.md](CHANGELOG.md). New in alpha-1: MiniFiles ([MINIFILES.md](MINIFILES.md)), `os-inst` ([OS-INSTALL.md](OS-INSTALL.md)) with the storage
-layer under it ([STORAGE-IDS.md](STORAGE-IDS.md), [BOOT-PROCESS.md](BOOT-PROCESS.md)), Terminal scrollback (Up/Down), the GPL-3.0
+compressed (kernel image ~337 KB of 512 KB). See [CHANGELOG.md](CHANGELOG.md). New in alpha-1: MiniFiles ([MINIFILES.md](../user/MINIFILES.md)), `os-inst` ([OS-INSTALL.md](../user/INSTALLING.md)) with the storage
+layer under it ([STORAGE-IDS.md](../dev/STORAGE-IDS.md), [BOOT-PROCESS.md](../dev/BOOT-PROCESS.md)), Terminal scrollback (Up/Down), the GPL-3.0
 license ([LICENSING.md](LICENSING.md)).
 
 ## Known limits

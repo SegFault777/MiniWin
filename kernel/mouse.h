@@ -3,6 +3,9 @@
 #define MOUSE_H
 #include "io.h"
 
+/* mouse.h -- the PS/2 mouse: initialises the auxiliary device of the i8042 controller and decodes its 3-byte packets into movement
+ * and button state, by polling. Virtual machines emulate this; USB mice are not supported yet. */
+
 #define PS2_DATA    0x60
 #define PS2_STATUS  0x64
 #define PS2_CMD     0x64

@@ -3,6 +3,7 @@
  * the kernel drew before themes existed (the golden screenshots in tools/test/golden are this theme). */
 
 /* ---- color roles ---- */
+#define TH_NAME           "classic"
 #define TH_DESKTOP        COL_LCYAN     /* the desktop background, and the matching icon backing */
 #define TH_DESKTOP_TEXT   COL_BLACK     /* icon captions and the status line, drawn straight on the desktop */
 #define TH_FACE           COL_LGRAY     /* the surface of windows, menus, buttons, the taskbar */

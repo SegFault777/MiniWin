@@ -3,6 +3,7 @@
  * Build with  THEME=dark ./build.sh . Its job is partly diagnostic: any element that still looks "classic"
  * under this theme is a color some module hard-coded instead of asking the theme. */
 
+#define TH_NAME           "dark"
 #define TH_DESKTOP        0x1E2A38u
 #define TH_DESKTOP_TEXT   0xE6E9EDu     /* icon captions and the status line, drawn straight on the desktop */
 #define TH_FACE           0x3A3F47u

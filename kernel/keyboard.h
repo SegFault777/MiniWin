@@ -3,6 +3,9 @@
 #define KEYBOARD_H
 #include "io.h"
 
+/* keyboard.h -- the PS/2 keyboard: scancodes (set 1) read from the i8042 controller by polling, turned into ASCII bytes with
+ * Shift, Caps Lock and the extended keys (arrows, Right Alt) handled. Virtual machines emulate this; USB keyboards are not supported yet. */
+
 #define KBD_DATA_PORT   0x60
 #define KBD_STATUS_PORT 0x64
 

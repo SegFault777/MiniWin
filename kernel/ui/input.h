@@ -385,7 +385,7 @@ static void handle_mouse(void) {
                         }
                     } else if (active_np->file_menu_open) {
                         if (file_menu_item_hit(mx, my, 0)) {
-                            status = t(STR_SAVE_AS_COMING_SOON);
+                            saveas_begin();
                             active_np->file_menu_open = 0;
                         } else if (file_menu_item_hit(mx, my, 1)) {
                             int saved_slot = save_current_document();
@@ -480,17 +480,20 @@ static void handle_mouse(void) {
                         last_files_click_tick = tick;
                     }
                 } else {
-                    /* Check desktop file icons last (any slot). */
-                    for (int slot = 0; slot < FS_MAX_FILES; slot++) {
-                        if (!desktop_file_exists[slot]) continue;
-                        if (!in_rect(mx, my, fileicon_x(slot), fileicon_y(slot), ICON_W, ICON_H)) continue;
+                    /* Check the desktop shortcuts last: documents (open in Notepad) and programs (run). The double-click
+                     * memory is one number per shortcut: a document's slot, or 100 + a program's slot. */
+                    int kind, slot;
+                    for (int n = 0; desk_item(n, &kind, &slot); n++) {
+                        if (!in_rect(mx, my, desk_item_x(n), desk_item_y(n), ICON_W, ICON_H)) continue;
+                        int key = kind == DESK_KIND_DOC ? slot : 100 + slot;
 
-                        if (awaiting_second_click_file_slot == slot &&
+                        if (awaiting_second_click_file_slot == key &&
                             (tick - last_file_icon_click_tick) < double_click_window) {
-                            open_document_slot(slot);
                             awaiting_second_click_file_slot = -1;
+                            if (kind == DESK_KIND_DOC) open_document_slot(slot);
+                            else { mwp_run(slot); render_frame(-1, -1, 0); }
                         } else {
-                            awaiting_second_click_file_slot = slot;
+                            awaiting_second_click_file_slot = key;
                             last_file_icon_click_tick = tick;
                         }
                         break;
@@ -686,7 +689,18 @@ static void handle_keyboard(void) {
     if (active_np->confirm_mode != CONFIRM_NONE) {
         /* keyboard shortcuts for the confirm dialog, so it can be
          * driven without the mouse too */
-        if (k == 'y' || k == 'Y') {
+        if (active_np->confirm_mode == CONFIRM_SAVEAS) {
+            /* the Save As dialog is a text field: letters go INTO the name, so Y/N are not shortcuts here */
+            char c = (char)k;
+            if (c == '\n') saveas_do();
+            else if (c == 27) confirm_no_action();                   /* Esc */
+            else if (c == '\b') { if (active_np->saveas_len > 0) active_np->saveas_name[--active_np->saveas_len] = 0; }
+            else if (k > 0 && active_np->saveas_len < FS_NAME_MAXLEN &&
+                     ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-')) {
+                active_np->saveas_name[active_np->saveas_len++] = c;
+                active_np->saveas_name[active_np->saveas_len] = 0;
+            }
+        } else if (k == 'y' || k == 'Y') {
             confirm_yes_action();
         } else if (k == 'n' || k == 'N') {
             confirm_no_action();

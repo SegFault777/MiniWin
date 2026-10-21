@@ -9,7 +9,7 @@
  * no interrupt descriptor table at all, so ANY fault -- a bad pointer, an instruction a virtual CPU does not implement --
  * triple-faulted, and a virtual machine just reset or showed a black screen. Now vectors 0-31 land in cpu_fault() and the person
  * sees "MW-K10 CPU_EXCEPTION_..." with the instruction address, which is what makes a crash in someone else's VMware or
- * VirtualBox reportable. Error names and codes: docs/BOOT-PROCESS.md ("Error codes").
+ * VirtualBox reportable. Error names and codes: docs/dev/BOOT-PROCESS.md ("Error codes").
  *
  * Everything is also sent to the serial port, which still works when the screen does not. The screen is 640x480 at 11 pixels per
  * character: at most 58 characters per line, so every line below is kept shorter than that. */
@@ -83,7 +83,7 @@ __attribute__((noreturn, used)) void cpu_fault(const u32 *f) {   /* not static: 
     }
     fatal_cat(l[10], 64, "The kernel hit an unexpected CPU exception. Restart");
     fatal_cat(l[11], 64, "the machine. If it happens again, report the error");
-    fatal_cat(l[12], 64, "name and EIP above (docs/BOOT-PROCESS.md).");
+    fatal_cat(l[12], 64, "name and EIP above (docs/dev/BOOT-PROCESS.md).");
     fatal_screen(p, 13);
     for (;;) { }
 }

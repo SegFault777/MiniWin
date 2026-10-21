@@ -36,8 +36,8 @@
  *        protective MBR (type 0xEE) plus a valid "EFI PART" header; only 32-bit LBAs are supported.
  */
 
-static const char *const st_type_names[ST_TYPE_COUNT] = { "ide", "sata", "nvme", "scsi", "usb", "fd" };
-static inline int st_type_has_driver(st_type_t t) { return t == ST_IDE || t == ST_SATA || t == ST_SCSI || t == ST_NVME || t == ST_FD; }
+static const char *const st_type_names[ST_TYPE_COUNT] = { "ide", "sata", "nvme", "scsi", "usb", "fd", "cd" };
+static inline int st_type_has_driver(st_type_t t) { return t == ST_IDE || t == ST_SATA || t == ST_SCSI || t == ST_NVME || t == ST_FD || t == ST_CD; }
 
 /* result codes of st_parse_id() / st_resolve() */
 #define ST_OK              0
@@ -50,6 +50,7 @@ static inline int st_type_has_driver(st_type_t t) { return t == ST_IDE || t == S
 #define ST_E_TOO_SMALL     7
 #define ST_E_OVERLAP_BOOT  8   /* the target overlaps the installation that is running right now */
 #define ST_E_RANGE         9   /* the partition table points outside the device */
+#define ST_E_READ_ONLY    10   /* an optical disc: nothing can be written to it */
 
 /* The size of one complete MiniWin installation (the fixed disk layout of fs.h: LBA 0..2047). */
 #define ST_INSTALL_SECTORS 2048
@@ -269,6 +270,7 @@ static inline int st_resolve(const char *s, st_target_t *t) {
     t->pos = blk_index(id.type, id.dev);
     if (t->pos < 0) return ST_E_NO_DEVICE;
     if (!st_devs[t->pos].present) return ST_E_NO_DEVICE;
+    if (id.type == ST_CD) return ST_E_READ_ONLY;
     u32 dev_sectors = st_devs[t->pos].sectors;
 
     if (t->whole) {
@@ -290,14 +292,15 @@ static inline int st_resolve(const char *s, st_target_t *t) {
 static inline const char *st_error_text(int e) {
     switch (e) {
         case ST_E_SYNTAX:       return "bad id: expected <type><device><2-digit partition>, e.g. ide101 (see os-inst ?)";
-        case ST_E_UNKNOWN_TYPE: return "unknown storage type (known: ide sata nvme scsi usb)";
-        case ST_E_NO_DRIVER:    return "this build has no driver for that storage type yet (only ide, sata, scsi, nvme, fd)";
+        case ST_E_UNKNOWN_TYPE: return "unknown storage type (known: ide sata nvme scsi usb fd cd)";
+        case ST_E_NO_DRIVER:    return "this build has no driver for that storage type yet (only ide, sata, scsi, nvme, fd, cd)";
         case ST_E_NO_DEVICE:    return "no such device (see os-inst list)";
         case ST_E_NO_PARTITION: return "no such partition on that device (see os-inst list)";
         case ST_E_EXTENDED:     return "that is an extended-partition container; pick a logical partition inside it";
         case ST_E_TOO_SMALL:    return "target is smaller than 1 MB (2048 sectors), too small for MiniWin";
         case ST_E_OVERLAP_BOOT: return "that area is where MiniWin is running from right now";
         case ST_E_RANGE:        return "the partition table points outside the device";
+        case ST_E_READ_ONLY:    return "that is a CD/DVD: read-only, MiniWin cannot be installed on it";
         default:                return "ok";
     }
 }

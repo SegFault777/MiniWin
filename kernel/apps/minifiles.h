@@ -167,7 +167,7 @@ static void files_refresh(void) {
             u32 len = 0;
             if (!fs_check_slot(s, &len)) continue;
             int ok = fs_verify_slot(s);
-            files_add(FILES_KIND_DOC, (u8)s, (u8)!ok, len, fs_slot_names[s], ok ? "" : "DAMAGED");
+            files_add(FILES_KIND_DOC, (u8)s, (u8)!ok, len, fs_doc_name(s), ok ? "" : "DAMAGED");
         }
         for (int s = 0; s < PROG_MAX_SLOTS; s++) {
             u32 len = 0; char name[PROG_NAME_MAXLEN];
@@ -285,6 +285,7 @@ static void files_delete_action(void) {
         ok = fs_delete_slot(r->slot);
     } else {
         ok = prog_delete_slot(r->slot);
+        desktop_refresh_programs();
     }
     int keep = files_sel;
     files_refresh();

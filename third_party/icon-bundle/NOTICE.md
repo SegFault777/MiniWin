@@ -47,7 +47,7 @@ adds `CSS_Code`, `Open`, `Open2`, `Program`, `Refresh`, the `USB_2_0`, `USB_3_0_
 icons, and 16x16 versions of `NAS`, the floppy icons, `Download_and_install` and `Upload`. Every icon that existed before is
 byte-identical. 55 distinct icons in all (the 16x16-only ones are `ASM_Code` and `PC`; `ARMASM_Code`, `Earth`, `Terminal`
 and `X86ASM_Code` are 32x32-only); the disk-image catalog has 56 slots (kernel/fs.h `ICON_MAX_SLOTS`), so **one slot is
-spare** -- raising the catalog is a disk-layout change (docs/DISK-LAYOUT.md) before the bundle grows again.
+spare** -- raising the catalog is a disk-layout change (docs/dev/DISK-LAYOUT.md) before the bundle grows again.
 
 Where they are used (1.1-alpha-2): the desktop icons (Notepad, Setting, Web, Terminal, MiniFiles' `FileManager`, the
 document icon) are drawn from the catalog as bitmaps; MiniFiles shows 16x16 icons beside its rows (`Doc`, `ASM_Code`,

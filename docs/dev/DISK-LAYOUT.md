@@ -19,7 +19,7 @@ base**: 0 for an image or a whole-disk install, the partition's first sector for
 | 2023-2047 | free headroom (~12 KB) |
 
 `os-inst` copies LBA 0-1028 and 1261-1964, zeroes everything else, and patches the boot sector's install fields
-([OS-INSTALL.md](OS-INSTALL.md)).
+([OS-INSTALL.md](../user/INSTALLING.md)).
 
 ## Slot headers
 
