@@ -153,6 +153,15 @@ typedef char mw_assert_netmem_fits[(MW_NETMEM_USED_END <= MW_NETMEM_END) ? 1 : -
 #define MW_FD_DMA_ADDR      (MW_NVME_DMA_ADDR + MW_NVME_DMA_SIZE)   /* floppy: one 9 KB track buffer + one sector (ISA DMA: below 16 MB, no 64 KB crossing) */
 #define MW_FD_DMA_SIZE      0x00002800u
 
+/* USB host controllers (usb/xhci.h, ehci.h, ohci.h): one 64 KB slice per controller, plain RAM below 4 GB (a pointer IS the
+ * bus address). What lives inside a slice is each driver's own business (its header has the map); the slice only has to be
+ * big enough and 4 KB aligned, and the assert below proves the four of them sit between the storage DMA and the MWP slot. */
+#define MW_USB_DMA_ADDR     0x00830000u
+#define MW_USB_HC_MAX       4u
+#define MW_USB_HC_STRIDE    0x00010000u
+#define MW_USB_DMA_SIZE     (MW_USB_HC_STRIDE * MW_USB_HC_MAX)
+
+typedef char mw_assert_usb_dma_fits[(MW_USB_DMA_ADDR >= (MW_STOR_DMA_ADDR + MW_STOR_DMA_SIZE) && (MW_USB_DMA_ADDR + MW_USB_DMA_SIZE) <= MW_MWP_SYSCALL_ADDR && (MW_USB_DMA_ADDR & 0xFFFu) == 0) ? 1 : -1];
 typedef char mw_assert_rd_fits[(MW_RD_END <= MW_MISC_BASE) ? 1 : -1];
 typedef char mw_assert_misc_fits[((MW_MISC_BASE + MW_ICON_CACHE_SIZE) <= MW_MWP_SYSCALL_ADDR) ? 1 : -1];
 typedef char mw_assert_files_icons_fit[((MW_FILES_ICON_ADDR + MW_FILES_ICON_SIZE) <= MW_MWP_SYSCALL_ADDR) ? 1 : -1];

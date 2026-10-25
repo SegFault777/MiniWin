@@ -3,8 +3,9 @@
 #define MOUSE_H
 #include "io.h"
 
-/* mouse.h -- the PS/2 mouse: initialises the auxiliary device of the i8042 controller and decodes its 3-byte packets into movement
- * and button state, by polling. Virtual machines emulate this; USB mice are not supported yet. */
+/* mouse.h -- the mouse: initialises the auxiliary device of the i8042 controller and decodes its 3-byte packets into movement
+ * and button state, by polling. A USB mouse or tablet (usb/hid.h) reports through mouse_usb_report()/mouse_usb_abs() below
+ * and shows up in the very same mouse_dx/dy/left/click_event variables, so the desktop code has one mouse to think about. */
 
 #define PS2_DATA    0x60
 #define PS2_STATUS  0x64
@@ -56,6 +57,25 @@ static int mouse_release_event = 0;       /* 1 if the left button went UP this p
 static u8  mouse_packet[3];
 static int mouse_packet_idx = 0;
 
+/* What the USB HID driver leaves here between two mouse_poll() calls. Relative mice add into the dx/dy accumulators; a
+ * tablet (an absolute pointer, the kind VirtualBox and VMware present by default) sets a target position instead. */
+static int mouse_usb_dx = 0, mouse_usb_dy = 0, mouse_usb_left = 0, mouse_usb_right = 0, mouse_usb_left_prev = 0;
+static int mouse_usb_pending = 0;
+static int mouse_wheel = 0;                    /* notches since the desktop last asked; > 0 = scroll DOWN. Both the PS/2 IntelliMouse and USB mice add here */
+static int mouse_packet_len = 3;               /* 4 once the PS/2 mouse has agreed to be an IntelliMouse (it then has a wheel byte) */
+static inline void mouse_wheel_add(int n) { mouse_wheel += n; }
+static int mouse_abs_x = 0, mouse_abs_y = 0, mouse_abs_valid = 0;
+static inline void mouse_usb_report(int dx, int dy, int left, int right) {
+    mouse_usb_dx += dx; mouse_usb_dy += dy;
+    mouse_usb_left = left; mouse_usb_right = right;
+    mouse_usb_pending = 1;
+}
+static inline void mouse_usb_abs(int x, int y, int left, int right) {
+    mouse_abs_x = x; mouse_abs_y = y; mouse_abs_valid = 1;
+    mouse_usb_left = left; mouse_usb_right = right;
+    mouse_usb_pending = 1;
+}
+
 static inline void mouse_init(void) {
     /* Tell the PS/2 controller "yes, there is in fact a rodent attached" */
     ps2_write_cmd(0xA8);
@@ -71,6 +91,18 @@ static inline void mouse_init(void) {
     ps2_write_data(status);
 
     mouse_write(0xF6);   /* reset to sane defaults */
+
+    /* The IntelliMouse handshake: set the sample rate to 200, 100, 80 in a row -- a plain mouse shrugs, a wheel mouse
+     * takes it as a secret knock and answers "what are you?" with 3 instead of 0, and from then on sends a 4th byte per
+     * packet whose low nibble is the wheel. */
+    mouse_write(0xF3); mouse_write(200);
+    mouse_write(0xF3); mouse_write(100);
+    mouse_write(0xF3); mouse_write(80);
+    ps2_write_cmd(0xD4); ps2_write_data(0xF2);            /* "what are you?" */
+    (void)ps2_read_data();                                /* the ACK */
+    u8 id = ps2_read_data();
+    mouse_packet_len = (id == 3) ? 4 : 3;
+
     mouse_write(0xF4);   /* "start yapping" -- enable streaming reports */
 
     mouse_packet_idx = 0;
@@ -92,6 +124,7 @@ static inline int mouse_poll(void) {
 
     while (1) {
         u8 status = inb(PS2_STATUS);
+        if (status == 0xFF) break;           /* an empty bus reads all ones: no i8042 here (USB-only machines), not a byte waiting */
         if (!(status & 0x01)) break;         /* nothing waiting, move along */
         if (!(status & 0x20)) {
             /* This byte belongs to the keyboard, not the mouse -- bail
@@ -113,10 +146,15 @@ static inline int mouse_poll(void) {
         }
 
         mouse_packet[mouse_packet_idx++] = b;
-        if (mouse_packet_idx < 3) continue;
+        if (mouse_packet_idx < mouse_packet_len) continue;
         mouse_packet_idx = 0;
 
         u8 flags = mouse_packet[0];
+        if (mouse_packet_len == 4) {                  /* the wheel byte: a signed nibble, positive = wheel towards the user = scroll down */
+            int z = mouse_packet[3] & 0x0F;
+            if (z & 8) z -= 16;
+            mouse_wheel += z;
+        }
 
         /* Button state gets processed no matter what happens to the
          * movement bytes below. A click can ride along on the exact same
@@ -167,6 +205,17 @@ static inline int mouse_poll(void) {
                          * "why is this thing upside down." */
     }
 
+    if (mouse_usb_pending) {                      /* a USB mouse/tablet spoke since the last poll: merge it in */
+        mouse_usb_pending = 0;
+        acc_dx += mouse_usb_dx; acc_dy += mouse_usb_dy;
+        mouse_usb_dx = 0; mouse_usb_dy = 0;
+        if (mouse_usb_left && !mouse_usb_left_prev) click_event = 1;
+        if (!mouse_usb_left && mouse_usb_left_prev) release_event = 1;
+        mouse_usb_left_prev = mouse_usb_left;
+        mouse_left = mouse_usb_left;
+        mouse_right = mouse_usb_right;
+        got_any = 1;
+    }
     mouse_dx = acc_dx;
     mouse_dy = acc_dy;
     mouse_click_event = click_event;

@@ -1,5 +1,47 @@
 # Changelog
 
+## MiniWin 1.1-alpha-9 (2026-10)
+
+Slogan, from this version on: **Mini OS, Many Things.**
+
+* **A real file system: MWFS** (`kernel/mwfs.h`, `kernel/vfs.h`). Directories of any depth, files that grow (up to about 8 MB), a
+  free-space bitmap, a CRC-32 per file, names of up to 31 characters, any number of documents and programs -- the four-document
+  and four-program limits are gone. `/` is the root volume (`/docs`, `/progs`, `/mnt`, `/sys`); other volumes appear as `/mnt/<id>`.
+  No journal any more: a save builds the new file in a fresh inode and one directory-entry write switches the name over, so a power
+  cut leaves the old file or the whole new one, and at worst garbage that `part check <id> fix` collects. Tested on a RAM disk
+  (`tools/test/run_host_mwfs.sh`, 6216 checks) including a crash sweep of every operation at every possible sector write, a
+  random run checked against a model, and an image built by the Python twin (`tools/mwfs.py`). **The disk layout changed**
+  (kernel, then the icon catalog at LBA 1029, then the root volume at LBA 1733); disks written by alpha-8 and before are not
+  converted, their documents are not carried over. `kernel/fs.h` keeps the slot API as an index of `/docs` (64) and `/progs` (32).
+* **MiniShell** (the Terminal, renamed). The **prompt shows the current directory** (`/docs~# `). New commands with the familiar
+  names: `ls cd pwd mkdir touch cat cp mv rm` (Windows `dir md type copy move del` and short MiniWin aliases `go look where dig new
+  dup` work too), `del <path>`, `rd <file>`, `clear` (`cls`, `wipe`), `reboot` (`re`), `shutdown` (`poweroff`, `off`), `lsusb` (`plug`).
+  **`part`** with `list info format mount unmount check create delete set merge` (destructive ones ask `YES`; partition tables are
+  only written on MBR disks, primary entries 1-4, never over the running system). **`os-inst <id> <arch>`** takes `i386`
+  (`x86_64` is refused: there is no 64-bit kernel); the installer now copies the system sectors and **formats** a fresh root
+  filesystem over the rest of the target (up to 8 GB). The command parser takes up to five words.
+* **USB** (`kernel/usb/`): **xHCI, EHCI and OHCI** host controller drivers and a HID driver: boot keyboards (with key repeat),
+  mice and "USB tablets" (absolute pointers, as VirtualBox/VMware present by default) through a small report-descriptor parser,
+  the mouse wheel, hot-plug. Verified on QEMU with the PS/2 controller removed (`-machine pc,i8042=off`). Not implemented: hubs,
+  UHCI, USB storage. The EHCI-to-companion hand-off is written to the specification but QEMU cannot exercise it. Nothing was run on
+  VMware, VirtualBox or real hardware.
+* **Mouse wheel and scroll bars.** One scroll bar widget (`ui/scrollbar.h`): arrows, a thumb you can **drag**, page jumps, and the wheel
+  (PS/2 IntelliMouse and USB). **Notepad** and **MiniShell** now have scroll bars (Notepad scrolls its text and follows the typing);
+  MiniWeb and MiniFiles use the same widget.
+* **Menu bars** in MiniShell (*Shell, View, Tools, Help*), MiniWeb (*Page, Sites, Help*) and MiniFiles (*File, View, Help*), each
+  fitted to the app, built on a shared `ui/menubar.h`.
+* **Renamed:** WEB.MWP -> **MINIWEB.MWP**, Terminal -> **MINISHELL.MWP** (desktop, title bars, status line, start menu, docs).
+* **Fixed:** an IDE disk of 32 MB or more was reported as 128 GB (the IDENTIFY words 100-103 were misread); a machine without an
+  i8042 controller (its ports read all ones) made the mouse driver loop forever.
+* **Tests:** host suites 134 + 300 fuzz + 952 + 204 + 22 + 166 + 6216 + 15 checks, all passing; `qemu_osinst.sh` and the UI goldens
+  were updated for the new layout. The old journal / torn-write tests were retired with the journals (their job is `host_mwfs_test.c`).
+* **Documentation reviewed** end to end for this release: disk layout, files and disks, MiniShell, installing, MiniFiles, desktop and
+  apps, drivers (USB), memory map, UI framework, testing, roadmap, README.
+
+Not done from the alpha-9 list: **ring 3** (user mode and memory protection) -- it moves to alpha-10. Also planned for alpha-10:
+an explorer-style MiniFiles and Save As, kerning, a full modularisation of the UI pieces and of the `kernel/` headers, memory
+management and kernel modernisation, the SDK and a richer MWP API, icons in more places (see [ROADMAP.md](ROADMAP.md)).
+
 ## MiniWin 1.1-alpha-8 (2026-10)
 
 * **Desktop grid.** All desktop icons are now one vertical list at a constant spacing: the five apps (NOTEPAD, SETTING, WEB,

@@ -7,28 +7,38 @@ MiniFiles is MiniWin's file manager. Open it by **double-clicking the folder ico
 (labelled `MINIFILES`) or from the **start menu** (`MiniFiles.mwp`). It is an ordinary window: drag it by the title bar,
 resize it by its edges, minimise (to the task bar), maximise, close.
 
-It has two tabs.
+It has a **menu bar** and two tabs.
+
+## Menu bar
+
+* **File:** *Open / Run / Install* (what the main button does for the selection), *Delete* (asks first, like the button), *Refresh*,
+  *Close window*.
+* **View:** *Files* and *Disks* (the two tabs).
+* **Help:** *About MiniFiles*.
+
+(The explorer-style tree and the *Save in:* dialog planned for the next version are listed in [ROADMAP.md](../project/ROADMAP.md).)
 
 ## FILES
 
-Lists everything MiniWin keeps on its disk, one row per item:
+Lists the documents in `/docs` and the programs in `/progs`, one row per item (up to 100 rows; the scroll bar and the mouse wheel
+move through them; other directories are for MiniShell's `ls` for now):
 
 | column | meaning |
 |---|---|
-| icon + name | a document icon and `NEWDOC.TXT` ... (the four Notepad document slots), or a program icon and the program's name (`GREETER.MWP`); names are cut to 12 characters in the column |
+| icon + name | a document icon and the document's name (`NEWDOC.TXT`, ...), or a program icon and the program's name (`GREETER.MWP`); names are cut to 12 characters in the column |
 | size | bytes |
 | `DOC` / `PRG` | a document or a loadable program |
 | remark | empty, or `DAMAGED` |
 
 **DAMAGED is real**: every file is read through completely and its CRC-32 checked when the list is built
 (`fs_verify_slot()` / `prog_verify_slot()`, see [DISK-LAYOUT.md](../dev/DISK-LAYOUT.md)), so a file that would open as garbage is
-flagged instead of looking fine. Files saved before CRCs existed (no commit record) are accepted if every sector reads.
+flagged instead of looking fine.
 
 Buttons (the first changes with what is selected):
 
 * **OPEN** (a document) opens it in Notepad. If it is already open in a Notepad window that window is brought to the front
   instead (a second editable copy would race on Save). A damaged document is refused.
-* **RUN** (a program) loads and runs it, the same as the Terminal's `run`; the screen is repainted when it returns.
+* **RUN** (a program) loads and runs it, the same as MiniShell's `run`; the screen is repainted when it returns.
 * **DELETE** erases the selected file. It asks first: the first click turns the button into **SURE?** and the status line
   says *Click DELETE again: NAME*; the second click deletes. Clicking anywhere else, or selecting another row, cancels.
   A document that is open in Notepad cannot be deleted (*It is open in Notepad*).
@@ -37,7 +47,7 @@ Buttons (the first changes with what is selected):
 
 ## DISKS
 
-Lists the IDE disks and their partitions, with the **id** each is called by in `os-inst`
+Lists the disks and their partitions, with the **id** each is called by in `os-inst`
 ([STORAGE-IDS.md](../dev/STORAGE-IDS.md)):
 
 ```
@@ -52,7 +62,7 @@ Lists the IDE disks and their partitions, with the **id** each is called by in `
 Remarks: `RUNNING` (MiniWin is running from there, not installable), `EXTENDED` (a container, pick a logical partition inside
 it), `TOO SMALL` (under 1 MB).
 
-**INSTALL** does *not* install by itself. It opens the Terminal with `os-inst <id>` already typed in; you press Enter,
+**INSTALL** does *not* install by itself. It opens MiniShell with `os-inst <id>` already typed in; you press Enter,
 read the summary, and type `YES` ([OS-INSTALL.md](INSTALLING.md)). A row that cannot be installed on says why in the
 status line (*That is where MiniWin runs from.*, *Pick a logical partition inside it.*, *Too small: needs at least 1 MB.*).
 
@@ -68,8 +78,7 @@ status line (*That is where MiniWin runs from.*, *Pick a logical partition insid
 
 ## Limits (alpha)
 
-* The Notepad has four document slots and there are four program slots, so there are at most eight files; there are no
-  folders, copy, move or rename yet ([ROADMAP.md](../project/ROADMAP.md)).
-* The window's labels and messages are English only (the rest of the system is bilingual; the task bar and status line
-  entries for the window are translated).
-* Only IDE disks are listed (the only storage driver this build has).
+* Only `/docs` and `/progs` are shown, as a flat list; there is no folder tree, rename or copy yet (use MiniShell's `ls cd cp mv rm`;
+  see [ROADMAP.md](../project/ROADMAP.md)).
+* The window's labels and messages are English only apart from the menu bar (the rest of the system is bilingual; the task bar and
+  status line entries for the window are translated).

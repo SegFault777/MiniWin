@@ -164,95 +164,31 @@ fi
 echo "  kernel: $KERNEL_ACTUAL_BYTES / $KERNEL_MAX_BYTES bytes" \
      "($KERNEL_BUDGET_SECTORS-sector budget)"
 
-FS_BASE_LBA=$(grep -oP '#define\s+FS_BASE_LBA\s+\K[0-9]+' kernel/fs.h)
-FS_SLOT_SECTORS=$(grep -oP '#define\s+FS_SLOT_SECTORS\s+\K[0-9]+' kernel/fs.h)
-FS_MAX_FILES=$(grep -oP '#define\s+FS_MAX_FILES\s+\K[0-9]+' kernel/fs.h)
-
-# The file-storage area is meant to start on the sector right after the
-# kernel's own budget ends (kernel itself starting right after stage 2)
-# -- no gap, nothing wasted. If a future edit grows the kernel budget
-# without moving FS_BASE_LBA to match, this is the check that notices
-# before it ships as a silently-corrupt layout (the kernel spilling
-# into what fs.h thinks is empty file-slot space).
-KERNEL_START_LBA=$((1 + STAGE2_SECTORS))
-EXPECTED_FS_BASE_LBA=$((KERNEL_START_LBA + KERNEL_BUDGET_SECTORS))
-if [ "$FS_BASE_LBA" -lt "$EXPECTED_FS_BASE_LBA" ]; then
-    echo "ERROR: kernel/fs.h's FS_BASE_LBA ($FS_BASE_LBA) starts before the" \
-         "kernel's own budget ends (LBA $EXPECTED_FS_BASE_LBA, i.e. stage 1" \
-         "+ $STAGE2_SECTORS stage-2 sectors + $KERNEL_BUDGET_SECTORS kernel" \
-         "sectors) -- the kernel would silently overwrite file-slot data on" \
-         "disk. Update FS_BASE_LBA in kernel/fs.h to $EXPECTED_FS_BASE_LBA" \
-         "or higher."
-    exit 1
-fi
-
-FS_TOTAL_SECTORS=$((FS_SLOT_SECTORS * FS_MAX_FILES))
-LAST_USED_LBA=$((FS_BASE_LBA + FS_TOTAL_SECTORS - 1))
-echo "  file slots: LBA $FS_BASE_LBA-$LAST_USED_LBA" \
-     "($FS_MAX_FILES slots x $FS_SLOT_SECTORS sectors)"
-
-PROG_BASE_LBA=$(grep -oP '#define\s+PROG_BASE_LBA\s+\K[0-9]+' kernel/fs.h)
-PROG_SLOT_SECTORS=$(grep -oP '#define\s+PROG_SLOT_SECTORS\s+\K[0-9]+' kernel/fs.h)
-PROG_MAX_SLOTS=$(grep -oP '#define\s+PROG_MAX_SLOTS\s+\K[0-9]+' kernel/fs.h)
-
-# Same "starts immediately after the previous area, no gap" contract as
-# FS_BASE_LBA's own check above, just one area further along: the
-# loadable-.mwp-program slots (see kernel/mwp.h) are meant to start
-# right where the document slots end.
-EXPECTED_PROG_BASE_LBA=$((FS_BASE_LBA + FS_TOTAL_SECTORS))
-if [ "$PROG_BASE_LBA" -lt "$EXPECTED_PROG_BASE_LBA" ]; then
-    echo "ERROR: kernel/fs.h's PROG_BASE_LBA ($PROG_BASE_LBA) starts before" \
-         "the document file slots end (LBA $EXPECTED_PROG_BASE_LBA) -- the" \
-         "two areas would overlap on disk. Update PROG_BASE_LBA in" \
-         "kernel/fs.h to $EXPECTED_PROG_BASE_LBA or higher."
-    exit 1
-fi
-
-PROG_TOTAL_SECTORS=$((PROG_SLOT_SECTORS * PROG_MAX_SLOTS))
-LAST_USED_LBA=$((PROG_BASE_LBA + PROG_TOTAL_SECTORS - 1))
-echo "  program slots: LBA $PROG_BASE_LBA-$LAST_USED_LBA" \
-     "($PROG_MAX_SLOTS slots x $PROG_SLOT_SECTORS sectors)"
-
+# The layout, read out of kernel/fs.h so there is one copy of every number (see fs.h's layout map):
+#   kernel -> icon catalog -> root volume, back to back, ending exactly at the image size.
 ICON_BASE_LBA=$(grep -oP '#define\s+ICON_BASE_LBA\s+\K[0-9]+' kernel/fs.h)
 ICON_SLOT_SECTORS=$(grep -oP '#define\s+ICON_SLOT_SECTORS\s+\K[0-9]+' kernel/fs.h)
 ICON_MAX_SLOTS=$(grep -oP '#define\s+ICON_MAX_SLOTS\s+\K[0-9]+' kernel/fs.h)
+MW_ROOTFS_LBA=$(grep -oP '#define\s+MW_ROOTFS_LBA\s+\K[0-9]+' kernel/fs.h)
+MW_ROOTFS_STOCK_SECTORS=$(grep -oP '#define\s+MW_ROOTFS_STOCK_SECTORS\s+\K[0-9]+' kernel/fs.h)
+ICON_TOTAL_SECTORS=$((ICON_MAX_SLOTS * ICON_SLOT_SECTORS))
 
-# Same "starts immediately after the previous area, no gap" contract,
-# one area further along still: the icon catalog (see kernel/fs.h) is
-# meant to start right where the program slots end.
-EXPECTED_ICON_BASE_LBA=$((PROG_BASE_LBA + PROG_TOTAL_SECTORS))
+KERNEL_START_LBA=$((1 + STAGE2_SECTORS))
+EXPECTED_ICON_BASE_LBA=$((KERNEL_START_LBA + KERNEL_BUDGET_SECTORS))
 if [ "$ICON_BASE_LBA" -lt "$EXPECTED_ICON_BASE_LBA" ]; then
-    echo "ERROR: kernel/fs.h's ICON_BASE_LBA ($ICON_BASE_LBA) starts before" \
-         "the program slots end (LBA $EXPECTED_ICON_BASE_LBA) -- the two" \
-         "areas would overlap on disk. Update ICON_BASE_LBA in" \
-         "kernel/fs.h to $EXPECTED_ICON_BASE_LBA or higher."
+    echo "ERROR: kernel/fs.h's ICON_BASE_LBA ($ICON_BASE_LBA) starts before the kernel's own budget ends" \
+         "(LBA $EXPECTED_ICON_BASE_LBA) -- the kernel would silently overwrite the icon catalog on disk." \
+         "Update ICON_BASE_LBA (and MW_ROOTFS_LBA) in kernel/fs.h."
     exit 1
 fi
-
-ICON_TOTAL_SECTORS=$((ICON_SLOT_SECTORS * ICON_MAX_SLOTS))
-LAST_USED_LBA=$((ICON_BASE_LBA + ICON_TOTAL_SECTORS - 1))
-MIN_IMAGE_SECTORS=$((LAST_USED_LBA + 1))
-echo "  icon catalog: LBA $ICON_BASE_LBA-$LAST_USED_LBA" \
-     "($ICON_MAX_SLOTS slots x $ICON_SLOT_SECTORS sectors)"
-# The write-ahead journals (kernel/fs.h) live right after the icon catalog and must not overlap it, nor run
-# past the 2048 sectors os-inst copies as one installation.
-FS_JOURNAL_LBA=$(grep -oP '#define\s+FS_JOURNAL_LBA\s+\K[0-9]+' kernel/fs.h)
-PROG_JOURNAL_LBA=$(grep -oP '#define\s+PROG_JOURNAL_LBA\s+\K[0-9]+' kernel/fs.h)
-if [ "$FS_JOURNAL_LBA" -le "$LAST_USED_LBA" ]; then
-    echo "ERROR: FS_JOURNAL_LBA ($FS_JOURNAL_LBA) is inside the icon catalog (ends at LBA $LAST_USED_LBA)." \
-         "Move the journals in kernel/fs.h to LBA $((LAST_USED_LBA + 1)) or higher."
+echo "  icon catalog: LBA $ICON_BASE_LBA-$((ICON_BASE_LBA + ICON_TOTAL_SECTORS - 1)) ($ICON_MAX_SLOTS slots x $ICON_SLOT_SECTORS sectors)"
+if [ "$MW_ROOTFS_LBA" -lt $((ICON_BASE_LBA + ICON_TOTAL_SECTORS)) ]; then
+    echo "ERROR: MW_ROOTFS_LBA ($MW_ROOTFS_LBA) is inside the icon catalog (ends at LBA $((ICON_BASE_LBA + ICON_TOTAL_SECTORS - 1)))."
     exit 1
 fi
-if [ $((PROG_JOURNAL_LBA + 49)) -gt 2048 ] || [ "$PROG_JOURNAL_LBA" -lt $((FS_JOURNAL_LBA + 9)) ]; then
-    echo "ERROR: the journals (document $FS_JOURNAL_LBA, program $PROG_JOURNAL_LBA) overlap or run past LBA 2047."
-    exit 1
-fi
-echo "  journals: document LBA $FS_JOURNAL_LBA-$((FS_JOURNAL_LBA + 8)), program LBA $PROG_JOURNAL_LBA-$((PROG_JOURNAL_LBA + 48))," \
-     "free headroom LBA $((PROG_JOURNAL_LBA + 49))-2047"
-LAST_USED_LBA=$((PROG_JOURNAL_LBA + 48))
-MIN_IMAGE_SECTORS=$((LAST_USED_LBA + 1))
-echo "  minimum sectors needed: $MIN_IMAGE_SECTORS" \
-     "($(( MIN_IMAGE_SECTORS * 512 / 1024 ))KB)"
+MIN_IMAGE_SECTORS=$((MW_ROOTFS_LBA + MW_ROOTFS_STOCK_SECTORS))
+echo "  root volume: LBA $MW_ROOTFS_LBA-$((MIN_IMAGE_SECTORS - 1)) ($MW_ROOTFS_STOCK_SECTORS sectors, MWFS)"
+echo "  minimum sectors needed: $MIN_IMAGE_SECTORS ($(( MIN_IMAGE_SECTORS * 512 / 1024 ))KB)"
 
 cp $BUILD/boot.bin $BUILD/os-image.img
 cat $BUILD/stage2.bin >> $BUILD/os-image.img
@@ -278,12 +214,11 @@ cat $BUILD/kernel.bin >> $BUILD/os-image.img
 # silently truncating something.
 TARGET_TOTAL_BYTES=$((1024 * 1024))
 TARGET_TOTAL_SECTORS=$((TARGET_TOTAL_BYTES / 512))
-if [ "$MIN_IMAGE_SECTORS" -gt "$TARGET_TOTAL_SECTORS" ]; then
+if [ "$MIN_IMAGE_SECTORS" -ne "$TARGET_TOTAL_SECTORS" ]; then
     echo "ERROR: the kernel + file-slot layout now needs" \
-         "$MIN_IMAGE_SECTORS sectors, which no longer fits in the" \
-         "$TARGET_TOTAL_SECTORS-sector (${TARGET_TOTAL_BYTES}-byte) target" \
-         "image size. Bump TARGET_TOTAL_BYTES in build.sh to the next" \
-         "round size (512KB, 1024KB, ...) to make room."
+         "$MIN_IMAGE_SECTORS sectors, but the image is $TARGET_TOTAL_SECTORS" \
+         "(${TARGET_TOTAL_BYTES} bytes): the root volume must end exactly at the end of the image." \
+         "Adjust MW_ROOTFS_STOCK_SECTORS in kernel/fs.h (or TARGET_TOTAL_BYTES here)."
     exit 1
 fi
 
@@ -303,6 +238,10 @@ elif size > target:
         f.truncate(target)
 print(f"Final image size: {os.path.getsize(path)} bytes")
 EOF
+
+# The stock image's root filesystem: a fresh MWFS over the tail of the image (tools/mwfs.py is the offline twin of
+# kernel/mwfs.h). Programs are installed into it afterwards by tools/install_mwp.py.
+python3 tools/mwfs.py format "$BUILD/os-image.img" --lba "$MW_ROOTFS_LBA" --sectors "$MW_ROOTFS_STOCK_SECTORS" --label MINIWIN
 
 echo "Build complete: $BUILD/os-image.img"
 ls -la $BUILD/os-image.img

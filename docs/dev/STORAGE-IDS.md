@@ -104,3 +104,14 @@ in its boot sector (offset 436) next to its base sector (offset 432); the boot l
 id. A stock image (id 0) is the primary master with base 0, exactly as before. If two disks carry the same id (a
 clone), the first position wins, deterministically. `ata_read_sector()`/`ata_write_sector()` (used by everything in
 `fs.h`) add the installation's base, so every "LBA 1029" in the layout means "1029 sectors into *this* installation".
+
+## Ids in `part` and under `/mnt`
+
+The same ids name volumes for the file system: `part mount sata101` makes the volume on that partition appear as `/mnt/sata101`
+(the id, in its canonical form, *is* the mount-point name), and `part format`, `part info`, `part check`, `part create/delete/set/merge`
+take them too ([TERMINAL.md](../user/TERMINAL.md)). `part` resolves ids with its own `part_resolve()` in `kernel/apps/shell_part.h`, which
+differs from `st_resolve()` in one way only: a data volume may be smaller than the 1 MB an installation needs. Everything that could harm
+the running system (formatting, deleting, mounting a second time) refuses a target that overlaps the installation MiniWin booted from.
+
+`usb` ids are still reserved by the grammar and still have no driver: the USB support of 1.1-alpha-9 is for keyboards, mice and tablets
+(`lsusb`), not for storage.

@@ -39,49 +39,56 @@ static void draw_window(void) {
     int ex = edit_x(), ey = edit_y(), ew = edit_w(), eh = edit_h();
     ui_well(ex, ey, ew, eh, TH_FIELD);
 
-    /* text content -- UTF-8 aware: most bytes are 1 ASCII char, but a
-     * 3-byte sequence (0xE0 lead byte) is one Hangul syllable/jamo drawn
-     * via the Korean font instead of the Latin one. Both render at the
-     * same FONT_CELL advance since Latin and Hangul glyphs both come out
-     * of the same Galmuri11 font at the same 11x11 cell size now. */
-    int cx = ex + 2, cy = ey + 2;
+    /* The text, wrapped and scrollable. The wrapping rules live in np_rows_ex() (apps/notepad/save.h) and are repeated
+     * here character for character; a row is drawn only if it is inside the window of rows the scroll bar shows.
+     * UTF-8 aware: a 3-byte sequence (0xE0 lead byte) is one Hangul syllable/jamo drawn via the Korean font, both
+     * scripts advance by FONT_CELL (Latin and Hangul come out of the same Galmuri11 font at the same 11x11 cell). */
+    int vis_rows = np_visible_rows(eh), limit = np_wrap_limit(ew), end_rel = 0;
+    int total_rows = np_rows_ex(active_np, ew, &end_rel);
+    if (active_np->scroll_len != active_np->text_len) {                 /* the text changed: follow the typing to the end */
+        active_np->scroll_len = active_np->text_len;
+        active_np->scroll = total_rows > vis_rows ? total_rows - vis_rows : 0;
+    }
+    if (active_np->scroll > total_rows - vis_rows) active_np->scroll = total_rows > vis_rows ? total_rows - vis_rows : 0;
+    if (active_np->scroll < 0) active_np->scroll = 0;
+    int first = active_np->scroll, x0 = ex + 2;
+    int rel = 0, row = 0;
     for (u32 i = 0; i < active_np->text_len; ) {
         int clen = ko_utf8_char_len((unsigned char)active_np->text_buf[i]);
         if (clen == 3 && i + 3 <= active_np->text_len) {
-            if (cx > ex + ew - FONT_CELL - 2) { cx = ex + 2; cy += FONT_CELL + 1; }
-            if (cy > ey + eh - FONT_CELL) break;
-            int cp = ko_utf8_decode3(&active_np->text_buf[i]);
-            ko_font_draw_codepoint(cx, cy, cp, TH_FIELD_TEXT);
-            cx += FONT_CELL;
+            if (rel > limit) { rel = 0; row++; }
+            if (row >= first && row < first + vis_rows) {
+                int cp = ko_utf8_decode3(&active_np->text_buf[i]);
+                ko_font_draw_codepoint(x0 + rel, ey + 2 + (row - first) * (FONT_CELL + 1), cp, TH_FIELD_TEXT);
+            }
+            rel += FONT_CELL;
             i += 3;
             continue;
         }
         char c = active_np->text_buf[i];
-        if (c == '\n' || cx > ex + ew - FONT_CELL - 2) {
-            cx = ex + 2;
-            cy += FONT_CELL + 1;
+        if (c == '\n' || rel > limit) {
+            rel = 0; row++;
             if (c == '\n') { i++; continue; }
         }
-        if (cy > ey + eh - FONT_CELL) break;
-        font_draw_char(cx, cy, c, TH_FIELD_TEXT);
-        cx += FONT_CELL;
+        if (row >= first && row < first + vis_rows) font_draw_char(x0 + rel, ey + 2 + (row - first) * (FONT_CELL + 1), c, TH_FIELD_TEXT);
+        rel += FONT_CELL;
         i++;
     }
+    int cx = x0 + rel, cy = ey + 2 + (row - first) * (FONT_CELL + 1);
 
-    /* Live preview of the syllable currently being composed (if Hangul
-     * mode is on and something's mid-composition), shown right at the
-     * cursor position before it's actually committed to active_np->text_buf. */
+    /* Live preview of the syllable currently being composed (if Hangul mode is on and something's mid-composition),
+     * shown right at the cursor position before it's actually committed to active_np->text_buf. */
     if (current_ime == IME_KOREAN && ko_ime_is_composing()) {
-        if (cx > ex + ew - FONT_CELL - 2) { cx = ex + 2; cy += FONT_CELL + 1; }
+        if (rel > limit) { rel = 0; row++; cx = x0; cy = ey + 2 + (row - first) * (FONT_CELL + 1); }
         int preview_cp = ko_ime_preview_codepoint();
-        if (preview_cp >= 0 && cy <= ey + eh - FONT_CELL) {
+        if (preview_cp >= 0 && row >= first && row < first + vis_rows) {
             ko_font_draw_codepoint(cx, cy, preview_cp, TH_FIELD_TEXT);
-            cx += FONT_CELL; /* advance past the preview glyph so the cursor bar
-                      * below is drawn after it, not overlapping it */
+            cx += FONT_CELL; /* advance past the preview glyph so the cursor bar below is drawn after it, not overlapping it */
         }
     }
 
-    bb_fillrect(cx, cy, 2, FONT_CELL, TH_FIELD_TEXT); /* text cursor */
+    if (row >= first && row < first + vis_rows) bb_fillrect(cx, cy, 2, FONT_CELL, TH_FIELD_TEXT); /* text cursor */
+    sb_draw(active_np->id);                                                                   /* the scroll bar (ui/scrollbar.h) */
 }
 
 /* Is (px,py) over the draggable part of the title bar -- i.e. the title

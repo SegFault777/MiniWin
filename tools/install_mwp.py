@@ -1,33 +1,20 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
-"""Writes a compiled .mwp flat binary (see tools/build_mwp.sh) directly
-into one of kernel/fs.h's PROG_MAX_SLOTS program slots on an existing
-os-image.img -- the disk-image equivalent of what kernel/fs.h's own
-prog_save_slot() does from inside a running kernel, just run offline so
-a demo program can already be sitting on disk the very first time the
-image boots, without needing some in-OS "install" UI that doesn't exist
-yet.
+"""Puts a compiled .mwp flat binary (see tools/build_mwp.sh) into /progs of the root filesystem of an os-image.img -- the
+disk-image equivalent of what kernel/fs.h's prog_save_slot() does from inside a running kernel, run offline so a demo
+program is already sitting on the disk the first time the image boots.
 
-This writes the EXACT SAME header layout prog_save_slot() writes (magic
-+ len + entry_offset + name, in that byte order -- see kernel/fs.h's
-own comment on PROG_MAGIC for why it's a different constant than the
-document slots' FS_MAGIC) so that prog_check_slot() reading this back
-from inside the OS can't tell the difference between a program placed
-here and one saved by the OS itself at runtime. If kernel/fs.h's header
-layout ever changes, this script's HEADER struct below has to change to
-match, by hand -- there's no shared source of truth between C and
-Python here, same trade-off as mwp_api.h/mwp.h's syscall table staying
-in sync by hand.
+Since 1.1-alpha-9 programs are ordinary files of the MWFS root volume (tools/mwfs.py is the offline twin of kernel/mwfs.h);
+the program's entry offset lives in the file's inode ("aux"), exactly where prog_save_slot() puts it.
 
-Usage: tools/install_mwp.py build/os-image.img 0 GREETER.MWP build/greeter.mwp
-       (slot 0, name "GREETER.MWP", entry_offset defaults to 0)
+Usage: tools/install_mwp.py build/os-image.img 0 GREETER.MWP build/greeter.mwp [entry_offset]
+       (the slot number is accepted for compatibility with older scripts and ignored: files have names, not slots)
 """
-import struct
+import os
 import sys
-import zlib
 
-SECTOR = 512
-PROG_MAGIC = 0x50575732  # must match kernel/fs.h's PROG_MAGIC exactly
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import mwfs  # noqa: E402
 
 
 def read_define(path, name):
@@ -35,72 +22,31 @@ def read_define(path, name):
         for line in f:
             parts = line.split()
             if len(parts) >= 3 and parts[0] == "#define" and parts[1] == name:
-                return int(parts[2].rstrip("uU"), 0)   # accepts 0x... and C's trailing u suffix
+                return int(parts[2].rstrip("uU"), 0)
     sys.exit(f"couldn't find #define {name} in {path}")
 
 
 def main():
     if len(sys.argv) not in (5, 6):
-        sys.exit(f"usage: {sys.argv[0]} <image> <slot> <NAME.MWP> <binary.mwp> [entry_offset]")
-
-    image_path, slot_s, name, bin_path = sys.argv[1:5]
+        sys.exit(f"usage: {sys.argv[0]} <image> <slot (ignored)> <NAME.MWP> <binary.mwp> [entry_offset]")
+    image_path, _slot, name, bin_path = sys.argv[1:5]
     entry_offset = int(sys.argv[5]) if len(sys.argv) == 6 else 0
-    slot = int(slot_s)
-
-    prog_base_lba = read_define("kernel/fs.h", "PROG_BASE_LBA")
-    slot_sectors = read_define("kernel/fs.h", "PROG_SLOT_SECTORS")
-    data_sectors = read_define("kernel/fs.h", "PROG_DATA_SECTORS")
-    max_slots = read_define("kernel/fs.h", "PROG_MAX_SLOTS")
+    lba = read_define("kernel/fs.h", "MW_ROOTFS_LBA")
+    sectors = read_define("kernel/fs.h", "MW_ROOTFS_STOCK_SECTORS")
+    max_bytes = read_define("kernel/fs.h", "PROG_MAX_BYTES")
     name_maxlen = read_define("kernel/fs.h", "PROG_NAME_MAXLEN")
-
-    if not (0 <= slot < max_slots):
-        sys.exit(f"slot {slot} out of range (0..{max_slots - 1})")
-
-    with open(bin_path, "rb") as f:
-        data = f.read()
-
-    max_bytes = data_sectors * SECTOR
+    data = open(bin_path, "rb").read()
     if len(data) > max_bytes:
         sys.exit(f"{bin_path} is {len(data)} bytes, exceeds PROG_MAX_BYTES ({max_bytes})")
-    if len(name.encode()) >= name_maxlen:
+    if len(name.encode()) > name_maxlen:
         sys.exit(f"name {name!r} too long for PROG_NAME_MAXLEN ({name_maxlen})")
-
-    header_lba = prog_base_lba + slot * slot_sectors
-    data_lba = header_lba + 1
-
-    # Same 512-byte header layout as fs.h's prog_save_slot(): magic(u32
-    # LE) + len(u32 LE) + entry_offset(u32 LE) + name (NUL-padded to
-    # PROG_NAME_MAXLEN bytes), zero-padded out to a full sector.
-    header = struct.pack("<III", PROG_MAGIC, len(data), entry_offset)
-    header += name.encode().ljust(name_maxlen, b"\0")
-    header = header.ljust(SECTOR, b"\0")
-    # rc-4 commit record, same as fs.h's fs_hdr_set_commit(): CRC-32 of the program bytes at +504 and the
-    # marker at +508, so the kernel verifies this program on load exactly like one it saved itself.
-    crc_off = read_define("kernel/fs.h", "FS_HDR_CRC_OFF")
-    commit_off = read_define("kernel/fs.h", "FS_HDR_COMMIT_OFF")
-    commit_magic = read_define("kernel/fs.h", "FS_COMMIT_MAGIC")
-    header = bytearray(header)
-    struct.pack_into("<I", header, crc_off, zlib.crc32(data) & 0xFFFFFFFF)
-    struct.pack_into("<I", header, commit_off, commit_magic)
-    header = bytes(header)
-
-    with open(image_path, "r+b") as img:
-        img.seek(header_lba * SECTOR)
-        img.write(header)
-
-        img.seek(data_lba * SECTOR)
-        img.write(data)
-        # Pad the rest of this slot's data sectors with zeros so a
-        # shorter program doesn't leave a previous, longer program's
-        # tail bytes sitting there unread (harmless today since
-        # prog_load_slot() only ever reads back `len` bytes, but leaving
-        # stale bytes on disk that nothing accounts for is exactly the
-        # kind of "works today, mysterious tomorrow" debt this project
-        # tries not to leave lying around).
-        img.write(b"\0" * (max_bytes - len(data)))
-
-    print(f"Installed {bin_path} ({len(data)} bytes) as {name!r} "
-          f"in program slot {slot} (LBA {header_lba}-{header_lba + slot_sectors - 1})")
+    v = mwfs.Vol(image_path, lba, sectors)
+    v.open()
+    progs = v.walk("/progs")
+    if v.lookup(progs, name):
+        v.unlink("/progs/" + name)                      # installing again replaces it
+    v.put("/progs/" + name, data, entry_offset)
+    print(f"Installed {bin_path} ({len(data)} bytes) as /progs/{name}")
 
 
 if __name__ == "__main__":

@@ -3,652 +3,251 @@
 #define FS_H
 #include "io.h"
 #include "blk.h"
+#include "mwfs.h"
+#include "vfs.h"
 
-/* This is NOT a filesystem. Let's be honest with each other. It's four
- * fixed parking spots on disk, each with a name tag already glued on.
- * No renaming, no folders, no fanciness -- just enough structure that
- * "Save" stops eating your previous file every single time, which,
- * before this existed, it absolutely did. Saving always grabs the first
- * empty slot (or reuses the one this document already belongs to),
- * giving you NEWDOC.TXT, then _2, then _3, then _4, and then a
- * polite "sorry, full" if you try for a 5th.
+/* fs.h -- where things live on the disk, and the document/program "slot" API the desktop, Notepad, MiniFiles and the shell
+ * were written against, now a thin layer over a real filesystem (mwfs.h, vfs.h).
  *
- * Disk layout (LBA = sector number, 512 bytes a pop) -- the whole image
- * is exactly 1024KB / 1MB (2048 sectors), a round number chosen on
- * purpose (see build.sh) instead of padding out to whatever happened to
- * be left over. Bumped up from 256KB once the UI's bitmap fonts moved
- * to 11x11 Galmuri11 glyphs (see kernel/font_latin_data.h,
- * kernel/font_ko_data.h) -- 11172 Hangul syllables at 11 rows of u16
- * apiece takes real space, no way around that for a kernel with no
- * font-compression scheme -- again once kernel/mwp.h needed somewhere
- * to keep loadable program binaries, and again once a bundle of real
- * (non-hand-drawn) icon bitmaps needed a home (see this file's icon
- * catalog section further down):
- *   LBA 0        - boot sector (stage 1: just enough real-mode code to
- *                  load stage 2 and jump to it -- see boot/boot.asm)
- *   LBA 1-4      - stage 2 (kernel loading, VBE truecolor mode search,
- *                  A20, GDT, the jump into protected mode -- see
- *                  boot/stage2.asm; moved out of stage 1 once finding a
- *                  real 640x480x32bpp VBE mode by actually walking the
- *                  BIOS's own mode list, instead of just requesting a
- *                  fixed mode number, stopped fitting in a 512-byte MBR)
- *   LBA 5-1028   - the kernel (512KB budget, grown from 448KB for the HTML5 engine; see boot/stage2.asm's
- *                  KERNEL_CHUNKS for the loader side of this same
- *                  number)
- *   LBA 1029-1064 - the four document slots, 9 sectors each (1 header + 8 data):
- *                    slot 0: LBA 1029-1037 -> "NEWDOC.TXT"
- *                    slot 1: LBA 1038-1046 -> "NEWDOC_2.TXT"
- *                    slot 2: LBA 1047-1055 -> "NEWDOC_3.TXT"
- *                    slot 3: LBA 1056-1064 -> "NEWDOC_4.TXT"
- *   LBA 1065-1260 - the four loadable-program slots, 49 sectors each (1
- *                  header + 48 data) -- see kernel/mwp.h for the loader
- *                  that reads these:
- *                    slot 0: LBA 1065-1113
- *                    slot 1: LBA 1114-1162
- *                    slot 2: LBA 1163-1211
- *                    slot 3: LBA 1212-1260
- *   LBA 1261-1964 - the icon catalog, 11 sectors per icon x 64 icons (1
- *                  header + 8 data sectors for a 32x32 RGBA bitmap + 2
- *                  data sectors for a 16x16 RGBA bitmap) -- see this
- *                  file's ICON_* constants and tools/install_icons.py,
- *                  the offline installer that actually writes these
- *                  (there's no in-OS icon-editor UI, so unlike the
- *                  document/program slots above, nothing at runtime
- *                  ever calls icon_save_slot() -- it exists purely so
- *                  the installer and the kernel agree on one write
- *                  path instead of the installer poking the header
- *                  format directly).
- *   LBA 1965-1973 - the document JOURNAL (1 header + 8 data sectors): where a save is
- *                  staged and committed before it is applied to its slot, so
- *                  an interrupted save can be completed (or never started)
- *                  instead of leaving a half-written file. See fsj_save().
- *   LBA 1974-2022 - the program journal (1 header + 48 data sectors), same idea.
- *   LBA 2023-2047 - unused headroom (~12KB) -- room for the kernel,
- *                  the document area, the program area, or the icon
- *                  catalog to grow without immediately forcing the
- *                  image past the 1024KB line; see build.sh's size
- *                  check, which fails loudly if any of them ever does.
- * (Each area starts the sector immediately after the one before it ends
- * -- no gaps. Every sector between LBA 1 and LBA 2022 is now spoken for
- * on purpose. The icon catalog grew from 45 to 56 slots when the bundle with the drive
- * icons arrived (47 distinct icons), then to 64 for the 61-icon bundle of 1.1-alpha-6; the
- * journals, which sit right after it, moved from LBA 1756/1765 to 1877/1886 and then to
- * 1965/1974 -- only matters for a journal left pending by a crash on an older image, which
- * is simply discarded. Disks installed before 1.1-alpha-6 keep working: their sectors
- * 1877-1934 now read as icon slots 56-63, which fail the magic check and show nothing.)
- */
+ * Until 1.1-alpha-8 this file WAS the filesystem: four fixed document slots and four fixed program slots, each 9 or 49
+ * sectors at a fixed LBA, with a write-ahead journal to make saving crash-safe. 1.1-alpha-9 replaced all of that with MWFS:
+ * directories, files that grow, a free-space bitmap, and any number of documents and programs (until the disk is full).
+ * What is left of "slots" is only an INDEX the UI uses: slot n is the n-th entry of a small cache of /docs (or /progs), so
+ * Notepad's windows, the desktop icons and MiniFiles' rows keep pointing at "document 3" the way they always did, while the
+ * bytes live in ordinary files you can also reach with ls/cat/cp/mv in MiniShell.
+ *
+ * Disk layout (LBA = sector, 512 bytes; the install image is exactly 1 MB = 2048 sectors):
+ *   LBA 0        boot sector (stage 1, boot/boot.asm)
+ *   LBA 1-4      stage 2 (boot/stage2.asm: kernel loading, VBE mode search, A20, GDT, the jump to protected mode)
+ *   LBA 5-1028   the kernel (512 KB budget; boot/stage2.asm's KERNEL_CHUNKS is the loader's side of this number)
+ *   LBA 1029-1732 the icon catalog: 64 icons x 11 sectors (header + 32x32 RGBA + 16x16 RGBA), written offline by
+ *                tools/install_icons.py -- nothing in the running OS ever writes it
+ *   LBA 1733-2047 the ROOT VOLUME, "/": an MWFS of 315 sectors in the stock image, holding /docs, /progs, /mnt and /sys.
+ *                os-inst gives an installation on a bigger partition a root volume that fills the rest of the partition.
+ * Every sector from LBA 1 to LBA 2047 is spoken for; build.sh checks that the kernel budget, the catalog and the root
+ * volume really do follow one another with no overlap. */
+#define MW_ROOTFS_LBA          1733u         /* relative to the installation's first sector */
+#define MW_ROOTFS_STOCK_SECTORS 315u         /* what the stock 1 MB image has left after the catalog */
 
-#define FS_MAGIC           0x31573154u
-#define FS_BASE_LBA        1029
-#define FS_SLOT_SECTORS    9      /* 1 header + 8 data sectors per slot */
-#define FS_DATA_SECTORS    8
-#define FS_MAX_FILE_BYTES  (FS_DATA_SECTORS * 512)  /* 4096 bytes, don't write a novel */
-#define FS_MAX_FILES       4
+#define FS_MAX_FILE_BYTES  4096              /* a document: what Notepad's buffer holds. Bigger files are fine in the filesystem, just not in Notepad */
+#define FS_MAX_FILES       64                /* how many documents the desktop/Notepad/MiniFiles index (more can exist; ls shows all) */
+#define FS_NAME_MAXLEN     MWFS_NAME_MAX
+#define PROG_MAX_BYTES     24576             /* a loadable program (kernel/mwp.h); the loader's slot in RAM is this big */
+#define PROG_MAX_SLOTS     32
+#define PROG_NAME_MAXLEN   24
 
-static const char *fs_slot_names[FS_MAX_FILES] = {
-    "NEWDOC.TXT",
-    "NEWDOC_2.TXT",
-    "NEWDOC_3.TXT",
-    "NEWDOC_4.TXT",
-};
-
-/* Document names. Each slot starts out with its default name (above); Notepad's Save As gives a document a name of its own,
- * which is stored in the slot's header (bytes 8..39, as it always was) and read back by fs_check_slot(). fs_doc_names[] is the
- * live copy; an empty entry means "the default". The name is what the desktop label, MiniFiles, the Terminal's `ls` and the
- * "SAVED:" status show. */
-#define FS_NAME_MAXLEN 31
-static char fs_doc_names[FS_MAX_FILES][FS_NAME_MAXLEN + 1];
-static inline const char *fs_doc_name(int slot) { return fs_doc_names[slot][0] ? fs_doc_names[slot] : fs_slot_names[slot]; }
-
-/* A usable document name: 1..31 characters from A-Z a-z 0-9 . _ - , not starting with a dot. */
-static inline int fs_name_ok(const char *name) {
-    int n = 0;
-    for (; name[n]; n++) {
-        char c = name[n];
-        int ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-';
-        if (!ok || n >= FS_NAME_MAXLEN) return 0;
-    }
-    return n > 0 && name[0] != '.';
-}
-static inline int fs_name_eq(const char *a, const char *b) {          /* case-insensitive, like the DOS names these imitate */
-    for (;; a++, b++) {
-        char x = *a, y = *b;
-        if (x >= 'a' && x <= 'z') x = (char)(x - 32);
-        if (y >= 'a' && y <= 'z') y = (char)(y - 32);
-        if (x != y) return 0;
-        if (!x) return 1;
-    }
-}
-
-static inline u32 fs_slot_header_lba(int slot) { return FS_BASE_LBA + (u32)slot * FS_SLOT_SECTORS; }
-static inline u32 fs_slot_data_lba(int slot)   { return fs_slot_header_lba(slot) + 1; }
-
-static inline void fs_zero(u8 *buf, u32 n) {
-    for (u32 i = 0; i < n; i++) buf[i] = 0;
-}
-
+static inline int fs_name_ok(const char *name) { return mwfs_name_ok(name); }
+static inline int fs_name_eq(const char *a, const char *b) { return mwfs_name_eq(a, b); }
+static inline void fs_zero(u8 *buf, u32 n) { for (u32 i = 0; i < n; i++) buf[i] = 0; }
 static inline void fs_strcpy_fixed(char *dst, const char *src, u32 n) {
     u32 i = 0;
     for (; i < n - 1 && src[i]; i++) dst[i] = src[i];
     for (; i < n; i++) dst[i] = 0;
 }
+static inline u32 fs_crc32_update(u32 crc, const u8 *data, u32 n) { return mwfs_crc32_update(crc, data, n); }
 
-/* ============================================================
- * Crash-safe saves (rc-4): commit record + write-ahead journal
- *
- * THE PROBLEM. A save used to write the slot header (magic + length) FIRST and the data after. Cut the
- * power -- or fail one sector write -- in between and the next boot found a perfectly valid header over
- * half-new, half-old data: a file that looked fine and was quietly wrong (for a program, one that `run`
- * would happily execute). There was also no way to notice later that the bytes read back were not the
- * bytes that were saved.
- *
- * THE FIX, in two parts.
- *  1. COMMIT RECORD. The last 8 bytes of every document/program header sector hold the CRC-32 of the
- *     saved bytes (offset 504) and the marker FS_COMMIT_MAGIC (508). A load recomputes the CRC and refuses
- *     bytes that do not match. Headers written before this existed have zeros there ("legacy"): still
- *     accepted, just unverifiable, so no existing disk image or tool breaks.
- *  2. JOURNAL. A save never touches the live slot until the complete new copy is safely on disk:
- *        a. invalidate the journal header,
- *        b. write all data sectors into the journal area,
- *        c. write the journal header (same header the slot will get + the target slot) -- THE COMMIT POINT,
- *        d. only now invalidate the live slot, copy the data in and write its header,
- *        e. retire the journal.
- *     Power loss before (c): the live slot was never touched -- the OLD file is intact. Power loss after
- *     (c): the journal holds a complete, CRC-checked copy of the NEW file, and fs_*_recover() finishes
- *     step (d) the next time the disk is touched. A one-sector header write is the only thing that has to
- *     be atomic, which is what a drive gives you. Either the old or the new file survives -- never a mix.
- * ============================================================ */
-#define FS_HDR_CRC_OFF     504
-#define FS_HDR_COMMIT_OFF  508
-#define FS_HDR_TARGET_OFF  496                 /* journal header only: 1 + the slot a staged save is destined for */
-#define FS_COMMIT_MAGIC    0x31544D43u         /* "CMT1" little-endian */
-#define FS_JOURNAL_LBA     1965                /* document journal (9 sectors) -- see the layout map */
-#define PROG_JOURNAL_LBA   1974                /* program journal (49 sectors) */
-
-/* Standard CRC-32 (IEEE 802.3, the one zlib/zip/PNG use: reflected, poly 0xEDB88320), bitwise -- no 1KB table in
- * a kernel that counts its bytes; 24KB of program is ~200K cheap operations, nothing next to the disk reads.
- * Feed it in pieces: start with 0xFFFFFFFF, pass the return value back in, invert (~) the final value. */
-static inline u32 fs_crc32_update(u32 crc, const u8 *data, u32 n) {
-    for (u32 i = 0; i < n; i++) {
-        crc ^= data[i];
-        for (int b = 0; b < 8; b++) crc = (crc >> 1) ^ (0xEDB88320u & (u32)(-(i32)(crc & 1u)));
+/* ============================================================ the root volume at boot */
+static inline int fs_boot_mount(void) {
+    u32 region = 0xFFFFFFFFu;
+    if (st_scanned && blk_boot_dev >= 0 && blk_boot_dev < BLK_DEV_MAX && st_devs[blk_boot_dev].present) {
+        u32 total = st_devs[blk_boot_dev].sectors;
+        region = total > blk_boot_base + MW_ROOTFS_LBA ? total - blk_boot_base - MW_ROOTFS_LBA : 0;
     }
-    return crc;
+    if (region == 0xFFFFFFFFu) region = MW_ROOTFS_STOCK_SECTORS;
+    return vfs_mount_root(blk_boot_dev, blk_boot_base + MW_ROOTFS_LBA, region);
 }
 
-/* Stamps the commit record for `crc` (already finalized) into a header sector buffer. */
-static inline void fs_hdr_set_commit(u8 *header, u32 crc) {
-    *(u32*)(header + FS_HDR_CRC_OFF)    = crc;
-    *(u32*)(header + FS_HDR_COMMIT_OFF) = FS_COMMIT_MAGIC;
+/* ============================================================ documents: /docs, as slots */
+static struct { u8 used; u32 ino, len; } fs_doc_tab[FS_MAX_FILES];
+static char fs_doc_names[FS_MAX_FILES][FS_NAME_MAXLEN + 1];          /* the name of a used slot, or a name reserved for a save in progress */
+
+static const char *fs_doc_name(int slot) {
+    return (slot >= 0 && slot < FS_MAX_FILES && fs_doc_names[slot][0]) ? fs_doc_names[slot] : "NEWDOC.TXT";
+}
+static inline mwfs_vol_t *fs_root(void) { return vfs_is_root_ok() ? &vfs_vols[0] : 0; }
+static inline int fs_dir_ino(const char *name, u32 *ino) {
+    mwfs_vol_t *v = fs_root();
+    u8 t;
+    if (!v) return 0;
+    int e = mwfs_dir_lookup(v, MWFS_ROOT_INO, name, ino, &t);
+    if (e == MWFS_E_NOENT) { u32 n; if (mwfs_mkdir(v, MWFS_ROOT_INO, name, &n) == MWFS_OK) { *ino = n; return 1; } return 0; }
+    return e == MWFS_OK && t == MWFS_T_DIR;
 }
 
-/* Reads the header sector at `lba` and reports its commit record: 0 = the sector couldn't be read,
- * 1 = a legacy header with no commit record (nothing to verify), 2 = committed; *crc is set then. */
-static inline int fs_read_commit(u32 lba, u32 *crc) {
-    u8 header[512];
-    for (int z = 0; z < 512; z++) header[z] = 0;      /* by hand, see prog_check_slot() for why */
-    if (!ata_read_sector(lba, header)) return 0;
-    if (*(u32*)(header + FS_HDR_COMMIT_OFF) != FS_COMMIT_MAGIC) return 1;
-    *crc = *(u32*)(header + FS_HDR_CRC_OFF);
-    return 2;
-}
-
-static inline int fsj_zero_header(u32 lba) {
-    u8 z[512];
-    for (int i = 0; i < 512; i++) z[i] = 0;
-    return ata_write_sector(lba, z);
-}
-
-/* Writes `nsec` consecutive data sectors at `lba` from `src` (`len` real bytes, the rest zero padding) and
- * returns the CRC-32 of the `len` bytes through *crc_out (finalized). */
-static inline int fsj_write_data(u32 lba, u32 nsec, const u8 *src, u32 len, u32 *crc_out) {
-    u32 remaining = len, crc = 0xFFFFFFFFu;
-    for (u32 s = 0; s < nsec; s++) {
-        u8 sector[512];
-        fs_zero(sector, 512);
-        u32 chunk = remaining > 512 ? 512 : remaining;
-        for (u32 i = 0; i < chunk; i++) sector[i] = src[i];
-        crc = fs_crc32_update(crc, sector, chunk);
-        if (!ata_write_sector(lba + s, sector)) return 0;
-        src += chunk;
-        remaining -= chunk;
+/* Re-reads /docs into the slot index. Slots keep their number as long as their file keeps its name; new files take free slots. */
+static inline void fs_rescan_docs(void) {
+    mwfs_vol_t *v = fs_root();
+    u8 seen[FS_MAX_FILES];
+    for (int i = 0; i < FS_MAX_FILES; i++) seen[i] = 0;
+    u32 dino;
+    if (v && fs_dir_ino("docs", &dino)) {
+        mwfs_dirent_t e;
+        for (u32 idx = 0; mwfs_dir_nth(v, dino, idx, &e) == 1; idx++) {
+            if (e.type != MWFS_T_FILE) continue;
+            int slot = -1;
+            for (int i = 0; i < FS_MAX_FILES; i++) if (fs_doc_names[i][0] && mwfs_name_eq(fs_doc_names[i], e.name)) { slot = i; break; }
+            if (slot < 0) for (int i = 0; i < FS_MAX_FILES; i++) if (!fs_doc_names[i][0]) { slot = i; break; }
+            if (slot < 0) continue;                                    /* more documents than the index holds */
+            mwfs_ino_t t;
+            fs_strcpy_fixed(fs_doc_names[slot], e.name, sizeof fs_doc_names[slot]);
+            fs_doc_tab[slot].used = 1; fs_doc_tab[slot].ino = e.ino;
+            fs_doc_tab[slot].len = mwfs_ino_get(v, e.ino, &t) ? t.size : 0;
+            seen[slot] = 1;
+        }
     }
-    if (crc_out) *crc_out = ~crc;
-    return 1;
+    for (int i = 0; i < FS_MAX_FILES; i++) if (fs_doc_tab[i].used && !seen[i]) { fs_doc_tab[i].used = 0; fs_doc_names[i][0] = 0; }
 }
+static inline void fs_doc_recover(void) { fs_rescan_docs(); }         /* kept for callers: there is no journal to replay any more */
 
-/* The journaled write itself, shared by documents and programs. `header` is the slot header the caller built
- * (magic, length, name...) WITHOUT the commit record; the live slot is `slot` of the area starting at
- * `base_lba` with `slot_sectors` sectors per slot (1 header + data). Returns 1 only when the live slot holds
- * the complete new file. A 0 means: before the commit point, nothing changed; after it, the journal still
- * holds the new copy and the next fsj_recover() completes it. */
-static inline int fsj_save(u32 jlba, u32 base_lba, u32 slot_sectors, int slot, u8 *header, const u8 *src, u32 len) {
-    u32 nsec = slot_sectors - 1;
-    u32 hdr_lba = base_lba + (u32)slot * slot_sectors;
-    u32 crc = 0;
-
-    if (!fsj_zero_header(jlba)) return 0;                                  /* a. */
-    if (!fsj_write_data(jlba + 1, nsec, src, len, &crc)) return 0;         /* b. */
-    fs_hdr_set_commit(header, crc);
-    u8 jh[512];
-    for (int i = 0; i < 512; i++) jh[i] = header[i];
-    *(u32*)(jh + FS_HDR_TARGET_OFF) = (u32)slot + 1;
-    if (!ata_write_sector(jlba, jh)) return 0;                             /* c. COMMIT POINT */
-
-    if (!fsj_zero_header(hdr_lba)) return 0;                               /* d. */
-    if (!fsj_write_data(hdr_lba + 1, nsec, src, len, 0)) return 0;
-    if (!ata_write_sector(hdr_lba, header)) return 0;
-
-    fsj_zero_header(jlba);   /* e. best effort: a journal that stays behind only re-applies the identical bytes */
-    return 1;
-}
-
-/* Finishes (or discards) whatever a previous save left in the journal. Returns 1 when the journal is now
- * settled (empty, applied, or discarded as unusable) and 0 when the disk would not cooperate (try again
- * later). A journal whose staged data fails its CRC never reached the commit point intact and is dropped. */
-static inline int fsj_recover(u32 jlba, u32 base_lba, u32 slot_sectors, u32 slot_count, u32 magic) {
-    u32 nsec = slot_sectors - 1;
-    u8 jh[512];
-    for (int z = 0; z < 512; z++) jh[z] = 0;
-    if (!ata_read_sector(jlba, jh)) return 0;
-    if (*(u32*)(jh + 0) != magic || *(u32*)(jh + FS_HDR_COMMIT_OFF) != FS_COMMIT_MAGIC) return 1;   /* nothing committed */
-
-    u32 target = *(u32*)(jh + FS_HDR_TARGET_OFF);
-    u32 len = *(u32*)(jh + 4);
-    if (target == 0 || target > slot_count || len > nsec * 512) { fsj_zero_header(jlba); return 1; }
-    target -= 1;
-
-    u32 crc = 0xFFFFFFFFu, remaining = len;
-    for (u32 s = 0; s < nsec && remaining > 0; s++) {
-        u8 sector[512];
-        if (!ata_read_sector(jlba + 1 + s, sector)) return 0;
-        u32 chunk = remaining > 512 ? 512 : remaining;
-        crc = fs_crc32_update(crc, sector, chunk);
-        remaining -= chunk;
-    }
-    if (~crc != *(u32*)(jh + FS_HDR_CRC_OFF)) { fsj_zero_header(jlba); return 1; }
-
-    u32 hdr_lba = base_lba + target * slot_sectors;
-    if (!fsj_zero_header(hdr_lba)) return 0;
-    for (u32 s = 0; s < nsec; s++) {
-        u8 sector[512];
-        if (!ata_read_sector(jlba + 1 + s, sector)) return 0;
-        if (!ata_write_sector(hdr_lba + 1 + s, sector)) return 0;
-    }
-    *(u32*)(jh + FS_HDR_TARGET_OFF) = 0;                                   /* the live header carries no target */
-    if (!ata_write_sector(hdr_lba, jh)) return 0;
-    fsj_zero_header(jlba);
-    return 1;
-}
-
-/* Lazily replays the document journal: checked on first use (and again after any failed save), so a crash
- * mid-save is repaired the next time anything looks at the files -- no separate mount step needed. */
-static int fs_doc_journal_ok = 0;
-static inline void fs_doc_recover(void) {
-    if (fs_doc_journal_ok) return;
-    if (fsj_recover(FS_JOURNAL_LBA, FS_BASE_LBA, FS_SLOT_SECTORS, FS_MAX_FILES, FS_MAGIC)) fs_doc_journal_ok = 1;
-}
-
-/* Shoves `len` bytes of `data` into the given slot (0..FS_MAX_FILES-1) under that slot's fixed name. Returns 1
- * only if EVERYTHING landed on disk, 0 otherwise -- including "doesn't fit": a document over
- * FS_MAX_FILE_BYTES used to be silently cut off and reported as saved, so the user lost the tail of their
- * text without a word. Now it is refused up front, before a single sector is touched, and the old file stays
- * exactly as it was. The write itself is journaled (see fsj_save() and the block comment above it): an
- * interrupted save leaves either the old file or the complete new one. */
-static inline int fs_save_slot(int slot, const char *data, u32 len) {
-    if (slot < 0 || slot >= FS_MAX_FILES) return 0;
-    if (len > FS_MAX_FILE_BYTES) return 0;
-    fs_doc_recover();
-    if (!fs_doc_journal_ok) return 0;          /* an earlier save is still waiting to be completed and the disk won't let it */
-
-    u8 header[512];
-    fs_zero(header, 512);
-    *(u32*)(header + 0) = FS_MAGIC;
-    *(u32*)(header + 4) = len;
-    fs_strcpy_fixed((char*)(header + 8), fs_doc_name(slot), 32);
-    int ok = fsj_save(FS_JOURNAL_LBA, FS_BASE_LBA, FS_SLOT_SECTORS, slot, header, (const u8 *)data, len);
-    if (!ok) fs_doc_journal_ok = 0;            /* the journal may hold a committed copy: re-check on the next access */
-    return ok;
-}
-
-/* Saves under a (new) name: the slot's name is changed first and put back if the save fails. 1 = saved. */
-static inline int fs_save_slot_as(int slot, const char *name, const char *data, u32 len) {
-    if (slot < 0 || slot >= FS_MAX_FILES || !fs_name_ok(name)) return 0;
-    char old[FS_NAME_MAXLEN + 1];
-    fs_strcpy_fixed(old, fs_doc_names[slot], FS_NAME_MAXLEN + 1);
-    fs_strcpy_fixed(fs_doc_names[slot], name, FS_NAME_MAXLEN + 1);
-    if (fs_save_slot(slot, data, len)) return 1;
-    fs_strcpy_fixed(fs_doc_names[slot], old, FS_NAME_MAXLEN + 1);
-    return 0;
-}
-
-/* Erases a slot by zeroing its header sector -- specifically, zeroing
- * out FS_MAGIC, which is all fs_check_slot() actually looks at to
- * decide a slot is occupied. Doesn't bother touching the FS_DATA_SECTORS
- * data sectors themselves (there's no need: nothing ever reads them
- * without fs_check_slot() passing first, and leaving old bytes sitting
- * there costs nothing since the next fs_save_slot() to that slot
- * overwrites every data sector unconditionally anyway). Used by
- * Terminal.mwp's `del` command -- there's no in-OS delete UI elsewhere
- * (Notepad's own File menu only ever saves, never deletes), so this is
- * currently `del`'s only caller. */
-static inline int fs_delete_slot(int slot) {
-    if (slot < 0 || slot >= FS_MAX_FILES) return 0;
-    fs_doc_recover();                         /* settle any pending save first, so it cannot resurrect the file */
-    u8 header[512];
-    fs_zero(header, 512);
-    fs_doc_names[slot][0] = 0;                /* back to the default name */
-    return ata_write_sector(fs_slot_header_lba(slot), header);
-}
-/* Returns 1 if this slot has a valid saved file: reads back the header and checks
- * our magic number so we don't mistake random disk garbage for a save.
- * Fills *out_len if so. */
 static inline int fs_check_slot(int slot, u32 *out_len) {
-    if (slot < 0 || slot >= FS_MAX_FILES) return 0;
-    fs_doc_recover();
-    /* Zeroed by hand, one byte at a time -- NOT `u8 header[512] = {0};`.
-     * See prog_check_slot() below (this file's newer, sibling slot-check
-     * function for loadable programs) for the full story: that shorter,
-     * more obvious initializer was root-caused to intermittently
-     * corrupt the very next ata_read_sector() call on this exact build,
-     * and this function reads sectors the exact same way, so it gets
-     * the exact same fix on general principle even though it wasn't the
-     * one caught actually misbehaving. Zeroed at all so a failed read
-     * reads back as "no magic found" instead of leaving the compiler
-     * (rightly) suspicious that we might inspect uninitialized stack
-     * garbage. */
-    u8 header[512];
-    for (int z = 0; z < 512; z++) header[z] = 0;
-    if (!ata_read_sector(fs_slot_header_lba(slot), header)) return 0;
-    u32 magic = *(u32*)(header + 0);
-    if (magic != FS_MAGIC) return 0; /* nope, just leftover zeros or noise */
-    u32 len = *(u32*)(header + 4);
-    if (len > FS_MAX_FILE_BYTES) return 0;   /* no save can ever write this: a damaged header, not a file */
-    if (out_len) *out_len = len;
-    header[8 + FS_NAME_MAXLEN] = 0;          /* the name field is 32 bytes: make sure it ends */
-    fs_doc_names[slot][0] = 0;
-    if (fs_name_ok((const char *)(header + 8))) fs_strcpy_fixed(fs_doc_names[slot], (const char *)(header + 8), FS_NAME_MAXLEN + 1);
+    if (slot < 0 || slot >= FS_MAX_FILES || !fs_doc_tab[slot].used) return 0;
+    if (out_len) *out_len = fs_doc_tab[slot].len;
     return 1;
 }
-
-/* The slot holding a document with this name (case-insensitive), or -1. */
 static inline int fs_find_by_name(const char *name) {
-    for (int i = 0; i < FS_MAX_FILES; i++) {
-        u32 l;
-        if (fs_check_slot(i, &l) && fs_name_eq(fs_doc_name(i), name)) return i;
-    }
+    for (int i = 0; i < FS_MAX_FILES; i++) if (fs_doc_tab[i].used && mwfs_name_eq(fs_doc_names[i], name)) return i;
     return -1;
 }
-
-
-/* Reads `slot`'s contents back into dst. All-or-nothing, like prog_load_slot(): returns 1 and sets *out_len only
- * if the slot is valid, `maxlen` can hold the whole file, every sector read cleanly, and (for a committed slot)
- * the CRC-32 of what came back matches the one stored at save time. Anything else returns 0 -- so "this file is
- * damaged" is finally distinguishable from "this file is empty" (an empty file is a valid slot with
- * *out_len == 0), and a caller can no longer end up editing a silently truncated copy and saving THAT over the
- * original. */
-static inline int fs_read_slot(int slot, char *dst, u32 maxlen, u32 *out_len) {
-    u32 len = 0;
-    if (!fs_check_slot(slot, &len)) return 0;
-    if (len > maxlen) return 0;               /* would have to cut it short: refuse instead */
-
-    u32 want_crc = 0;
-    int commit = fs_read_commit(fs_slot_header_lba(slot), &want_crc);
-    if (commit == 0) return 0;
-
-    u32 remaining = len;
-    char *dstp = dst;
-    u32 data_lba = fs_slot_data_lba(slot);
-    u32 crc = 0xFFFFFFFFu;
-    for (int s = 0; s < FS_DATA_SECTORS && remaining > 0; s++) {
-        u8 sector[512];
-        if (!ata_read_sector(data_lba + s, sector)) return 0;
-        u32 chunk = remaining > 512 ? 512 : remaining;
-        crc = fs_crc32_update(crc, sector, chunk);
-        for (u32 i = 0; i < chunk; i++) dstp[i] = (char)sector[i];
-        dstp += chunk;
-        remaining -= chunk;
-    }
-    if (remaining != 0) return 0;
-    if (commit == 2 && ~crc != want_crc) return 0;   /* bytes differ from what was saved */
-    if (out_len) *out_len = len;
-    return 1;
-}
-
-/* The older, simpler entry point: the file's length, or 0 if the slot is empty OR unreadable (use
- * fs_read_slot() when the difference matters, as Notepad and Terminal now do). */
-static inline u32 fs_load_slot(int slot, char *dst, u32 maxlen) {
-    u32 len = 0;
-    return fs_read_slot(slot, dst, maxlen, &len) ? len : 0;
-}
-
-/* Is the document in `slot` intact -- a valid header, every data sector readable and, for a slot with a commit
- * record, matching its CRC? Streams one sector at a time (a 4KB buffer is not worth the stack), so it is cheap
- * enough for a file manager to run over every file. Returns 0 for an empty slot too: "is there a healthy file". */
-static inline int fs_verify_slot(int slot) {
-    u32 len = 0;
-    if (!fs_check_slot(slot, &len)) return 0;
-    u32 want = 0;
-    int commit = fs_read_commit(fs_slot_header_lba(slot), &want);
-    if (commit == 0) return 0;
-    u32 remaining = len, crc = 0xFFFFFFFFu, lba = fs_slot_data_lba(slot);
-    for (int s = 0; s < FS_DATA_SECTORS && remaining > 0; s++) {
-        u8 sector[512];
-        if (!ata_read_sector(lba + s, sector)) return 0;
-        u32 chunk = remaining > 512 ? 512 : remaining;
-        crc = fs_crc32_update(crc, sector, chunk);
-        remaining -= chunk;
-    }
-    if (remaining != 0) return 0;
-    return commit == 2 ? (~crc == want) : 1;
-}
-
-/* Finds the first slot nobody's using yet. Returns -1 if all four are
- * taken, at which point it's officially "your problem now, go delete
- * something" -- except we don't have a delete feature yet either. Oops. */
+/* A free slot with a fresh default name reserved in it (NEWDOC.TXT, NEWDOC_2.TXT, ...), or -1. */
 static inline int fs_find_empty_slot(void) {
-    for (int i = 0; i < FS_MAX_FILES; i++) {
-        u32 len;
-        if (!fs_check_slot(i, &len)) return i;
+    mwfs_vol_t *v = fs_root();
+    u32 dino;
+    if (!v || !fs_dir_ino("docs", &dino)) return -1;
+    int slot = -1;
+    for (int i = 0; i < FS_MAX_FILES; i++) if (!fs_doc_names[i][0]) { slot = i; break; }
+    if (slot < 0) return -1;
+    for (int n = 1; n < 1000; n++) {
+        char name[24]; int k = 0;
+        const char *base = "NEWDOC";
+        while (*base) name[k++] = *base++;
+        if (n > 1) { name[k++] = '_'; char d[6]; int dl = 0, x = n; while (x) { d[dl++] = (char)('0' + x % 10); x /= 10; } while (dl) name[k++] = d[--dl]; }
+        const char *ext = ".TXT"; while (*ext) name[k++] = *ext++;
+        name[k] = 0;
+        int taken = 0;
+        for (int i = 0; i < FS_MAX_FILES; i++) if (fs_doc_names[i][0] && mwfs_name_eq(fs_doc_names[i], name)) { taken = 1; break; }
+        if (!taken && mwfs_dir_lookup(v, dino, name, 0, 0) == MWFS_E_NOENT) {
+            fs_strcpy_fixed(fs_doc_names[slot], name, sizeof fs_doc_names[slot]);
+            fs_doc_tab[slot].used = 0;
+            return slot;
+        }
     }
     return -1;
 }
-
-/* ============================================================
- * Program storage -- four slots for loadable .mwp flat binaries, kept
- * entirely separate from the document slots above (different base LBA,
- * different slot size, different name list) because a program and a
- * saved Notepad document have nothing in common except both being
- * "bytes on disk": a document is arbitrary text with no length limit
- * beyond FS_MAX_FILE_BYTES, while a program is machine code that has
- * to end up loaded at a specific address and jumped to -- see
- * kernel/mwp.h for the loader that actually does that jump. Reusing
- * the document slots for this would mean either shrinking every
- * document to fit a program-sized budget or growing every document
- * slot to a program-sized one for no reason; a second, differently-
- * sized set of slots is the honest fix.
- * ============================================================ */
-#define PROG_BASE_LBA       1065
-#define PROG_SLOT_SECTORS   49     /* 1 header + 48 data sectors per slot */
-#define PROG_DATA_SECTORS   48
-#define PROG_MAX_BYTES      (PROG_DATA_SECTORS * 512)  /* 24576 bytes -- see
-                             * kernel/mwp.h for why a loadable program is
-                             * capped this small: it's not a filesystem
-                             * limit so much as "how big a hand-written
-                             * flat binary with no libc has any business
-                             * being" */
-#define PROG_MAX_SLOTS      4
-#define PROG_NAME_MAXLEN    24     /* e.g. "GREETER.MWP" -- room to spare */
-
-static inline u32 prog_slot_header_lba(int slot) { return PROG_BASE_LBA + (u32)slot * PROG_SLOT_SECTORS; }
-static inline u32 prog_slot_data_lba(int slot)   { return prog_slot_header_lba(slot) + 1; }
-
-/* Same magic-number-in-the-header trick as fs_check_slot() above, but a
- * different magic value on purpose -- a program slot and a document
- * slot should never be mistaken for each other even though they're
- * both "a header sector with a length in it" at a glance. The header
- * also carries an entry_offset (see kernel/mwp.h): almost always 0
- * (execution starts at the very first byte, same as this kernel's own
- * boot/stage2.asm jumping to byte 0 of the loaded kernel), but kept as
- * a real field rather than assumed, in case a future program ever
- * wants a few bytes of header/metadata of its own before its code
- * starts. */
-#define PROG_MAGIC 0x50575732u /* "2WWP" little-endian -> reads "PWW2" in
-                                 * a hex dump; distinct from FS_MAGIC's
-                                 * "1WST" so the two slot kinds can never
-                                 * collide even if something ever reads
-                                 * the wrong base LBA by mistake */
-
-/* Program-area journal replay: same lazy scheme as fs_doc_recover(). */
-static int fs_prog_journal_ok = 0;
-static inline void prog_recover(void) {
-    if (fs_prog_journal_ok) return;
-    if (fsj_recover(PROG_JOURNAL_LBA, PROG_BASE_LBA, PROG_SLOT_SECTORS, PROG_MAX_SLOTS, PROG_MAGIC)) fs_prog_journal_ok = 1;
-}
-
-static inline int prog_check_slot(int slot, u32 *out_len, u32 *out_entry_offset, char *out_name) {
-    if (slot < 0 || slot >= PROG_MAX_SLOTS) return 0;
-    prog_recover();
-    /* Zeroed by hand, one byte at a time, rather than the more obvious
-     * `u8 header[512] = {0};` -- found the hard way that this specific
-     * kernel build turns that zero-initializer into an inlined bulk-zero
-     * sequence (this freestanding build has no memset() to call out to,
-     * so GCC synthesizes one inline) whose side effects were somehow
-     * corrupting the very next inb()/outb() port I/O this function does
-     * inside ata_read_sector() -- reads that reported success but
-     * silently came back all-zero, reproducing on literally every
-     * second call to this function within the same boot. A plain
-     * counted loop compiles to ordinary stores with no such side
-     * effect, and the corruption stopped completely once this replaced
-     * the initializer. Exact mechanism not fully chased down (something
-     * about the generated zeroing sequence and this kernel's inline-asm
-     * I/O primitives disagreeing about register or flag state, most
-     * likely), but the fix is confirmed solid by direct testing: see
-     * this project's history for the debugging session that found it. */
-    u8 header[512];
-    for (int z = 0; z < 512; z++) header[z] = 0;
-    if (!ata_read_sector(prog_slot_header_lba(slot), header)) return 0;
-    u32 magic = *(u32*)(header + 0);
-    if (magic != PROG_MAGIC) return 0;
-    u32 len = *(u32*)(header + 4);
-    if (len > PROG_MAX_BYTES) return 0;   /* damaged header: no save can write this length */
-    if (out_len) *out_len = len;
-    if (out_entry_offset) *out_entry_offset = *(u32*)(header + 8);
-    if (out_name) fs_strcpy_fixed(out_name, (const char*)(header + 12), PROG_NAME_MAXLEN);
+static inline int fs_store_named(int slot, const char *name, const char *data, u32 len) {
+    mwfs_vol_t *v = fs_root();
+    u32 dino;
+    if (!v || slot < 0 || slot >= FS_MAX_FILES || len > FS_MAX_FILE_BYTES || !fs_dir_ino("docs", &dino)) return 0;
+    if (mwfs_file_put(v, dino, name, (const u8 *)data, len, 0) != MWFS_OK) return 0;
+    u32 ino = 0;
+    mwfs_dir_lookup(v, dino, name, &ino, 0);
+    if (fs_doc_tab[slot].used && !mwfs_name_eq(fs_doc_names[slot], name)) mwfs_unlink(v, dino, fs_doc_names[slot]);    /* Save As: the old name goes */
+    for (int i = 0; i < FS_MAX_FILES; i++) if (i != slot && fs_doc_names[i][0] && mwfs_name_eq(fs_doc_names[i], name)) { fs_doc_tab[i].used = 0; fs_doc_names[i][0] = 0; }
+    fs_strcpy_fixed(fs_doc_names[slot], name, sizeof fs_doc_names[slot]);
+    fs_doc_tab[slot].used = 1; fs_doc_tab[slot].ino = ino; fs_doc_tab[slot].len = len;
     return 1;
 }
-
-/* Writes a whole program binary into `slot` under `name`, starting execution at `entry_offset` bytes into the
- * file (0 for the overwhelming common case of "the file IS the program, starting at byte 0"). A program over
- * PROG_MAX_BYTES is refused (returns 0, nothing written) rather than cut short and reported as saved -- a
- * program missing its tail is a crash waiting for someone to type `run`. Journaled exactly like documents (see
- * fsj_save()): an interrupted save leaves the old program or the complete new one, never half of each. */
-static inline int prog_save_slot(int slot, const char *name, const u8 *data, u32 len, u32 entry_offset) {
-    if (slot < 0 || slot >= PROG_MAX_SLOTS) return 0;
-    if (len > PROG_MAX_BYTES) return 0;
-    prog_recover();
-    if (!fs_prog_journal_ok) return 0;
-
-    u8 header[512];
-    fs_zero(header, 512);
-    *(u32*)(header + 0) = PROG_MAGIC;
-    *(u32*)(header + 4) = len;
-    *(u32*)(header + 8) = entry_offset;
-    fs_strcpy_fixed((char*)(header + 12), name, PROG_NAME_MAXLEN);
-    int ok = fsj_save(PROG_JOURNAL_LBA, PROG_BASE_LBA, PROG_SLOT_SECTORS, slot, header, data, len);
-    if (!ok) fs_prog_journal_ok = 0;
+static inline int fs_save_slot(int slot, const char *data, u32 len) {
+    if (slot < 0 || slot >= FS_MAX_FILES || !fs_doc_names[slot][0]) return 0;
+    char name[FS_NAME_MAXLEN + 1];
+    fs_strcpy_fixed(name, fs_doc_names[slot], sizeof name);
+    int ok = fs_store_named(slot, name, data, len);
+    if (!ok && !fs_doc_tab[slot].used) fs_doc_names[slot][0] = 0;       /* a reservation that never became a file is released */
     return ok;
 }
-
-/* Reads a program's bytes into dst (must have room for PROG_MAX_BYTES --
- * callers pass the fixed load-region buffer from kernel/mwp.h, never
- * something smaller). All-or-nothing: returns the program's full length
- * once EVERY byte has come back, and 0 if the slot's empty, the buffer
- * is too small for the whole thing, or any sector read fails along the
- * way. It used to return however many bytes it had managed before a
- * failing sector, and mwp_run() happily jumped into a half-loaded
- * program -- the unloaded tail being whatever garbage RAM held. A short
- * read is not "a smaller program", it's a broken one. */
-static inline u32 prog_load_slot(int slot, u8 *dst, u32 maxlen) {
+static inline int fs_save_slot_as(int slot, const char *name, const char *data, u32 len) {
+    if (!fs_name_ok(name)) return 0;
+    return fs_store_named(slot, name, data, len);
+}
+static inline int fs_delete_slot(int slot) {
+    mwfs_vol_t *v = fs_root();
+    u32 dino;
+    if (!v || !fs_check_slot(slot, 0) || !fs_dir_ino("docs", &dino)) return 0;
+    if (mwfs_unlink(v, dino, fs_doc_names[slot]) != MWFS_OK) return 0;
+    fs_doc_tab[slot].used = 0; fs_doc_names[slot][0] = 0;
+    return 1;
+}
+/* Reads a document whole: 1 and *out_len on success; 0 if it is missing, damaged (CRC mismatch) or longer than maxlen. */
+static inline int fs_read_slot(int slot, char *dst, u32 maxlen, u32 *out_len) {
+    mwfs_vol_t *v = fs_root();
     u32 len = 0;
-    if (!prog_check_slot(slot, &len, 0, 0)) return 0;
-    if (len == 0 || len > maxlen) return 0;   /* truncating a program to fit is just a slower crash */
+    if (!v || !fs_check_slot(slot, &len) || len > maxlen) return 0;
+    if (!mwfs_file_verify(v, fs_doc_tab[slot].ino)) return 0;
+    if (mwfs_file_get(v, fs_doc_tab[slot].ino, (u8 *)dst, maxlen, &len) != MWFS_OK) return 0;
+    if (out_len) *out_len = len;
+    return 1;
+}
+static inline u32 fs_load_slot(int slot, char *dst, u32 maxlen) { u32 len = 0; return fs_read_slot(slot, dst, maxlen, &len) ? len : 0; }
+static inline int fs_verify_slot(int slot) { mwfs_vol_t *v = fs_root(); return v && fs_check_slot(slot, 0) && mwfs_file_verify(v, fs_doc_tab[slot].ino); }
 
-    u32 want_crc = 0;
-    int commit = fs_read_commit(prog_slot_header_lba(slot), &want_crc);
-    if (commit == 0) return 0;
+/* ============================================================ programs: /progs, as slots */
+static struct { u8 used; u32 ino, len, entry; } prog_tab[PROG_MAX_SLOTS];
+static char prog_names[PROG_MAX_SLOTS][PROG_NAME_MAXLEN + 1];
 
-    u32 remaining = len;
-    u8 *dstp = dst;
-    u32 data_lba = prog_slot_data_lba(slot);
-    u32 crc = 0xFFFFFFFFu;
-    for (int s = 0; s < PROG_DATA_SECTORS && remaining > 0; s++) {
-        u8 sector[512];
-        if (!ata_read_sector(data_lba + s, sector)) return 0;   /* partial program: refuse the whole thing */
-        u32 chunk = remaining > 512 ? 512 : remaining;
-        crc = fs_crc32_update(crc, sector, chunk);
-        for (u32 i = 0; i < chunk; i++) dstp[i] = sector[i];
-        dstp += chunk;
-        remaining -= chunk;
+static inline void fs_rescan_progs(void) {
+    mwfs_vol_t *v = fs_root();
+    u8 seen[PROG_MAX_SLOTS];
+    for (int i = 0; i < PROG_MAX_SLOTS; i++) seen[i] = 0;
+    u32 dino;
+    if (v && fs_dir_ino("progs", &dino)) {
+        mwfs_dirent_t e;
+        for (u32 idx = 0; mwfs_dir_nth(v, dino, idx, &e) == 1; idx++) {
+            if (e.type != MWFS_T_FILE) continue;
+            int n = 0; while (e.name[n]) n++;
+            if (n > PROG_NAME_MAXLEN) continue;
+            int slot = -1;
+            for (int i = 0; i < PROG_MAX_SLOTS; i++) if (prog_names[i][0] && mwfs_name_eq(prog_names[i], e.name)) { slot = i; break; }
+            if (slot < 0) for (int i = 0; i < PROG_MAX_SLOTS; i++) if (!prog_names[i][0]) { slot = i; break; }
+            if (slot < 0) continue;
+            mwfs_ino_t t;
+            if (!mwfs_ino_get(v, e.ino, &t)) continue;
+            fs_strcpy_fixed(prog_names[slot], e.name, sizeof prog_names[slot]);
+            prog_tab[slot].used = 1; prog_tab[slot].ino = e.ino; prog_tab[slot].len = t.size; prog_tab[slot].entry = t.aux;
+            seen[slot] = 1;
+        }
     }
-    if (remaining != 0) return 0;                  /* ran out of slot sectors before running out of program */
-    if (commit == 2 && ~crc != want_crc) return 0; /* bytes differ from what was saved: never run them */
+    for (int i = 0; i < PROG_MAX_SLOTS; i++) if (prog_tab[i].used && !seen[i]) { prog_tab[i].used = 0; prog_names[i][0] = 0; }
+}
+static inline void prog_recover(void) { }
+static inline int prog_check_slot(int slot, u32 *out_len, u32 *out_entry_offset, char *out_name) {
+    if (slot < 0 || slot >= PROG_MAX_SLOTS || !prog_tab[slot].used) return 0;
+    if (out_len) *out_len = prog_tab[slot].len;
+    if (out_entry_offset) *out_entry_offset = prog_tab[slot].entry;
+    if (out_name) fs_strcpy_fixed(out_name, prog_names[slot], PROG_NAME_MAXLEN + 1);
+    return 1;
+}
+static inline int prog_find_by_name(const char *name) {
+    for (int i = 0; i < PROG_MAX_SLOTS; i++) if (prog_tab[i].used && mwfs_name_eq(prog_names[i], name)) return i;
+    return -1;
+}
+static inline int prog_find_empty_slot(void) {
+    for (int i = 0; i < PROG_MAX_SLOTS; i++) if (!prog_names[i][0]) return i;
+    return -1;
+}
+static inline int prog_save_slot(int slot, const char *name, const u8 *data, u32 len, u32 entry_offset) {
+    mwfs_vol_t *v = fs_root();
+    u32 dino;
+    int n = 0; while (name[n]) n++;
+    if (!v || slot < 0 || slot >= PROG_MAX_SLOTS || len == 0 || len > PROG_MAX_BYTES || n > PROG_NAME_MAXLEN || entry_offset >= len || !fs_dir_ino("progs", &dino)) return 0;
+    if (mwfs_file_put(v, dino, name, data, len, entry_offset) != MWFS_OK) return 0;
+    fs_rescan_progs();
+    return 1;
+}
+static inline u32 prog_load_slot(int slot, u8 *dst, u32 maxlen) {
+    mwfs_vol_t *v = fs_root();
+    u32 len = 0;
+    if (!v || !prog_check_slot(slot, &len, 0, 0) || len == 0 || len > maxlen) return 0;
+    if (!mwfs_file_verify(v, prog_tab[slot].ino)) return 0;                 /* never run bytes that do not match what was saved */
+    if (mwfs_file_get(v, prog_tab[slot].ino, dst, maxlen, &len) != MWFS_OK) return 0;
     return len;
 }
-
-/* Same health check as fs_verify_slot() for a program: valid header, readable sectors, matching CRC. */
-static inline int prog_verify_slot(int slot) {
-    u32 len = 0;
-    if (!prog_check_slot(slot, &len, 0, 0)) return 0;
-    u32 want = 0;
-    int commit = fs_read_commit(prog_slot_header_lba(slot), &want);
-    if (commit == 0) return 0;
-    u32 remaining = len, crc = 0xFFFFFFFFu, lba = prog_slot_data_lba(slot);
-    for (int s = 0; s < PROG_DATA_SECTORS && remaining > 0; s++) {
-        u8 sector[512];
-        if (!ata_read_sector(lba + s, sector)) return 0;
-        u32 chunk = remaining > 512 ? 512 : remaining;
-        crc = fs_crc32_update(crc, sector, chunk);
-        remaining -= chunk;
-    }
-    if (remaining != 0) return 0;
-    return commit == 2 ? (~crc == want) : 1;
-}
-
-/* Erases a program slot by zeroing its header (any pending journaled save is settled first, so it cannot bring
- * the program back). Returns 1 if the header was cleared. */
+static inline int prog_verify_slot(int slot) { mwfs_vol_t *v = fs_root(); return v && prog_tab[slot < 0 ? 0 : slot].used && slot >= 0 && slot < PROG_MAX_SLOTS && mwfs_file_verify(v, prog_tab[slot].ino); }
 static inline int prog_delete_slot(int slot) {
-    if (slot < 0 || slot >= PROG_MAX_SLOTS) return 0;
-    prog_recover();
-    u8 header[512];
-    fs_zero(header, 512);
-    return ata_write_sector(prog_slot_header_lba(slot), header);
-}
-
-/* Looks a program up by name (case-sensitive, exact match against
- * whatever prog_save_slot() wrote) -- this is what Terminal.mwp's `run`
- * command actually calls; it doesn't want to know slot numbers exist. */
-static inline int prog_find_by_name(const char *name) {
-    for (int i = 0; i < PROG_MAX_SLOTS; i++) {
-        char existing[PROG_NAME_MAXLEN];
-        u32 len;
-        if (!prog_check_slot(i, &len, 0, existing)) continue;
-        int match = 1;
-        for (int j = 0; ; j++) {
-            if (existing[j] != name[j]) { match = 0; break; }
-            if (existing[j] == 0) break;
-        }
-        if (match) return i;
-    }
-    return -1;
-}
-
-static inline int prog_find_empty_slot(void) {
-    for (int i = 0; i < PROG_MAX_SLOTS; i++) {
-        u32 len;
-        if (!prog_check_slot(i, &len, 0, 0)) return i;
-    }
-    return -1;
+    mwfs_vol_t *v = fs_root();
+    u32 dino;
+    if (!v || !prog_check_slot(slot, 0, 0, 0) || !fs_dir_ino("progs", &dino)) return 0;
+    if (mwfs_unlink(v, dino, prog_names[slot]) != MWFS_OK) return 0;
+    prog_tab[slot].used = 0; prog_names[slot][0] = 0;
+    return 1;
 }
 
 /* ============================================================
@@ -681,16 +280,10 @@ static inline int prog_find_empty_slot(void) {
  * than needing a save function this file would otherwise have to
  * expose and maintain for a single external caller.
  * ============================================================ */
-#define ICON_BASE_LBA        1261
+#define ICON_BASE_LBA        1029
 #define ICON_SLOT_SECTORS    11    /* 1 header + 8 data (32x32) + 2 data (16x16) */
 #define ICON_MAX_SLOTS       64    /* the current bundle has 61 distinct icons; 3 spare */
 #define ICON_NAME_MAXLEN     24    /* e.g. "TYPESCRIPT_CODE" -- room to spare */
-
-/* Compile-time guard: the journals must start after the icon catalog ends and the whole installation must fit
- * os-inst's fixed 2048-sector layout. (build.sh checks the same things before compiling; this makes a
- * miscalculated edit fail even when only this header is compiled, as the host tests do.) */
-typedef char fs_layout_journals_after_icons[(FS_JOURNAL_LBA >= ICON_BASE_LBA + ICON_MAX_SLOTS * ICON_SLOT_SECTORS) ? 1 : -1];
-typedef char fs_layout_fits_install_size[(PROG_JOURNAL_LBA + 1 + 48 <= 2048) ? 1 : -1];
 
 #define ICON_32_BYTES  (32 * 32 * 4)  /* 4096 bytes -- exactly 8 sectors, no padding */
 #define ICON_16_BYTES  (16 * 16 * 4)  /* 1024 bytes -- exactly 2 sectors, no padding */

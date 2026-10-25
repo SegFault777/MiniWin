@@ -97,7 +97,12 @@ at `base` matches:
 
 If nothing matches (booted from a bus this build cannot drive) the kernel falls back to ide1 with the base applied, and
 logs it. The result is the pair `blk_boot_dev` / `blk_boot_base`; `ata_read_sector()` and `ata_write_sector()` use them, so
-the filesystem, the icon catalog and the program loader need no change. The serial port logs
+the icon catalog and the program loader need no change.
+
+Once the boot disk is known, `kernel_boot()` mounts the **root volume** (`fs_boot_mount()` in `kernel/fs.h`: an MWFS at LBA
+`MW_ROOTFS_LBA` of the installation, as long as the superblock says), re-reads `/docs` and `/progs` into the desktop's slot indexes
+and, a little earlier, starts the USB host controllers (`usb_init()`), so a USB keyboard works as soon as the desktop is up. If the
+root volume cannot be mounted the desktop still starts (without documents) and MiniShell says why; the serial port logs
 `[BOOT] installation base LBA <n> on <type><k>` (`ide1`, `sata2`, ...).
 
 ## The optional chain loader (`boot/chain_mbr.asm`)

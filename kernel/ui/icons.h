@@ -137,7 +137,7 @@ static void draw_desktop_icon2(void) {
     draw_icon_with_label(ICON2_X, ICON2_Y, ICONC_SETTING, "SETTING", 7, ".MWP", 4);
 }
 
-/* WEB.MWP -- the third cell. Double-clicking opens
+/* MINIWEB.MWP -- the third cell. Double-clicking opens
  * MiniWeb, the small HTTP client browser built on kernel/http.h and
  * kernel/tcp.h -- this OS's actual "layer above the network stack,"
  * not just a diagnostic harness proving the stack works. */
@@ -147,10 +147,10 @@ static void draw_desktop_icon2(void) {
 #define ICON3_H  ICON_H
 
 static void draw_desktop_icon3(void) {
-    draw_icon_with_label(ICON3_X, ICON3_Y, ICONC_WEB, "WEB", 3, ".MWP", 4);
+    draw_icon_with_label(ICON3_X, ICON3_Y, ICONC_WEB, "MINIWEB", 7, ".MWP", 4);
 }
 
-/* TERMINAL.MWP -- the fourth cell (it used to be
+/* MINISHELL.MWP -- the fourth cell (it used to be
  * reachable from the Start Menu only, because Terminal.png hadn't been
  * supplied yet). Double-click opens the command-line window. */
 #define ICON4_X  DESK_CELL_X(3)
@@ -159,7 +159,7 @@ static void draw_desktop_icon3(void) {
 #define ICON4_H  ICON_H
 
 static void draw_desktop_icon4(void) {
-    draw_icon_with_label(ICON4_X, ICON4_Y, ICONC_TERM, "TERMINAL", 8, ".MWP", 4);
+    draw_icon_with_label(ICON4_X, ICON4_Y, ICONC_TERM, "MINISHELL", 9, ".MWP", 4);
 }
 
 /* MINIFILES.MWP -- the fifth cell (the file manager). Double-click opens it. "MINIFILES" is one glyph wider than the slot; the

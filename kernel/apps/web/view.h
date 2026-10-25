@@ -2,7 +2,7 @@
 #ifndef MW_APPS_WEB_VIEW_H
 #define MW_APPS_WEB_VIEW_H
 
-/* apps/web/view.h -- WEB.MWP drawing: window chrome, address bar, page body, scrolling, clicks, form submit.
+/* apps/web/view.h -- MINIWEB.MWP drawing: window chrome, address bar, page body, scrolling, clicks, form submit.
  * (Split out of kernel.c in pre-29; it is still one translation unit, so modules are included by
  * kernel.c in dependency order -- see the module map there.) */
 
@@ -146,21 +146,35 @@ static void draw_web_failure(void) {
 }
 
 /* Draws the rendered page into the window body (the engine clips to it), then the scrollbar. */
+
+/* ---------------------------------------------------------------- MiniWeb's menu bar: the page, the sites, help */
+#define WEB_MENU_N 3
+static const mb_menu_t web_menus[WEB_MENU_N] = {
+    { { "Page",  "\xed\x8e\x98\xec\x9d\xb4\xec\xa7\x80" }, 4, { { "Reload", "\xec\x83\x88\xeb\xa1\x9c\xea\xb3\xa0\xec\xb9\xa8" }, { "Address bar", "\xec\xa3\xbc\xec\x86\x8c\xec\xb0\xbd" }, { "Top of page", "\xeb\xa7\xa8 \xec\x9c\x84\xeb\xa1\x9c" }, { "Close window", "\xec\xb0\xbd \xeb\x8b\xab\xea\xb8\xb0" } } },
+    { { "Sites", "\xec\x82\xac\xec\x9d\xb4\xed\x8a\xb8" }, 2, { { "PyPI (HTTPS)", "PyPI (HTTPS)" }, { "Gateway (HTTP)", "\xea\xb2\x8c\xec\x9d\xb4\xed\x8a\xb8\xec\x9b\xa8\xec\x9d\xb4 (HTTP)" } } },
+    { { "Help",  "\xeb\x8f\x84\xec\x9b\x80\xeb\xa7\x90" }, 1, { { "About MiniWeb", "MiniWeb \xec\xa0\x95\xeb\xb3\xb4" } } },
+};
+static void web_menu_action(int menu, int item) {
+    if (menu == 0) {
+        if (item == 0) { if (web_urlbar_buf[0]) web_go_url(); }                      /* fetch whatever the address bar holds, again */
+        else if (item == 1) { web_urlbar_focused = 1; rd_focus = 0; }
+        else if (item == 2) web_scroll_by(-1000000);
+        else { web_win.open = 0; win_z_remove(WIN_ID_WEB); }
+    } else if (menu == 1) {
+        web_urlbar_focused = 0;
+        web_go(item == 0 ? WEB_SITE_PYPI : WEB_SITE_GATEWAY);
+    } else {
+        status = "MINIWEB.MWP - MiniWin's browser: HTTP, HTTPS (TLS 1.2), HTML5";
+    }
+}
+
 static void draw_web_page(void) {
     web_ensure_layout();
     int bx, by, bw, bh;
     web_body_geom(&bx, &by, &bw, &bh);
     rd_paint(bx, by, bw, bh, web_scroll_px);
 
-    /* scrollbar: a track, and a thumb sized/placed by how much of the page is in view */
-    int sx = web_win.x + web_win.w - 3 - WEB_SB_W;
-    int total = web_doc_h > 0 ? web_doc_h : 1;
-    int thumb_h = total <= bh ? bh : (bh * bh) / total;
-    if (thumb_h < 10) thumb_h = 10;
-    int travel = bh - thumb_h;
-    int max_scroll = total > bh ? total - bh : 0;
-    int thumb_y = by + (max_scroll > 0 ? (travel * web_scroll_px) / max_scroll : 0);
-    ui_scrollbar(sx, by, WEB_SB_W, bh, thumb_y, thumb_h);
+    sb_draw(WIN_ID_WEB);                              /* the scroll bar (ui/scrollbar.h; geometry in ui/scroll_targets.h) */
 }
 
 /* A form was submitted (a button clicked, or Enter pressed in a text field): build the query string and
@@ -196,14 +210,7 @@ static int web_page_click(int mx, int my) {
     int bx, by, bw, bh;
     web_body_geom(&bx, &by, &bw, &bh);
     if (!in_rect(mx, my, bx, by, bw + WEB_SB_W, bh)) return 0;
-    if (mx >= bx + bw) {                              /* the scrollbar: a click jumps to that proportional spot */
-        int max_scroll = web_doc_h > bh ? web_doc_h - bh : 0;
-        if (max_scroll > 0) {
-            int target = ((my - by) * max_scroll) / (bh > 0 ? bh : 1);
-            web_scroll_px = 0; web_scroll_by(target);
-        }
-        return 1;
-    }
+    if (mx >= bx + bw) return 1;                      /* the scroll bar: ui/input.h gave it the press already (sb_press) */
     if (!web_page_ready) return 1;
     u32 node;
     int hit = rd_hit(mx - bx, my - by + web_scroll_px, &node);
@@ -238,11 +245,12 @@ static int web_page_click(int mx, int my) {
 static void draw_web_window(void) {
     int wx = web_win.x, wy = web_win.y, ww = web_win.w, wh = web_win.h;
 
-    ui_window_frame(wx, wy, ww, wh, web_win.maximized, "WEB.MWP");
+    ui_window_frame(wx, wy, ww, wh, web_win.maximized, "MINIWEB.MWP");
     ui_titlebar_buttons(web_btn_min_x(), web_btn_max_x(), web_btn_close_x(), web_btn_y(),
                         pressed_btn_kind == BTN_MIN && pressed_btn_win == WIN_ID_WEB,
                         pressed_btn_kind == BTN_MAX && pressed_btn_win == WIN_ID_WEB,
                         pressed_btn_kind == BTN_CLOSE && pressed_btn_win == WIN_ID_WEB);
+    mb_draw_bar(WIN_ID_WEB, wx, wy, ww, web_menus, WEB_MENU_N);
 
     /* URL bar: a sunken text field with a GO button, sitting above the
      * bookmark rows -- see web_urlbar_* geometry helpers above. Sunken
@@ -339,6 +347,7 @@ static void draw_web_window(void) {
      * by the status line above) */
     if (web_page_ready && !web_resolving && !web_dns_failed) draw_web_page();
     else if (!web_resolving) draw_web_failure();   /* a DNS / connection / TLS failure explains itself */
+    mb_draw_drop(WIN_ID_WEB, wx, wy, web_menus, WEB_MENU_N);
 }
 
 #endif

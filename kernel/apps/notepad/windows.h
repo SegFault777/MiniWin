@@ -38,6 +38,8 @@ typedef struct {
     int  confirm_mode;               /* CONFIRM_NONE / CONFIRM_NEW / CONFIRM_CLOSE / CONFIRM_SAVEAS, this window's own */
     char saveas_name[FS_NAME_MAXLEN + 1];   /* the Save As dialog's file-name field */
     int  saveas_len;
+    int  scroll;                     /* first visible wrapped row of the text */
+    u32  scroll_len;                 /* text_len when the view last followed the typing (see draw_window) */
 } notepad_t;
 
 static notepad_t notepads[NOTEPAD_MAX];
@@ -48,7 +50,7 @@ static notepad_t *active_np = &notepads[0];
  *
  * A "window id" is just 0..NOTEPAD_MAX-1 for notepads[id], or
  * WIN_ID_SETTING for the Setting window, WIN_ID_WEB for the MiniWeb
- * browser window, or WIN_ID_TERMINAL for Terminal.mwp -- one small
+ * browser window, or WIN_ID_TERMINAL for MiniShell.mwp -- one small
  * integer namespace covering every top-level window in the OS, so the
  * taskbar, z-order, and focus-on-click logic can all treat "which
  * window" generically instead of hardcoding every app by name at every

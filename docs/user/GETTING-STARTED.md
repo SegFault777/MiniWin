@@ -36,7 +36,7 @@ shows a message starting with `MiniWin ERROR MW-...`, [TROUBLESHOOTING.md](TROUB
 1. After a few seconds the desktop appears: a column of icons on the left, a taskbar at the bottom.
 2. **Double-click NOTEPAD**, type something, press **Ctrl+S**. The document is saved on the disk image and a new icon for it appears
    on the desktop. (File > Save As lets you choose its name.)
-3. **Double-click TERMINAL** and type `fetch` and Enter: it lists what MiniWin found about the machine (CPU, graphics, memory, disk,
+3. **Double-click MINISHELL** and type `fetch` and Enter: it lists what MiniWin found about the machine (CPU, graphics, memory, disk,
    network). Type `?` for all commands.
 4. Open the **start menu** (bottom-left) for the apps and for Shut Down / Restart. Shut Down really powers a virtual machine off.
 5. **Double-click MINIFILES** to see your documents, programs and disks.
@@ -47,6 +47,6 @@ running `tools/install_all.sh` or `./build.sh` again starts from a fresh image.
 ## Where to go next
 
 * [DESKTOP-AND-APPS.md](DESKTOP-AND-APPS.md) -- the desktop, windows and every app
-* [TERMINAL.md](TERMINAL.md) -- all Terminal commands
+* [TERMINAL.md](TERMINAL.md) -- all MiniShell commands
 * [FILES-AND-DISKS.md](FILES-AND-DISKS.md) -- documents, programs, disks, installing MiniWin onto another disk
 * [FAQ.md](FAQ.md) -- short answers (real hardware? USB? 64-bit?)

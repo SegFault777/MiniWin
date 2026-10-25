@@ -19,13 +19,19 @@ No, it is a 32-bit (i386) system. A 64-bit version is planned for later; there i
 **Can it run Windows or Linux programs?**
 No. It runs its own tiny `.MWP` programs, written in C against a small API ([MWP-PROGRAMS.md](../dev/MWP-PROGRAMS.md)).
 
-**Why only four documents and four programs?**
-The first file system is a fixed set of slots, chosen to keep it small and crash-safe. A real file system with directories and
-mounted disks is planned and will remove the limits.
+**How many documents and programs can I keep?**
+As many as the disk has room for: MiniWin has a real file system (directories, files that grow, other disks mounted under `/mnt`; see
+[FILES-AND-DISKS.md](FILES-AND-DISKS.md)). A document is limited to 4 KB because that is what Notepad holds, a program to 24 KB. The
+desktop shows the first 64 documents and 32 programs.
 
 **Is my data safe if the power goes out while saving?**
-Saves are journalled: after a power cut you get either the complete old document or the complete new one, not a mixture. (Tested
-with simulated power cuts at every sector.)
+A save writes the new version completely before the name is switched over, so after a power cut you get either the complete old
+document or the complete new one, not a mixture; at worst some unreachable leftovers remain, and `part check <id> fix` gives them
+back. (Tested with simulated power cuts at every sector of every operation.)
+
+**Does it work with a USB keyboard and mouse?**
+Yes: xHCI, EHCI and OHCI controllers are driven, with keyboards, mice (including the wheel) and "USB tablets"; `lsusb` shows what was
+found. USB hubs, USB sticks/drives and Intel UHCI controllers are not supported yet.
 
 **Can I install it onto a real disk?**
 `os-inst` can write MiniWin onto another disk or partition that MiniWin can see (IDE, SATA, SCSI, NVMe). It is careful -- it refuses

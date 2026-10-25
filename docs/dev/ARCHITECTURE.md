@@ -57,11 +57,12 @@ below the stack's guard band.
 
 ## Disk layout and crash safety
 
-The disk map lives in the header comment of `kernel/fs.h` (boot sector, kernel, 4 document slots, 4 program slots,
-the icon catalog, two write-ahead **journals** at LBA 1877-1934, free headroom after that). Every save goes
-journal first, then the live slot, with a CRC-32 commit record in the header sector (`fsj_save()`); an interrupted
-save leaves either the old file or the whole new one, and loads verify the CRC. See the block comment above
-`FS_HDR_CRC_OFF` in `fs.h`.
+The disk map lives in the header comment of `kernel/fs.h`: boot sector, stage 2, the kernel, the icon catalog, and then the
+**root volume** -- an **MWFS** file system (`kernel/mwfs.h`, namespace and mounts in `kernel/vfs.h`) with directories of any depth,
+files that grow and a free-space bitmap. There is no journal: a save builds the new file in a fresh inode and one directory-entry
+sector write switches the name over, so an interruption leaves the old file or the whole new one and, at worst, garbage that
+`part check <id> fix` collects; every file carries a CRC-32 that loads verify. The old "slot" API survives in `fs.h` as an index of
+`/docs` and `/progs` for the desktop, Notepad and MiniFiles. Details: [DISK-LAYOUT.md](DISK-LAYOUT.md).
 
 ## Network input is validated at every layer
 
@@ -77,7 +78,8 @@ checks has a negative test in `tools/test/host_critical_test.c` (or `run_host_x5
 | HTML engine (DOM, CSS, layout, forms) | `tools/test/run_host_engine.sh` — assertions + an ASan/UBSan fuzzer, all on the build host |
 | HTTP response/request handling | `tools/test/run_host_web.sh` |
 | crypto + trust store | `tools/test/run_host_crypto.sh` |
-| ATA timeouts, crash-safe saves (power cut injected after every sector write), TCP/ARP/DNS/DHCP/TLS-record validation | `tools/test/run_host_critical.sh` — the real kernel headers against a fake ATA controller / NIC / RTC |
+| ATA timeouts, program loads that must not accept a partial read, TCP/ARP/DNS/DHCP/TLS-record validation | `tools/test/run_host_critical.sh` — the real kernel headers against a fake ATA controller / NIC / RTC |
+| the file system: files, directories, mounts, a model-checked random run and a power cut after every possible sector write of every operation | `tools/test/run_host_mwfs.sh` |
 | certificate extensions (critical, keyUsage, CA) | `tools/test/run_host_x509.sh` — OpenSSL-generated certificate variants |
 | TLS end to end | `tools/test/tls_e2e.sh` (QEMU + openssl s_server) |
 | **what the user sees** | `tools/test/ui_golden.sh check [theme]` — boots the OS in QEMU, drives a fixed tour (open every app, type, menus, drag, resize, maximize, minimize, restore, dialogs) and compares 15 screenshots **pixel for pixel** with `tools/test/golden*/` |

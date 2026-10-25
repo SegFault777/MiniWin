@@ -159,7 +159,7 @@ static inline int ata_at_identify(const ata_pos_t *p, ata_ident_t *id) {
     if (!(w[49] & 0x0200)) return 0;                        /* no LBA support */
 
     u32 total = (u32)w[60] | ((u32)w[61] << 16);
-    if ((w[83] & 0x0400) && (w[102] | w[103] | w[101])) total = 0x0FFFFFFFu;     /* 48-bit disk bigger than 2^32 sectors */
+    if ((w[83] & 0x0400) && (w[102] | w[103])) total = 0x0FFFFFFFu;             /* 48-bit disk bigger than 2^32 sectors (words 102/103 are bits 32-47 of the count) */
     else if (w[83] & 0x0400) { u32 t48 = (u32)w[100] | ((u32)w[101] << 16); if (t48) total = t48; }
     if (total > 0x0FFFFFFFu) total = 0x0FFFFFFFu;           /* all this driver can address (LBA28) */
     id->sectors = total;

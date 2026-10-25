@@ -26,16 +26,18 @@ TERM_OPEN=("wait 20" "move 50 202" "click" "click" "wait 2" "move 300 307" "clic
 truncate -s 16M $B/whole.img
 run whole "-drive file=$B/src.img,format=raw,if=ide,index=0 -drive file=$B/whole.img,format=raw,if=ide,index=1" \
     "${TERM_OPEN[@]}" "type os-inst ide200" "key ret" "wait 2" "type YES" "key ret" "wait 14"
-python3 - $B/src.img $B/whole.img <<'PY' && ok "whole disk: system sectors copied, user area zero, id patched, nothing past 1 MB touched" || bad "whole disk image check"
+python3 - $B/src.img $B/whole.img <<'PY' && ok "whole disk: system sectors copied, root filesystem formatted over the disk, id patched, data area untouched" || bad "whole disk image check"
 import struct, sys
 src=open(sys.argv[1],'rb').read(); t=open(sys.argv[2],'rb').read()
 sec=lambda d,l: d[l*512:(l+1)*512]
-system=list(range(1,1029))+list(range(1261,1965)); user=list(range(1029,1261))+list(range(1965,2048))
+system=list(range(1,1733))      # boot sector (patched, checked below), stage 2, kernel, icon catalog
 assert all(sec(src,l)==sec(t,l) for l in system), "system sectors differ"
-assert not any(any(sec(t,l)) for l in user), "user area not zero"
+assert sec(t,1733)[:4]==b'MWF2', "no MWFS root volume after the system sectors"
+root_sectors=struct.unpack('<I',sec(t,1733)[8:12])[0]; data_lba=struct.unpack('<I',sec(t,1733)[32:36])[0]
+assert root_sectors==32768-1733, "the root volume fills the rest of the disk (got %d)" % root_sectors
+assert not any(t[(1733+data_lba+2)*512:]), "the volume's data area was written (only the root directory sector may be)"
 b=sec(t,0); assert struct.unpack('<II',b[432:440])[0]==0 and struct.unpack('<I',b[436:440])[0]!=0, "fields"
 assert [i for i in range(512) if sec(src,0)[i]!=b[i]]==[436,437,438,439] or struct.unpack('<I',b[436:440])[0]!=0
-assert not any(t[2048*512:]), "tail touched"
 PY
 run whole_boot "-drive file=$B/whole.img,format=raw,if=ide,index=0" "wait 20" "shot $B/whole_boot.ppm"
 grep -aq "installation base LBA 0 on ide1" $B/serial_whole_boot.log && ok "whole disk boots alone (primary master)" || bad "whole disk boot"
@@ -57,7 +59,12 @@ import struct, sys
 src=open(sys.argv[1],'rb').read(); t=open(sys.argv[2],'rb').read(); chain=open(sys.argv[3],'rb').read()
 base=10240
 sec=lambda d,l: d[l*512:(l+1)*512]
-assert all(sec(src,l)==sec(t,base+l) for l in list(range(1,1029))+list(range(1261,1965)))
+assert all(sec(src,l)==sec(t,base+l) for l in range(1,1733))
+assert sec(t,base+1733)[:4]==b'MWF2', "no MWFS root volume in the partition"
+assert struct.unpack('<I',sec(t,base+1733)[8:12])[0]==8192-1733, "root volume fills the partition"
+data_lba=struct.unpack('<I',sec(t,base+1733)[32:36])[0]
+assert not any(t[(base+1733+data_lba+2)*512:(base+8192)*512]), "partition data area written"
+assert not any(t[(base+8192)*512:]), "past the partition touched"
 assert t[:446]==chain and t[510:512]==b'\x55\xaa'
 assert [t[446+i*16] for i in range(4)]==[0,0x80,0,0]
 assert struct.unpack('<I',sec(t,base)[432:436])[0]==base

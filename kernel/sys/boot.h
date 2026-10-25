@@ -95,6 +95,8 @@ static void kernel_boot(void) {
     mwp_syscalls.key_poll = keyboard_poll_key;
 
     mouse_init();
+    sb_register_all();           /* which windows have scroll bars (ui/scroll_targets.h) */
+    usb_init();                  /* USB host controllers + HID keyboards/mice (kernel/usb/) */
 
     /* If a supported NIC is present, bring the whole network stack up:
      * ARP cache, IPv4, ICMP, UDP, and a DHCP client that goes and asks
@@ -107,6 +109,13 @@ static void kernel_boot(void) {
     if (rtl8139_init() || e1000_init()) {
         net_stack_init();
     }
+
+    /* The root filesystem "/" (MWFS, kernel/mwfs.h): mounted from the tail of the installation, then the slot indexes
+     * the desktop, Notepad and MiniFiles use are filled from /docs and /progs. If it cannot be mounted the desktop still
+     * comes up -- just with no documents -- and the shell says why. */
+    if (fs_boot_mount() != MWFS_OK) serial_puts("[FS] root volume not mounted\n");
+    fs_rescan_docs();
+    fs_rescan_progs();
 
     /* Check for previously-saved files on disk (real, persistent storage
      * via the ATA driver -- this survives across QEMU runs as long as the

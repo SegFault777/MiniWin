@@ -5,8 +5,8 @@
 | page | what is in it |
 |---|---|
 | [Getting started](user/GETTING-STARTED.md) | what you need, build and run, your first five minutes |
-| [Desktop and apps](user/DESKTOP-AND-APPS.md) | the desktop, windows, start menu, Notepad (Save As), Setting, Web |
-| [Terminal](user/TERMINAL.md) | every command, `fetch` explained |
+| [Desktop and apps](user/DESKTOP-AND-APPS.md) | the desktop, windows, start menu, Notepad (Save As), Setting, MiniWeb |
+| [MiniShell](user/TERMINAL.md) | every command (files, `part`, `lsusb`, `os-inst`), `fetch` explained |
 | [Files and disks](user/FILES-AND-DISKS.md) | documents, programs, supported disks and network cards |
 | [MiniFiles](user/MINIFILES.md) | the file manager |
 | [Installing onto a disk](user/INSTALLING.md) | `os-inst`: installing MiniWin onto another disk or partition |

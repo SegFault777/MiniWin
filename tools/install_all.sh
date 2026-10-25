@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-only
 # One-shot "put everything back after build.sh" -- build.sh rebuilds
-# os-image.img from scratch, which wipes the program slot (GREETER.MWP)
+# os-image.img from scratch, which wipes the root filesystem (GREETER.MWP in /progs)
 # and the icon catalog. Forgetting to redo both is a regression this
 # project has already hit once (`apps` said "no programs installed").
 # Run this straight after every ./build.sh:

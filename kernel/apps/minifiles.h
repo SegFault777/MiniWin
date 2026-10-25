@@ -10,7 +10,7 @@
  *          "Health" is real: fs_verify_slot()/prog_verify_slot() read the whole thing and check its CRC-32, so a
  *          file that would open as garbage is shown as DAMAGED instead of looking fine.
  *   DISKS  the IDE disks and their partitions with the id each one is called by (the argument of the terminal's
- *          `os-inst`). INSTALL does not install anything by itself: it opens the Terminal with `os-inst <id>` typed
+ *          `os-inst`). INSTALL does not install anything by itself: it opens MiniShell with `os-inst <id>` typed
  *          in, so the one place that asks for a confirmation (and prints the progress) stays the Terminal.
  *
  * Window plumbing follows Terminal's pattern exactly (window.h / windows.h / taskbar.h / compose.h / input.h
@@ -20,7 +20,7 @@
 #define FILES_TAB_FILES 0
 #define FILES_TAB_DISKS 1
 
-#define FILES_MAX_ROWS   28
+#define FILES_MAX_ROWS   100     /* up to FS_MAX_FILES documents + PROG_MAX_SLOTS programs (kernel/fs.h) */
 #define FILES_ROW_H      18      /* 16-pixel icon + 1 pixel above and below */
 #define FILES_BTN_H      17
 #define FILES_NAME_MAX   24
@@ -119,7 +119,7 @@ static int files_titlebar_drag_hit(int px, int py) {
 }
 
 #define FILES_TAB_W 66
-static inline int files_tab_y(void)  { return files_win.y + TITLEBAR_H + 4; }
+static inline int files_tab_y(void)  { return files_win.y + TITLEBAR_H + MB_H + 4; }
 static inline int files_tab_x(int i) { return files_win.x + 6 + i * (FILES_TAB_W + 4); }
 static int files_tab_hit(int px, int py, int i) { return in_rect(px, py, files_tab_x(i), files_tab_y(), FILES_TAB_W, 18); }
 
@@ -263,7 +263,7 @@ static void files_primary_action(void) {
         term_win.open = 1; term_win.minimized = 0;
         win_z_raise(WIN_ID_TERMINAL);
         term_input_focused = 1;
-        files_set_msg("Press Enter in the Terminal.");
+        files_set_msg("Press Enter in MiniShell.");
     }
 }
 
@@ -348,6 +348,27 @@ static void files_draw_button(int b, const char *label) {
     ui_button(x, files_btnrow_y(), files_btn_w[b], FILES_BTN_H, label, 6, 3, files_btn_pressed == b);
 }
 
+
+/* ---------------------------------------------------------------- MiniFiles' menu bar: what to do with the selection, which list, help */
+#define FILES_MENU_N 3
+static const mb_menu_t files_menus[FILES_MENU_N] = {
+    { { "File", "\xed\x8c\x8c\xec\x9d\xbc" }, 4, { { "Open / Run / Install", "\xec\x97\xb4\xea\xb8\xb0 / \xec\x8b\xa4\xed\x96\x89 / \xec\x84\xa4\xec\xb9\x98" }, { "Delete", "\xec\x82\xad\xec\xa0\x9c" }, { "Refresh", "\xec\x83\x88\xeb\xa1\x9c\xea\xb3\xa0\xec\xb9\xa8" }, { "Close window", "\xec\xb0\xbd \xeb\x8b\xab\xea\xb8\xb0" } } },
+    { { "View", "\xeb\xb3\xb4\xea\xb8\xb0" }, 2, { { "Files", "\xed\x8c\x8c\xec\x9d\xbc" }, { "Disks", "\xeb\x94\x94\xec\x8a\xa4\xed\x81\xac" } } },
+    { { "Help", "\xeb\x8f\x84\xec\x9b\x80\xeb\xa7\x90" }, 1, { { "About MiniFiles", "MiniFiles \xec\xa0\x95\xeb\xb3\xb4" } } },
+};
+static void files_menu_action(int menu, int item) {
+    if (menu == 0) {
+        if (item == 0) files_primary_action();
+        else if (item == 1) { if (files_tab == FILES_TAB_FILES) files_delete_action(); }
+        else if (item == 2) { files_refresh(); files_set_msg("Refreshed"); }
+        else { files_win.open = 0; win_z_remove(WIN_ID_FILES); }
+    } else if (menu == 1) {
+        files_switch_tab(item == 0 ? FILES_TAB_FILES : FILES_TAB_DISKS);
+    } else {
+        files_set_msg("MiniFiles: your documents, programs and disks");
+    }
+}
+
 static void draw_files_window(void) {
     int wx = files_win.x, wy = files_win.y, ww = files_win.w, wh = files_win.h;
     ui_window_frame(wx, wy, ww, wh, files_win.maximized, "MINIFILES.MWP");
@@ -355,6 +376,7 @@ static void draw_files_window(void) {
                         pressed_btn_kind == BTN_MIN && pressed_btn_win == WIN_ID_FILES,
                         pressed_btn_kind == BTN_MAX && pressed_btn_win == WIN_ID_FILES,
                         pressed_btn_kind == BTN_CLOSE && pressed_btn_win == WIN_ID_FILES);
+    mb_draw_bar(WIN_ID_FILES, wx, wy, ww, files_menus, FILES_MENU_N);
 
     /* tabs */
     static const char *const tab_names[2] = { "FILES", "DISKS" };
@@ -397,11 +419,7 @@ static void draw_files_window(void) {
         font_draw_string(col_kind, ty, kind, fg);
         if (r->note[0]) font_draw_string(col_note, ty, r->note, (sel || !r->bad) ? fg : TH_ACCENT);
     }
-    if (files_row_count > vis) {                              /* scrollbar */
-        int th = lh * vis / files_row_count; if (th < 8) th = 8;
-        int ty = ly + (lh - th) * files_scroll / (files_row_count - vis);
-        ui_scrollbar(lx + lw - 7, ly + 1, 6, lh - 2, ty, th);
-    }
+    if (files_row_count > vis) sb_draw(WIN_ID_FILES);         /* the scroll bar (ui/scrollbar.h) */
 
     /* buttons: label depends on what is selected */
     const char *primary = "OPEN";
@@ -414,9 +432,10 @@ static void draw_files_window(void) {
     /* status line */
     char st[64]; u32 sl = 0;
     if (files_msg[0]) append_str(st, &sl, sizeof(st), files_msg);
-    else if (files_tab == FILES_TAB_DISKS) append_str(st, &sl, sizeof(st), "INSTALL asks in Terminal; or: os-inst ?");
+    else if (files_tab == FILES_TAB_DISKS) append_str(st, &sl, sizeof(st), "INSTALL asks in MiniShell: os-inst ?");
     else { append_uint(st, &sl, sizeof(st), (u32)files_row_count); append_str(st, &sl, sizeof(st), files_row_count == 1 ? " file" : " files"); }
     font_draw_string(wx + 6, files_status_y(), st, TH_TEXT);
+    mb_draw_drop(WIN_ID_FILES, wx, wy, files_menus, FILES_MENU_N);
 }
 
 #endif

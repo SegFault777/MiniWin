@@ -40,7 +40,7 @@ For how the pieces fit together see [ARCHITECTURE.md](ARCHITECTURE.md); for the 
 | `kernel/font_ko.h` | Modern Hangul syllable composition Some genius at the Unicode Consortium figured out that every possible modern Hangul syllable can be reached with one dumb little formula instead of... |
 | `kernel/font_ko_data.h` | *generated* -- Auto-generated 11x11 bitmap glyphs for all 11172 modern Hangul syllables (U+AC00 to U+D7A3) plus the 51 standalone compatibility jamo (U+3131 to U+3163, used to show an in-progress... |
 | `kernel/font_latin_data.h` | *generated* -- Auto-generated 11x11 bitmap glyphs for printable ASCII (U+0020 space through U+007E tilde), extracted from Galmuri11 (see third_party/galmuri-font/, SIL Open Font License 1.1) by... |
-| `kernel/fs.h` | This is NOT a filesystem. |
+| `kernel/fs.h` | Where things live on the disk, and the document/program "slot" API the desktop, Notepad, MiniFiles and the shell were written against, now a thin layer over a real filesystem (mwfs.h,... |
 | `kernel/gcm.h` | AES-GCM, per NIST SP 800-38D. The AEAD (Authenticated Encryption with Associated Data) cipher this client actually needs: discovered during development that the servers/gateways worth... |
 | `kernel/hangul_ime.h` | This is the part where we stop pretending a keyboard driver is simple. |
 | `kernel/hmac_sha256.h` | HMAC, per RFC 2104: hash(key XOR opad \|\| hash(key XOR ipad \|\| message)). |
@@ -53,13 +53,14 @@ For how the pieces fit together see [ARCHITECTURE.md](ARCHITECTURE.md); for the 
 | `kernel/ip.h` | IPv4: the protocol whose entire job is deciding "does this packet need to leave the building, and if so, to whom do I hand it at the loading dock (i.e. |
 | `kernel/kentry.asm` | Kernel entry stub -- this MUST be the very first code sitting at 0x10000, because that's the address we pinky-promised the bootloader we'd jump to. |
 | `kernel/kernel.c` | MiniWin's kernel: pulls the layers together and runs the main loop. |
-| `kernel/keyboard.h` | The PS/2 keyboard: scancodes (set 1) read from the i8042 controller by polling, turned into ASCII bytes with Shift, Caps Lock and the extended keys (arrows, Right Alt) handled. |
+| `kernel/keyboard.h` | The keyboard: PS/2 scancodes (set 1) read from the i8042 controller by polling, turned into ASCII bytes with Shift and the extended keys (arrows, Right Alt) handled. |
 | `kernel/layout.h` | The back half of MiniWeb's HTML5 engine: a styled tree goes in, a flat DISPLAY LIST of pixel-positioned things to paint comes out (rectangles, text runs, bullets, image placeholders,... |
 | `kernel/link.ld` | Every section pattern below uses the trailing "*" wildcard (.text*, .data*, etc.) instead of matching the bare section name. |
 | `kernel/lz.h` | A tiny decoder for the standard LZ4 *block* format (token: high nibble = literal count, low nibble = match length - 4, either one extended by 255-run bytes; literals; 16-bit... |
 | `kernel/memmap.h` | The ONE place that decides who owns which chunk of physical memory above 1MB. Paging is off in this kernel, so a raw physical address IS a pointer (the same trick vga.h already uses for... |
-| `kernel/mouse.h` | The PS/2 mouse: initialises the auxiliary device of the i8042 controller and decodes its 3-byte packets into movement and button state, by polling. |
+| `kernel/mouse.h` | The mouse: initialises the auxiliary device of the i8042 controller and decodes its 3-byte packets into movement and button state, by polling. |
 | `kernel/mpt.h` | SCSI disks behind an LSI "Fusion-MPT" controller. |
+| `kernel/mwfs.h` | MWFS, the MiniWin File System: a small real filesystem (directories of any depth, files that grow, a free-space bitmap) that lives inside any run of sectors -- a partition, a whole disk,... |
 | `kernel/mwp.h` | .mwp loader -- MiniWin's answer to "can I run code I didn't compile into the kernel." Short version: yes, but the honest way, not the pretend way. |
 | `kernel/mwp_link.ld` | Linker script for loadable .mwp programs (see kernel/mwp.h). |
 | `kernel/net.h` | The shared toolbox every layer above the NIC drivers reaches into. |
@@ -67,7 +68,7 @@ For how the pieces fit together see [ARCHITECTURE.md](ARCHITECTURE.md); for the 
 | `kernel/netclock.h` | A wall-clock to time network retries by. |
 | `kernel/nic.h` | Common NIC driver interface -- whichever chipset actually gets found on the PCI bus (RTL8139, e1000, ...) fills this one struct in with its own send/recv functions, so nothing above this... |
 | `kernel/nvme.h` | NVM Express SSDs (PCI class 01:08:02): what every recent laptop and desktop boots from, what VMware 17 gives a new virtual machine by default, and what QEMU's `-device nvme` and... |
-| `kernel/os_inst.h` | Copies the running MiniWin onto another storage area (the terminal's `os-inst <id>`). |
+| `kernel/os_inst.h` | Copies the running MiniWin onto another storage area (the terminal's `os-inst <id> [<arch>]`). |
 | `kernel/pci.h` | PCI configuration space -- the "phone book" every PCI device sits behind. |
 | `kernel/pkcs1.h` | The OTHER direction of PKCS#1 v1.5: padding a short secret up to the RSA modulus's exact byte width before encrypting it with the server's PUBLIC key, for ClientKeyExchange. |
 | `kernel/render.h` | The glue and the paint box of MiniWeb's HTML5 engine. |
@@ -84,6 +85,7 @@ For how the pieces fit together see [ARCHITECTURE.md](ARCHITECTURE.md); for the 
 | `kernel/trusted_roots.h` | *generated* -- Embedded trust anchors -- extracted from Mozilla's CA bundle (via Python's certifi package), filtered to RSA-keyed roots of up to 4096 bits (this client's x509.h only does RSA, and... |
 | `kernel/udp.h` | UDP: IP's checksum with a port number stapled on. |
 | `kernel/version.h` | The ONE place the version number lives. |
+| `kernel/vfs.h` | The one namespace on top of the volumes: "/" is the root volume (the MWFS the running system lives on) and "/mnt/<id>" is any other mounted volume (ide200, sata101, ...). |
 | `kernel/vga.h` | The video mode itself (a real 640x480, 32-bit-per-pixel, direct-color VBE mode -- true color, not a 256-entry palette) is found and set by the bootloader's second stage in real mode --... |
 | `kernel/x25519.h` | Curve25519 Diffie-Hellman, per RFC 7748. |
 | `kernel/x509.h` | Turns a DER-encoded X.509 certificate into the handful of fields kernel/tls.h actually needs to establish trust: who signed it, what its public key is, whether it's still within its... |
@@ -94,13 +96,15 @@ For how the pieces fit together see [ARCHITECTURE.md](ARCHITECTURE.md); for the 
 | `kernel/apps/notepad/save.h` | Save / save-as / new logic shared by the menu, Ctrl+S and the confirm dialog. |
 | `kernel/apps/notepad/windows.h` | The NOTEPAD_MAX Notepad windows: state, creation, focus, per-window text buffers. |
 | `kernel/apps/setting.h` | SETTING.MWP: language / IME / time zone window. |
-| `kernel/apps/terminal.h` | TERMINAL.MWP: the command-line app and its commands. |
+| `kernel/apps/shell_fs.h` | MiniShell's file commands: pwd cd ls mkdir touch cat cp mv rm -- Unix names first, with the Windows ones (dir md type copy move del) and MiniWin's own (where go look dig new dup) as... |
+| `kernel/apps/shell_part.h` | MiniShell's `part` command: look at, format, mount, check and (on MBR disks) edit the partitions of the storage devices this kernel drives, and the `usb` listing. |
+| `kernel/apps/terminal.h` | MINISHELL.MWP: the command-line app and its commands. |
 | `kernel/apps/web/address.h` | Turning typed text, redirects and clicked links into (scheme, host, port, path). |
 | `kernel/apps/web/autotest.h` | The -DMW_AUTOTEST_URL test hook (compiled out of normal builds). |
 | `kernel/apps/web/fetch.h` | Starting a fetch: DNS, connect, HTTP/HTTPS transport selection, redirects. |
 | `kernel/apps/web/page.h` | The finished response -> page: content-type handling, redirects, link queries, polling. |
-| `kernel/apps/web/state.h` | WEB.MWP state, window geometry, address-bar state, bookmarks. |
-| `kernel/apps/web/view.h` | WEB.MWP drawing: window chrome, address bar, page body, scrolling, clicks, form submit. |
+| `kernel/apps/web/state.h` | MINIWEB.MWP state, window geometry, address-bar state, bookmarks. |
+| `kernel/apps/web/view.h` | MINIWEB.MWP drawing: window chrome, address bar, page body, scrolling, clicks, form submit. |
 | `kernel/sys/boot.h` | Everything kmain used to do once before its loop: serial, video mode, syscall table, PCI, network, saved files, window slots. |
 | `kernel/sys/lang.h` | System language + input-method state shared by Notepad, Setting and the keyboard path. |
 | `kernel/sys/power.h` | Restart / shutdown. |
@@ -111,7 +115,10 @@ For how the pieces fit together see [ARCHITECTURE.md](ARCHITECTURE.md); for the 
 | `kernel/ui/desktop_files.h` | The desktop shortcuts for saved documents and installed programs (the cells after the app icons). |
 | `kernel/ui/icons.h` | The desktop icon grid, the 32x32 icon cache, and the five app launcher icons. |
 | `kernel/ui/input.h` | The desktop's input handling: the mouse (clicks, drags, buttons, menus, icons) and the keyboard routing. |
+| `kernel/ui/menubar.h` | The menu bar MiniShell, MiniWeb and MiniFiles show under their title bar, and its drop-downs. |
 | `kernel/ui/resize.h` | Window edge/corner resize hit-testing. |
+| `kernel/ui/scroll_targets.h` | The wiring between the scroll bar widget (ui/scrollbar.h) and the windows that scroll. |
+| `kernel/ui/scrollbar.h` | The scroll bar widget: arrow buttons, a track, a proportional thumb you can DRAG, page-up/page-down by clicking the track, and the mouse wheel. |
 | `kernel/ui/startmenu.h` | The Start menu and its power submenu. |
 | `kernel/ui/taskbar.h` | Taskbar drawing and hit-testing (pills, glyphs, Start button, clock slot). |
 | `kernel/ui/taskbar_metrics.h` | Taskbar constants (heights, button sizes) needed before windows are defined. |
@@ -120,6 +127,12 @@ For how the pieces fit together see [ARCHITECTURE.md](ARCHITECTURE.md); for the 
 | `kernel/ui/themes/dark.h` | A deliberately different theme: charcoal surfaces, teal accent, a slightly taller title bar. |
 | `kernel/ui/widgets.h` | Every reusable piece of chrome, drawn from theme roles (ui/theme.h). |
 | `kernel/ui/window.h` | Window_t, the five window slots, z-order, geometry, maximize/restore. |
+| `kernel/usb/core.h` | What ties the three host controller drivers and the HID class driver together: finding the controllers on the PCI bus, enumerating every device that shows up on a root port (address,... |
+| `kernel/usb/ehci.h` | The EHCI (USB 2.0) host controller driver: PCI class 0C:03, prog-if 0x20. |
+| `kernel/usb/hid.h` | The USB Human Interface Device class: turns the reports a keyboard, mouse or tablet sends into the same key codes and pointer state the PS/2 drivers produce (keyboard_inject(),... |
+| `kernel/usb/ohci.h` | The OHCI (USB 1.1) host controller driver: PCI class 0C:03, prog-if 0x10. |
+| `kernel/usb/usb.h` | What every USB piece shares: the device table, the setup-packet helper, a millisecond clock and the few constants the three host-controller drivers (xhci.h, ehci.h, ohci.h) and the... |
+| `kernel/usb/xhci.h` | The xHCI (USB 3.x) host controller driver: PCI class 0C:03, prog-if 0x30. |
 
 ## Programs (`programs/`)
 
@@ -140,9 +153,10 @@ For how the pieces fit together see [ARCHITECTURE.md](ARCHITECTURE.md); for the 
 | `tools/gen_hangul_font.py` | Generates kernel/font_ko_data.h: an 11x11 bitmap glyph table for all 11172 modern Hangul syllables (U+AC00-U+D7A3) plus the 51 standalone compatibility jamo (U+3131-U+3163), extracted... |
 | `tools/gen_latin_font.py` | Generates kernel/font_latin_data.h: an 11x11 bitmap glyph table for ASCII 0x20-0x7E, extracted from Galmuri11 (third_party/galmuri-font/, SIL OFL 1.1) -- the same font... |
 | `tools/gen_source_map.py` | Generates docs/dev/SOURCE-MAP.md: one line per source file (boot loader, kernel headers, programs, tools), taken from the first sentence of the file's own header comment -- so the map... |
-| `tools/install_all.sh` | One-shot "put everything back after build.sh" -- build.sh rebuilds os-image.img from scratch, which wipes the program slot (GREETER.MWP) and the icon catalog. |
+| `tools/install_all.sh` | One-shot "put everything back after build.sh" -- build.sh rebuilds os-image.img from scratch, which wipes the root filesystem (GREETER.MWP in /progs) and the icon catalog. |
 | `tools/install_icons.py` | Installs a bundle of 16x16/32x32 PNG icons directly into an existing os-image.img's icon catalog (see kernel/fs.h's ICON_* constants) -- same "write the disk image offline, no in-OS... |
-| `tools/install_mwp.py` | Writes a compiled .mwp flat binary (see tools/build_mwp.sh) directly into one of kernel/fs.h's PROG_MAX_SLOTS program slots on an existing os-image.img -- the disk-image equivalent of... |
+| `tools/install_mwp.py` | Puts a compiled .mwp flat binary (see tools/build_mwp.sh) into /progs of the root filesystem of an os-image.img -- the disk-image equivalent of what kernel/fs.h's prog_save_slot() does... |
+| `tools/mwfs.py` | The offline twin of kernel/mwfs.h: format an MWFS volume inside an image file and put files in it. |
 
 ## Tests (`tools/test/`)
 
@@ -158,6 +172,7 @@ For how the pieces fit together see [ARCHITECTURE.md](ARCHITECTURE.md); for the 
 | `tools/test/host_dom_dump.c` | Dumps the DOM kernel/dom.h builds for an HTML file: a quick way to eyeball the tree builder. |
 | `tools/test/host_engine_test.c` | Deterministic tests for the HTML5 engine (kernel/dom.h, css.h, layout.h, render.h). |
 | `tools/test/host_lz_test.c` | Host test for kernel/lz.h (the LZ4 block decoder) and the compressed Korean font table in kernel/font_ko_data.h. |
+| `tools/test/host_mwfs_test.c` | Kernel/mwfs.h on a RAM disk: mkfs/open, files from 0 bytes to past the double-indirect boundary, directories of any depth, replace/rename/unlink, a full volume, a randomized run checked... |
 | `tools/test/host_rd_fuzz.c` | Fuzzer for the HTML engine: random tag soup + random CSS through dom_parse -> rd_layout -> rd_paint, under ASan/UBSan. |
 | `tools/test/host_render.c` | Renders an HTML file through the real engine (dom.h/css.h/layout.h/render.h) into a PPM image: host_render page.html out.ppm [width] [height] The screen is `width` x 480 by default; the... |
 | `tools/test/host_storage_test.c` | Kernel/storage.h against a fake IDE controller with FOUR positions (two channels x master/slave), each holding a disk image, an ATAPI drive, or nothing. |
@@ -175,6 +190,7 @@ For how the pieces fit together see [ARCHITECTURE.md](ARCHITECTURE.md); for the 
 | `tools/test/run_host_crypto.sh` | Host-side crypto unit tests: reference vectors from OpenSSL/hashlib vs MiniWin's actual kernel headers. |
 | `tools/test/run_host_engine.sh` | Host-side tests for the HTML5 engine (dom/css/layout/render), then a burst of the ASan/UBSan fuzzer. |
 | `tools/test/run_host_font.sh` | The compressed Korean font: the checked-in header is up to date and round-trips, and the kernel's LZ4 decoder (kernel/lz.h) inflates it to exactly the bytes the generator says, and... |
+| `tools/test/run_host_mwfs.sh` | Kernel/mwfs.h on a RAM disk: files, directories, a full volume, a randomized run against a model, and a crash sweep. |
 | `tools/test/run_host_storage.sh` | Kernel/storage.h (+ the generalized ata.h) against a fake four-position IDE controller. |
 | `tools/test/run_host_web.sh` | Host-side tests for the HTTP response handling and the HTML renderer. |
 | `tools/test/run_host_x509.sh` | Certificate-extension tests (audit M-02). |

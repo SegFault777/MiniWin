@@ -30,6 +30,22 @@ draws every reusable piece of chrome (title bar, buttons, fields, frames) from t
 that still looks "classic" under it hard-coded a colour. To add a visual element, add a role if you need a new colour, draw it with an
 existing widget if one fits, and look at the result under **both** themes.
 
+## Menu bars and scroll bars (shared widgets)
+
+Two behaviours that more than one window needs are widgets of their own, and an app only describes *what* it wants:
+
+* **`ui/menubar.h`** -- a menu bar under the title bar and its drop-downs. An app declares its menus as data (`mb_menu_t`: a title and up
+  to 8 items, each with an English and a Korean text), draws `mb_draw_bar()` right after the title bar and `mb_draw_drop()` *last* (so
+  the drop-down sits on top), shifts its own content down by `MB_H`, and handles the result of `mb_click()` (which menu, which item) in
+  an `<app>_menu_action()`. Only one drop-down is open on the desktop at a time (`mb_owner`); a click in another window closes it.
+  MiniShell, MiniWeb and MiniFiles use it, each with menus of its own. (Notepad's older File/Edit/Help bar is still its own code.)
+* **`ui/scrollbar.h`** + **`ui/scroll_targets.h`** -- the scroll bar: arrow buttons, a proportional thumb that can be **dragged**, page jumps
+  on the track, the **mouse wheel** (`mouse_wheel` from `mouse.h`; > 0 = down), all over a `(total, page, pos)` model in whatever unit the app
+  scrolls by. An app contributes two callbacks (geometry+model, "set position") in `ui/scroll_targets.h`, `sb_register_all()` hands them
+  over at boot, and the app calls `sb_draw(WIN_ID_X)`. `ui/input.h` does press/drag/release/wheel for every window. Used by MiniWeb (pixels),
+  MiniShell (rows, counted from the newest line), MiniFiles (rows) and each Notepad window (wrapped text rows, with the wrapping rules in
+  `np_rows_ex()` shared by drawing and the bar).
+
 ## The desktop grid and shortcuts
 
 `ui/icons.h` defines the grid: one vertical list of cells at a constant pitch (`ICON_H`), top to bottom from `ICON_Y`, continuing at the

@@ -2,7 +2,7 @@
 
 Every driver is a `static` header in `kernel/` included by `kernel.c` in dependency order (see [ARCHITECTURE.md](ARCHITECTURE.md)). All of
 them are **polled** -- the kernel never enables interrupts, so there are no interrupt handlers, no IRQ routing and no
-deferred work; a driver waits (with a bounded loop) for the hardware to finish. Status below is for 1.1-alpha-8; "tested" always means
+deferred work; a driver waits (with a bounded loop) for the hardware to finish. Status below is for 1.1-alpha-9; "tested" always means
 *on QEMU's emulation of that device* unless stated -- no driver has been run on VMware, VirtualBox or real hardware yet.
 
 ## Storage (everything behind `blk.h`)
@@ -19,7 +19,7 @@ driver. `ata_read_sector()`/`ata_write_sector()` -- what the file system uses --
 | `scsi1`-`scsi8` | `mpt.h` | LSI Logic / Fusion-MPT (VMware/VirtualBox "LSI Logic", QEMU `mptsas1068`) | PCI vendor 1000 | MPI 1.x; doorbell handshake, then polled request frames; targets 0-15, LUN 0, 512-byte blocks |
 | `nvme1`-`nvme4` | `nvme.h` | NVMe SSD (PCI 01:08:02) | PCI scan, BAR0 | admin + one I/O queue pair, namespace 1 only, 512-byte blocks; controller must be below 4 GB |
 | `fd1` | `fdc.h` | the boot **floppy** (8272/82077 + ISA DMA 2) | only when booted from drive 00h/01h | 1.44 MB; whole-track read cache; motor left on |
-| (none) | usb | -- | -- | not implemented |
+| (none) | usb | -- | -- | mass storage not implemented (the USB stack below only drives keyboards, mice and tablets) |
 
 A disk's size is capped at 2^28 - 1 sectors (128 GB) everywhere, like IDE LBA28.
 
@@ -39,7 +39,8 @@ sit on top. Not supported: VMware e1000e/vmxnet3, VirtualBox PCnet, virtio-net.
 |---|---|---|
 | `pci.h` | PCI configuration space scan | legacy ports 0xCF8/0xCFC; fills `pci_devices[]`, dumps every device to the serial port |
 | `vga.h` | the 640x480 32-bit VESA framebuffer | the mode is set by the boot loader; the kernel only draws (to a back buffer, then copies) |
-| `keyboard.h`, `mouse.h` | PS/2 (i8042) keyboard and mouse | polled; USB HID is the next hardware goal |
+| `keyboard.h`, `mouse.h` | PS/2 (i8042) keyboard and mouse (mouse: IntelliMouse wheel) | polled; an absent i8042 (bus reads `0xFF`) is detected, not mistaken for a stream of bytes. They also take the USB HID driver's keys and pointer reports (`keyboard_inject()`, `mouse_usb_report()`, `mouse_usb_abs()`, `mouse_wheel_add()`) |
+| `usb/` | USB host controllers and HID: see below | polled |
 | `rtc.h` | CMOS real-time clock | wall-clock time; also what network timeouts count in (`netclock.h`) |
 | `delay.h` | PIT-based millisecond waits | used by the floppy and ATAPI drivers |
 | `speaker.h` | PC speaker beep | |
@@ -47,6 +48,22 @@ sit on top. Not supported: VMware e1000e/vmxnet3, VirtualBox PCnet, virtio-net.
 | `acpi.h` | ACPI S5 power-off (RSDP > RSDT > FADT, `_S5_` from the DSDT) | falls back to the QEMU/Bochs/VirtualBox power-off ports under a hypervisor |
 | `fatal.h` | the interrupt descriptor table (32 exception vectors) and the blue-screen error | `MW-K10 CPU_EXCEPTION_*` |
 | `sysinfo.h` | CPUID, TSC speed and load, PCI display adapter name, VESA video memory, RAM size | for `fetch` |
+
+## USB (`kernel/usb/`)
+
+| file | what |
+|---|---|
+| `usb.h` | the device table, the setup-packet helper, a millisecond clock from the PIT, logging |
+| `xhci.h` | xHCI (PCI 0C:03, prog-if 0x30): BIOS hand-off, reset, command/event rings, Enable Slot, Address Device, control transfers, Configure Endpoint, one interrupt-IN endpoint per device re-armed on completion; up to 6 slots and 8 scratchpad pages per controller |
+| `ehci.h` | EHCI (0x20): BIOS hand-off, reset, `CONFIGFLAG`, root-port reset; **high-speed devices only** -- low/full-speed ones are handed to the companion by setting the port-owner bit; control transfers through a one-QH asynchronous ring, interrupt endpoints on the periodic frame list behind an anchor QH |
+| `ohci.h` | OHCI (0x10): SMM take-over, reset, HCCA, EDs and TDs; control list for control transfers, the periodic table for interrupt endpoints with a ping-pong pair of TDs; this is also the EHCI companion |
+| `hid.h` | the HID class: boot keyboards (HID usage -> PS/2 scancode -> `keyboard.h`'s own ASCII tables, so a USB `A` is the same byte as a PS/2 `A`, with software key repeat), mice and tablets through a compact report-descriptor parser (buttons, X/Y relative or absolute, wheel) |
+| `core.h` | PCI discovery, enumeration (address, descriptors, configuration, picking the HID function), hot-plug scan every 250 ms, `usb_poll()` called once per main-loop pass |
+
+Verified on QEMU only (`qemu-xhci`, `usb-ehci`, `pci-ohci` with `usb-kbd`/`usb-mouse`/`usb-tablet`, with the PS/2 controller removed via
+`-machine pc,i8042=off` so the USB path is the only one). **Not implemented:** hubs (a device behind one is invisible), UHCI,
+mass storage, interrupts/MSI, suspend; the EHCI-to-companion hand-off of low/full-speed devices is written to the specification but
+QEMU's models do not exercise it. Debug: build with `EXTRA_CFLAGS=-DMW_USB_DEBUG` for raw HID report and EHCI queue dumps on the serial port.
 
 ## Conventions all drivers follow
 

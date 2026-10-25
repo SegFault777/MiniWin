@@ -65,7 +65,7 @@ static window_t setting = {
     .restore_w = SETTING_DEFAULT_W, .restore_h = SETTING_DEFAULT_H,
 };
 
-/* WEB.MWP's window state, same treatment as setting's above -- a
+/* MINIWEB.MWP's window state, same treatment as setting's above -- a
  * single-instance window_t living here so the taskbar/z-order/generic
  * resize machinery can see it, with the app-specific drawing and hit-
  * testing code grouped further down near draw_web_window(). Tall enough
@@ -83,13 +83,13 @@ static window_t web_win = {
     .restore_w = WEB_DEFAULT_W, .restore_h = WEB_DEFAULT_H,
 };
 
-/* Terminal.mwp's window state, same treatment as setting's/web_win's
+/* MiniShell.mwp's window state, same treatment as setting's/web_win's
  * above. Wide enough for ~40 columns of 11px text plus margins -- see
  * this file's Terminal section (further down, past MiniWeb) for the
  * scrollback buffer, command parser, and the actual command table. */
 #define TERM_DEFAULT_X   80
 #define TERM_DEFAULT_Y   90
-#define TERM_DEFAULT_W   452
+#define TERM_DEFAULT_W   468
 #define TERM_DEFAULT_H   230
 
 static window_t term_win = {

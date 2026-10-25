@@ -4,7 +4,7 @@
 `kernel/apps/terminal.h` (the command), `boot/chain_mbr.asm` (the optional loader).*
 
 `os-inst` copies the running MiniWin onto another disk or partition, so that machine (or virtual machine) can boot
-MiniWin on its own. It is a Terminal command:
+MiniWin on its own. It is a MiniShell command:
 
 ```
 os-inst ?          explain it (usage, id format)
@@ -63,37 +63,39 @@ Type YES to install; else cancels.
   boot that disk to use it
 ```
 
-(The Terminal scrolls with the Up/Down keys; the usage text is longer than the window.)
+(MiniShell scrolls with the Up/Down keys, the mouse wheel and its scroll bar; the usage text is longer than the window.)
 
 ## What is written
 
-One complete installation is the fixed 2048-sector (1 MB) layout described in [DISK-LAYOUT.md](../dev/DISK-LAYOUT.md),
-placed at the target's first sector (sector 0 for a whole disk, the partition's first sector for a partition):
+One complete installation follows the layout described in [DISK-LAYOUT.md](../dev/DISK-LAYOUT.md), placed at the target's first
+sector (sector 0 for a whole disk, the partition's first sector for a partition):
 
 * the **boot sector** with two patched fields: where this installation starts, and a fresh random *install id*;
-* **stage 2 and the kernel**, and the **icon catalog**, copied from the disk MiniWin booted from;
-* **zeros** for everything else (document slots, program slots, journals): the new system starts with *no user data*,
-  and stale bytes in the target can never be mistaken for a file.
+* **stage 2 and the kernel**, and the **icon catalog** (sectors 0-1732), copied from the disk MiniWin booted from;
+* a **fresh, empty root file system** (MWFS, with `/docs`, `/progs`, `/mnt` and `/sys`) formatted over the rest of the target, up to
+  8 GB of it: the new system starts with *no user data*, and stale bytes in the target can never be mistaken for a file. A bigger
+  partition keeps its tail unused; `part format` + `part mount` can use it as a data disk.
 
-Only those 2048 sectors are written; the rest of a larger partition or disk is not touched.
+Sectors outside the target (the rest of the disk, other partitions) are never touched.
 
 ## Safety rules
 
 1. **Vetted target.** The id must resolve to a device that exists, a real (non-extended) partition inside the device,
    at least 1 MB large.
+   `<arch>`, if given, must be `i386`: the only architecture this kernel is (`x86_64`: "not available yet").
 2. **Never the running system.** If any part of the target overlaps the installation MiniWin is running from, it is
    refused. That includes `00` on the disk that holds the running partition, because installing to a whole disk
    rewrites sector 0 and with it the partition table.
 3. **You confirm.** The target, its model and size, its first sector, whether it looks empty or already holds data (or a
    MiniWin), and how many partitions a whole-disk install would destroy are printed; nothing happens until you type
-   `YES` exactly. Anything else cancels. (MiniFiles' INSTALL button only *types the command for you* in the Terminal.)
+   `YES` exactly. Anything else cancels. (MiniFiles' INSTALL button only *types the command for you* in MiniShell.)
 4. **Sector 0 last.** The sector that makes the area bootable is written *last*, so an install that fails or is
    interrupted never looks bootable, and when installing to a whole disk the old partition table survives until the
    very last write.
 5. **Read back.** Every sector is read back and compared before the install is declared successful.
 6. **Other people's boot loaders are never overwritten.** See below.
 7. **A background job.** The install advances a few sectors per main-loop pass, so the screen keeps updating; while it
-   runs the Terminal refuses other commands. Powering off mid-install is safe in the sense of rule 4: the target is
+   runs MiniShell refuses other commands. Powering off mid-install is safe in the sense of rule 4: the target is
    simply not bootable.
 
 ## Booting the result
@@ -130,6 +132,6 @@ Only those 2048 sectors are written; the rest of a larger partition or disk is n
 | `this build has no driver for that storage type yet (only ide, sata, scsi, nvme)` | `usb` |
 | `no such device` / `no such partition on that device` | see `os-inst list` |
 | `that is an extended-partition container ...` | choose a logical partition inside it |
-| `target is smaller than 1 MB` | too small for a 2048-sector installation |
+| `target is smaller than 1 MB` | too small: an installation needs the 2048 sectors of the stock layout (the file system then takes whatever is left) |
 | `that area is where MiniWin is running from right now` | rule 2 |
 | `INSTALL FAILED ... the target is not bootable now` | a write or the read-back failed; the failing sector is shown |

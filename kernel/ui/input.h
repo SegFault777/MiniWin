@@ -11,9 +11,9 @@ static int awaiting_second_click = 0;   /* 1 = one icon click seen, waiting for 
 static u32 last_icon_click_tick = 0;
 static int awaiting_second_click_setting = 0;   /* same idea, but for the SETTING.MWP icon */
 static u32 last_setting_click_tick = 0;
-static int awaiting_second_click_web = 0;   /* same idea, but for the WEB.MWP icon */
+static int awaiting_second_click_web = 0;   /* same idea, but for the MINIWEB.MWP icon */
 static u32 last_web_click_tick = 0;
-static int awaiting_second_click_term = 0;  /* ...and for the TERMINAL.MWP icon */
+static int awaiting_second_click_term = 0;  /* ...and for the MINISHELL.MWP icon */
 static u32 last_term_click_tick = 0;
 static int awaiting_second_click_files = 0; /* ...and for the MINIFILES.MWP icon */
 static u32 last_files_click_tick = 0;
@@ -35,6 +35,11 @@ static int drag_offset_x = 0, drag_offset_y = 0;
 /* One poll of the mouse: moves the pointer, then dispatches presses, drags and releases to whatever is under it. */
 static void handle_mouse(void) {
     if (mouse_poll()) {
+        if (mouse_abs_valid) {                    /* a USB tablet said exactly where the pointer is */
+            mx = mouse_abs_x;
+            my = mouse_abs_y;
+            mouse_abs_valid = 0;
+        }
         mx += mouse_dx;
         my += mouse_dy;
         if (mx < 0) mx = 0;
@@ -44,6 +49,18 @@ static void handle_mouse(void) {
 
         int left_now = mouse_left;
         int clicked = mouse_click_event; /* per-packet edge detection from the driver */
+
+        /* ---- a scroll bar thumb being dragged (ui/scrollbar.h) ---- */
+        if (sb_dragging()) { if (left_now) sb_drag(my); else sb_release(); }
+
+        /* ---- the mouse wheel scrolls the window under the pointer ---- */
+        if (mouse_wheel) {
+            int wh_id = -1;
+            int notches = mouse_wheel;
+            mouse_wheel = 0;
+            (void)compute_hover_resize_zone(mx, my, &wh_id);
+            if (wh_id >= 0) sb_wheel(wh_id, notches);
+        }
 
         /* ---- drag in progress: move whichever window is being
          * dragged with the cursor ---- */
@@ -226,6 +243,7 @@ static void handle_mouse(void) {
                  * happen to overlap. */
                 int hit_id;
                 int zone = compute_hover_resize_zone(mx, my, &hit_id);
+                if (mb_owner >= 0 && hit_id != mb_owner) mb_close();           /* a drop-down closes when you click anywhere but its own window */
 
                 if (zone != RESIZE_NONE) {
                     /* Grabbed an edge or corner: start resizing
@@ -242,6 +260,8 @@ static void handle_mouse(void) {
                     resize_start_y = rw->y;
                     resize_start_w = rw->w;
                     resize_start_h = rw->h;
+                } else if (hit_id >= 0 && sb_press(hit_id, mx, my)) {
+                    win_z_raise(hit_id);                       /* a press on a scroll bar: arrow, page jump or the start of a thumb drag */
                 } else if (hit_id == WIN_ID_SETTING) {
                     /* Clicking anywhere on a window -- not just a
                      * control that does something -- brings it to
@@ -295,6 +315,7 @@ static void handle_mouse(void) {
                         drag_offset_y = my - setting.y;
                     }
                 } else if (hit_id == WIN_ID_WEB) {
+                    int mb_m, mb_i;
                     win_z_raise(WIN_ID_WEB);
                     if (web_min_hit(mx, my)) {
                         pressed_btn_kind = BTN_MIN;
@@ -305,6 +326,8 @@ static void handle_mouse(void) {
                     } else if (web_close_hit(mx, my)) {
                         pressed_btn_kind = BTN_CLOSE;
                         pressed_btn_win = WIN_ID_WEB;
+                    } else if (mb_click(WIN_ID_WEB, web_win.x, web_win.y, web_win.w, web_menus, WEB_MENU_N, mx, my, &mb_m, &mb_i)) {
+                        if (mb_i >= 0) web_menu_action(mb_m, mb_i);
                     } else if (web_urlbar_hit(mx, my)) {
                         web_urlbar_focused = 1;
                         rd_focus = 0;
@@ -329,6 +352,7 @@ static void handle_mouse(void) {
                         web_urlbar_focused = 0;
                     }
                 } else if (hit_id == WIN_ID_TERMINAL) {
+                    int mb_m, mb_i;
                     win_z_raise(WIN_ID_TERMINAL);
                     if (term_min_hit(mx, my)) {
                         pressed_btn_kind = BTN_MIN;
@@ -339,6 +363,8 @@ static void handle_mouse(void) {
                     } else if (term_close_hit(mx, my)) {
                         pressed_btn_kind = BTN_CLOSE;
                         pressed_btn_win = WIN_ID_TERMINAL;
+                    } else if (mb_click(WIN_ID_TERMINAL, term_win.x, term_win.y, term_win.w, term_menus, TERM_MENU_N, mx, my, &mb_m, &mb_i)) {
+                        if (mb_i >= 0) term_menu_action(mb_m, mb_i);
                     } else if (term_input_hit(mx, my)) {
                         term_input_focused = 1;
                     } else if (term_titlebar_drag_hit(mx, my) && !term_win.maximized) {
@@ -350,6 +376,7 @@ static void handle_mouse(void) {
                         term_input_focused = 0;
                     }
                 } else if (hit_id == WIN_ID_FILES) {
+                    int mb_m, mb_i;
                     win_z_raise(WIN_ID_FILES);
                     if (files_min_hit(mx, my)) {
                         pressed_btn_kind = BTN_MIN;
@@ -360,6 +387,8 @@ static void handle_mouse(void) {
                     } else if (files_close_hit(mx, my)) {
                         pressed_btn_kind = BTN_CLOSE;
                         pressed_btn_win = WIN_ID_FILES;
+                    } else if (mb_click(WIN_ID_FILES, files_win.x, files_win.y, files_win.w, files_menus, FILES_MENU_N, mx, my, &mb_m, &mb_i)) {
+                        if (mb_i >= 0) files_menu_action(mb_m, mb_i);
                     } else if (files_titlebar_drag_hit(mx, my) && !files_win.maximized) {
                         dragging_id = WIN_ID_FILES;
                         drag_offset_x = mx - files_win.x;
@@ -777,7 +806,7 @@ static void handle_keyboard(void) {
         }
     } else if (focused_id == WIN_ID_TERMINAL && term_input_focused && k > 0) {
         /* Command-line text entry -- plain ASCII only, same reasoning
-         * as WEB.MWP's URL bar just above: a command word like `peek`
+         * as MINIWEB.MWP's URL bar just above: a command word like `peek`
          * or `run` is typed on an ASCII keyboard, so this doesn't
          * route through the Hangul IME either. Enter runs whatever's
          * in term_input_buf (term_run_input() itself clears the

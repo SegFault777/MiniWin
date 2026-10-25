@@ -3,8 +3,9 @@
 #define KEYBOARD_H
 #include "io.h"
 
-/* keyboard.h -- the PS/2 keyboard: scancodes (set 1) read from the i8042 controller by polling, turned into ASCII bytes with
- * Shift, Caps Lock and the extended keys (arrows, Right Alt) handled. Virtual machines emulate this; USB keyboards are not supported yet. */
+/* keyboard.h -- the keyboard: PS/2 scancodes (set 1) read from the i8042 controller by polling, turned into ASCII bytes with
+ * Shift and the extended keys (arrows, Right Alt) handled. USB keyboards (usb/hid.h) feed the SAME stream through
+ * keyboard_inject(): everything above this file asks keyboard_poll_key() and neither knows nor cares which wire a key came down. */
 
 #define KBD_DATA_PORT   0x60
 #define KBD_STATUS_PORT 0x64
@@ -72,6 +73,18 @@ static int ext_prefix_pending = 0;
 
 static inline int keyboard_ctrl_held(void) { return ctrl_held; }
 
+/* A small ring of keys that did not come from the i8042: the USB HID driver (usb/hid.h) pushes finished key codes here
+ * (ASCII, or KEY_UP.. for the special ones) and sets shift_held/ctrl_held itself from the report's modifier byte. */
+#define KBD_Q_SIZE 32
+static int kbd_q[KBD_Q_SIZE];
+static int kbd_q_head = 0, kbd_q_tail = 0;
+static inline void keyboard_inject(int key) {
+    int next = (kbd_q_tail + 1) % KBD_Q_SIZE;
+    if (next == kbd_q_head) return;                 /* full: drop the key rather than the kernel */
+    kbd_q[kbd_q_tail] = key;
+    kbd_q_tail = next;
+}
+
 /* Returns:
  *   > 0   : an actual ASCII character, somebody pressed a real key
  *   KEY_UP/DOWN/LEFT/RIGHT/F7/RALT (negative) : a special key, no ASCII for you
@@ -79,7 +92,13 @@ static inline int keyboard_ctrl_held(void) { return ctrl_held; }
  *           either way, move along
  * Non-blocking, call it every loop iteration and don't be shy about it. */
 static inline int keyboard_poll_key(void) {
+    if (kbd_q_head != kbd_q_tail) {                 /* a USB key is waiting: it goes first */
+        int k = kbd_q[kbd_q_head];
+        kbd_q_head = (kbd_q_head + 1) % KBD_Q_SIZE;
+        return k;
+    }
     u8 status = inb(KBD_STATUS_PORT);
+    if (status == 0xFF) return KEY_NONE;   /* an empty bus reads all ones: no i8042 (USB-only machine) */
     if (!(status & 0x01)) return KEY_NONE; /* keyboard's got nothing to say */
     if (status & 0x20) {
         /* This byte is the MOUSE's, not the keyboard's -- bit 5 is how

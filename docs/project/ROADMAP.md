@@ -1,26 +1,35 @@
 # Roadmap and known limits
 
-## Where 1.1-alpha-6 stands
+## Where 1.1-alpha-9 stands
 
-New in alpha-2: an AHCI driver (`sata` ids), a block layer, boot-disk location on every bus, and the Korean font stored
-compressed (kernel image ~337 KB of 512 KB). See [CHANGELOG.md](CHANGELOG.md). New in alpha-1: MiniFiles ([MINIFILES.md](../user/MINIFILES.md)), `os-inst` ([OS-INSTALL.md](../user/INSTALLING.md)) with the storage
-layer under it ([STORAGE-IDS.md](../dev/STORAGE-IDS.md), [BOOT-PROCESS.md](../dev/BOOT-PROCESS.md)), Terminal scrollback (Up/Down), the GPL-3.0
-license ([LICENSING.md](LICENSING.md)).
+Since alpha-8: a **real file system** (MWFS: directories, `/` and `/mnt/<id>`, unlimited documents and programs, crash-safe by
+construction, `part` to format/mount/check/edit partitions); **USB** keyboards, mice (wheel) and tablets on xHCI, EHCI and OHCI;
+`os-inst <id> <arch>`; a MiniShell prompt that shows the current directory and Unix/Windows-style commands; **menu bars** in MiniShell,
+MiniWeb and MiniFiles; scroll bars you can drag and the mouse wheel, also in Notepad and MiniShell; the apps renamed **MINIWEB** and
+**MINISHELL**. See [CHANGELOG.md](CHANGELOG.md).
 
 ## Known limits
 
-* **Storage drivers.** Legacy ATA (PIO, LBA28: IDE disks, and SATA disks the firmware shows in IDE/compatibility mode) and AHCI
-  SATA (DMA; disks capped at the first 128 GB like IDE) and LSI Logic / Fusion-MPT SCSI (VMware/VirtualBox "LSI Logic",
-  polled). USB storage is recognised in storage ids but has no driver, so `os-inst` cannot reach them and a
-  MiniWin installed on one could not run. AHCI and MPT have only been run on QEMU.
-* **Install targets.** An existing partition (MiniWin cannot create or resize partitions) of at least 1 MB, on a BIOS
-  machine; whole-disk and primary-partition installs can start by themselves (the latter only behind a blank MBR),
-  logical and GPT partitions need a boot manager; no UEFI loader.
-* **Disk size.** LBA28: the first 128 GB.
-* **Files.** Four document slots and four program slots, no folders, no rename/copy/move. Documents are limited to 4096
-  bytes, programs to 24576.
-* **A resolved ARP entry never expires**; the disk journal assumes a drive writes one sector atomically and in order.
+* **Storage drivers.** Legacy ATA (PIO, LBA28: IDE disks, and SATA disks the firmware shows in IDE/compatibility mode), AHCI SATA
+  (DMA), LSI Logic / Fusion-MPT SCSI, NVMe, the boot floppy and ATAPI CD/DVD (read-only). **USB storage** has no driver, so `os-inst` and `part`
+  cannot reach USB disks. All of it has only been run on QEMU.
+* **USB.** Keyboards, mice and tablets only; no hubs (a device behind one is invisible), no UHCI, no interrupts; verified on QEMU's
+  models, not on real hardware. The EHCI-to-companion hand-off for low/full-speed devices follows the specification but could not be
+  exercised on QEMU.
+* **Install targets.** An existing partition of at least 1 MB (create one with `part create`), on a BIOS machine; whole-disk and
+  primary-partition installs can start by themselves (the latter only behind a blank MBR), logical and GPT partitions need a boot
+  manager; no UEFI loader. `os-inst` takes `i386`; `x86_64` is refused because there is no 64-bit kernel.
+* **Partition editing.** MBR disks only, primary partitions 1-4; GPT, extended and logical partitions can be listed, formatted and
+  mounted but not edited.
+* **Disk size.** LBA28: the first 128 GB; an MWFS volume is limited to 2^32 sectors, a root volume written by `os-inst` to 8 GB.
+* **Files.** Documents are limited to 4096 bytes (Notepad's buffer), programs to 24576. File names are 31 characters
+  (`A-Z a-z 0-9 . _ - ,`); paths 96. No timestamps, permissions or links yet. Directories cannot be moved between volumes, and a
+  directory is not removed with its contents (`rm` takes empty ones only). Old disks (alpha-8 and before) are not converted.
+* **Desktop.** Up to 64 documents and 32 programs get an index entry (the desktop, Notepad, MiniFiles); MiniFiles still shows a flat list
+  of `/docs` and `/progs`. Notepad's menu bar is its own older code, not the shared widget.
+* **A resolved ARP entry never expires**; the file system assumes a drive writes one sector atomically and in order.
 * **TLS.** TLS 1.2 only, no revocation checking, no name constraints (certificates that make either critical are refused).
+* **Ring 3.** Everything runs in ring 0, with no memory protection (this was planned for alpha-9 and has not been done).
 
 ## The kernel size budget
 
@@ -30,9 +39,19 @@ bytes, `kernel/lz.h`) and is inflated to `0x7D0000` at boot: the image is about 
 headroom, so the budget is no longer the constraint it was. Still available if it ever is: more tables inflated the
 same way (`tools/gen_hangul_font.py` has the compressor), moving `.bss` tables to high memory, loading the kernel above 1 MB.
 
-## Ideas for the next alphas
+## The next alphas
 
-* **next:** more virtual-machine / hardware compatibility (NICs: e1000e, vmxnet3, PCnet, virtio-net); more storage buses
-  (virtio-scsi, VMware Paravirtual SCSI, NVMe namespaces beyond the first); a partition-table tool (`os-part`?); MiniFiles: rename/copy, more slots.
-* **later:** NVMe and USB storage; GPT/UEFI boot; reading a disk image into MiniFiles; per-file permissions are out of scope.
-* Translate MiniFiles' labels and messages to Korean.
+**1.1-alpha-10** (planned, in the order the author asked for it):
+
+* MiniFiles rebuilt as an **explorer**: a folder tree on the left, the contents of the selected folder on the right (name, size, type,
+  modified), a toolbar, a status bar with the number of objects and the free space; **Save As** rebuilt the same way (*Save in:*, up one
+  level, file list, *File name:*, *Save as type:*, Save/Cancel).
+* **Kerning** for the text renderer (the Latin font is monospaced; "MINIWEB" shows it).
+* All UI pieces (buttons, scroll bars, fields, menus, dialogs) as proper modules, and the headers of `kernel/` out of one crowded
+  folder into subdirectories.
+* Kernel and memory-management modernisation, a real **SDK** (`sdk/`) and a richer MWP API, icons in the start menu, taskbar, title
+  bars and warning dialogs.
+* Carried over: **ring 3** (user mode and memory protection).
+
+Other ideas, no order: more virtual-machine / hardware compatibility (NICs: e1000e, vmxnet3, PCnet, virtio-net; storage: virtio-scsi,
+VMware Paravirtual SCSI, NVMe namespaces beyond the first); USB hubs and USB storage; GPT/UEFI boot; Korean labels in MiniFiles' list.

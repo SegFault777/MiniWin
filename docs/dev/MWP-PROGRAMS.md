@@ -1,7 +1,7 @@
 # Programs (`.MWP`)
 
 A **`.MWP`** ("MiniWin Program") is a small flat binary that the kernel copies to a fixed address and jumps into. This page documents
-the interface **as it is today** (1.1-alpha-8); a larger SDK with a proper API is planned and will extend it.
+the interface **as it is today** (1.1-alpha-9); a larger SDK with a proper API is planned and will extend it.
 
 > **Important: there is no isolation.** MiniWin has no paging and no ring 3 yet. A program runs in ring 0 with the kernel: a buggy
 > program can crash the machine, overwrite kernel memory or hang it, exactly as easily as a kernel bug could. Ring 3 is planned
@@ -12,8 +12,9 @@ the interface **as it is today** (1.1-alpha-8); a larger SDK with a proper API i
 * Raw x86 machine code, compiled freestanding (no libc, no startup files, no relocation) and **linked to run at `0x8F1000`**
   (`MWP_LOAD_ADDR`). The first byte (plus an optional entry offset, normally 0) is the first instruction; it is called with no
   arguments.
-* At most **24,576 bytes** (`PROG_MAX_BYTES`), stored in one of **4 program slots** on the disk. The slot header carries the name
-  and length; the file itself is pure code and data.
+* At most **24,576 bytes** (`PROG_MAX_BYTES`), stored as an ordinary file in `/progs` of the root file system (the
+  entry offset is kept in the file's inode, see [DISK-LAYOUT.md](DISK-LAYOUT.md)); the file itself is pure code and data. Any number
+  of programs fit (the desktop and MiniFiles show the first 32). `cp` can copy a program in from a mounted disk.
 * One program runs at a time, and it must return (or loop calling `key_poll`) -- there is no scheduler.
 
 ## The syscall table
@@ -39,11 +40,11 @@ Colours are 32-bit `0x00RRGGBB`. The table is read-only for programs and its ord
 
 ```sh
 tools/build_mwp.sh programs/greeter.c        # -> build/greeter.mwp (flat binary, linked at 0x8F1000)
-python3 tools/install_mwp.py build/os-image.img <slot 0-3> GREETER.MWP build/greeter.mwp
+python3 tools/install_mwp.py build/os-image.img 0 GREETER.MWP build/greeter.mwp   # the 0 is a leftover slot number, ignored; installing again replaces
 ```
 
-`tools/install_all.sh` does this for the sample program (`programs/greeter.c`, slot 0). The program then shows up as a desktop
-shortcut, in MiniFiles and in the Terminal's `apps`, and starts with a double-click or `run greeter`.
+`tools/install_all.sh` does this for the sample program (`programs/greeter.c`, as `/progs/GREETER.MWP`). The program then shows up as a desktop
+shortcut, in MiniFiles and in MiniShell's `apps`, and starts with a double-click or `run greeter`.
 
 ## Writing one
 

@@ -32,11 +32,11 @@ The older message *"MiniWin: DISK READ ERROR"* no longer exists; it is replaced 
 * Use a supported card: Intel e1000 family or Realtek RTL8139 ([FILES-AND-DISKS.md](FILES-AND-DISKS.md)). VMware's *vmxnet3* and
   *e1000e* and VirtualBox's *PCnet* are not supported yet.
 * The network must hand out addresses by DHCP (QEMU `-nic user`, VMware NAT and VirtualBox NAT do).
-* `fetch` in the Terminal shows the IP address, or *offline*.
+* `fetch` in MiniShell shows the IP address, or *offline*.
 
 ## Everything looks fine but a disk is missing in MiniFiles / `os-inst list`
 
-* USB disks are not supported.
+* USB disks are not supported. USB keyboards, mice and tablets are (xHCI/EHCI/OHCI); devices behind a USB hub are not seen, and neither are Intel UHCI controllers.
 * A SATA disk behind a RAID-mode controller is not seen (only AHCI is supported).
 * SCSI disks must be on an LSI Logic controller; other SCSI adapters (BusLogic, VMware Paravirtual, virtio) are not supported.
 

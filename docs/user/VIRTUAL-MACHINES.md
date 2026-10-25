@@ -25,11 +25,18 @@ VirtualBox by the developer. If something here does not match what you see, the 
 | what | works | does not |
 |---|---|---|
 | disk controller | **floppy (1.44 MB, the boot floppy)**, IDE, **SATA (AHCI)** (VirtualBox's default, VMware "SATA"), **LSI Logic / LSI Logic SAS** (VMware's SCSI default, VirtualBox "LsiLogic"), **NVMe** (VMware 17+, VirtualBox 6.1+) | BusLogic, VMware Paravirtual SCSI, virtio-blk/virtio-scsi, USB storage |
+| USB controller | **xHCI** (VMware "USB 3.x", VirtualBox "USB 3.0"), **EHCI** ("USB 2.0"), **OHCI** (VirtualBox "USB 1.1"), with the keyboard, mouse (wheel too) and "USB tablet" the hypervisor presents | Intel UHCI (VMware's "USB 1.1"), USB hubs, USB storage |
 | network card | **Intel e1000** family: VMware "e1000", VirtualBox "Intel PRO/1000 MT Desktop / MT Server / T Server"; RTL8139 | VMware e1000e and vmxnet3, VirtualBox PCnet-FAST III / virtio-net |
+| input | PS/2 keyboard and mouse (with the wheel), USB keyboard/mouse/tablet | |
 | shut down | ACPI power-off: the VM really switches off | |
 
 MiniWin finds the disk it was booted from by itself, on any of those buses (see BOOT-PROCESS.md), so the controller type does
-not need to be configured anywhere. A second disk of any supported type can be a target for `os-inst`.
+not need to be configured anywhere. A second disk of any supported type can be a target for `os-inst` or a data disk for `part format` / `part mount`.
+
+**Pointer and keyboard:** the default pointing device of VirtualBox and recent VMware is an *absolute* "USB tablet" (the pointer follows the host's
+exactly, no capture); MiniWin handles it through its USB driver. Which USB controller to enable is a VM setting: xHCI or OHCI/EHCI work, plain UHCI does not.
+The USB driver is verified on QEMU's xHCI/EHCI/OHCI models only; real hardware and the VMware/VirtualBox models may expose differences.
+If the keyboard is dead on a machine with no PS/2 controller, `lsusb` (when you can reach a shell) and the serial `[USB]` log say what was found.
 
 ## If it does not boot
 

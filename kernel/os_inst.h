@@ -5,17 +5,20 @@
 #include "fs.h"
 #include "chain_mbr.h"
 
-/* os_inst.h -- copies the running MiniWin onto another storage area (the terminal's `os-inst <id>`).
+/* os_inst.h -- copies the running MiniWin onto another storage area (the terminal's `os-inst <id> [<arch>]`).
  *
- * WHAT GETS WRITTEN. One complete installation = the fixed 2048-sector layout of fs.h, starting at the target's
- * first sector (the whole device for "<type><n>00", or the partition's first sector):
+ * WHAT GETS WRITTEN. One complete installation = the layout of fs.h, starting at the target's first sector (the whole
+ * device for "<type><n>00", or the partition's first sector):
  *     LBA 0          the boot sector (boot/boot.asm) with its install fields patched: where this installation starts,
  *                    and a fresh random install id (so the kernel can find its own disk again at boot)
  *     LBA 1..1028    stage 2 + the kernel                     } copied from the disk MiniWin booted from
- *     LBA 1261..1964 the icon catalog                         }
- *     everything else (document slots, program slots, journals, headroom)  ->  zeros. A fresh system starts
- *                    with NO user data, and stale bytes in the target can never be mistaken for a file.
- * Only these 2048 sectors are written; the rest of a bigger partition is left alone.
+ *     LBA 1029..1732 the icon catalog                         }
+ *     LBA 1733..     a FRESH, EMPTY root filesystem (MWFS), formatted over the rest of the target (up to 8 GB of it; a
+ *                    bigger partition keeps its tail for `part format` + `part mount`). A new system starts with NO
+ *                    user data, and stale bytes in the target can never be mistaken for a file.
+ * <arch> is the processor architecture the installation is for. MiniWin is a 32-bit x86 system, so the only values with
+ * a meaning today are x86 / i386 / ia32 / i686 / 32; anything else is refused with a clear message instead of writing an
+ * installation that could not start.
  *
  * HOW IT STAYS SAFE.
  *   - The target was already vetted by st_resolve() (exists, real partition, big enough, not where MiniWin is
@@ -43,6 +46,7 @@
 #define INST_ERR_WRITE        2   /* the target refused a sector */
 #define INST_ERR_READ_TARGET  3   /* could not read the target back */
 #define INST_ERR_VERIFY       4   /* what is on the target is not what was written */
+#define INST_ERR_FORMAT       5   /* the root filesystem could not be written or did not read back */
 
 /* What happened to the DISK's boot sector (relevant for partition installs only) */
 #define INST_MBR_NONE         0   /* whole-device install: sector 0 is MiniWin's own boot sector, nothing to chain */
@@ -54,7 +58,10 @@ typedef struct {
     int phase;
     st_target_t t;
     u32 id;               /* the install id patched into the new boot sector */
-    u32 next;             /* position in the current phase (0 .. ST_INSTALL_SECTORS) */
+    u32 next;             /* position in the current phase (0 .. INST_COPY_SECTORS) */
+    int formatted;        /* the root filesystem has been written */
+    u32 root_sectors;     /* how big a root volume this installation gets */
+    int fmt_err;          /* mwfs error from the format, if any */
     int err;
     u32 err_lba;          /* the installation-relative sector the error is about */
     int mbr_result;
@@ -65,14 +72,22 @@ static inst_job_t inst;
 static u32 inst_id_override = 0;
 
 /* Is this installation-relative sector copied from the running system (vs. left zero)? */
-static inline int inst_is_system_sector(u32 lba) {
-    if (lba < FS_BASE_LBA) return 1;                                      /* boot sector, stage 2, kernel */
-    if (lba >= ICON_BASE_LBA && lba < ICON_BASE_LBA + ICON_MAX_SLOTS * ICON_SLOT_SECTORS) return 1;   /* icon catalog */
-    return 0;
-}
+static inline int inst_is_system_sector(u32 lba) { return lba < MW_ROOTFS_LBA; }     /* boot sector, stage 2, kernel, icon catalog */
 
-/* The order sectors are written in: 1, 2, ... 2047, and then 0 (see the safety notes above). */
-static inline u32 inst_lba_for(u32 k) { return (k + 1) % ST_INSTALL_SECTORS; }
+/* The sectors that are COPIED, in the order they are written: 1, 2, ... 1732, and then 0 (see the safety notes above). The
+ * root filesystem (LBA 1733 and up) is not copied but formatted, just before sector 0. */
+#define INST_COPY_SECTORS MW_ROOTFS_LBA
+static inline u32 inst_lba_for(u32 k) { return (k + 1) % INST_COPY_SECTORS; }
+
+/* The architecture word of `os-inst <id> <arch>`: 1 = 32-bit x86 (what this kernel is), 0 = known but not buildable here,
+ * -1 = not an architecture name. Case-insensitive. */
+static inline int inst_arch_check(const char *a) {
+    static const char *const ok[] = { "x86", "i386", "i486", "i586", "i686", "ia32", "32" };
+    static const char *const other[] = { "x64", "x86_64", "x86-64", "amd64", "arm", "arm64", "aarch64", "riscv", "riscv64", "ppc", "mips", "64" };
+    for (unsigned i = 0; i < sizeof ok / sizeof *ok; i++) if (mwfs_name_eq(a, ok[i])) return 1;
+    for (unsigned i = 0; i < sizeof other / sizeof *other; i++) if (mwfs_name_eq(a, other[i])) return 0;
+    return -1;
+}
 
 /* A fresh, non-zero id that differs from the running system's. TSC + ticks-ish noise + the previous id through an
  * xorshift: unique enough to tell two installations apart (it is an identifier, not a secret). */
@@ -108,6 +123,9 @@ static inline void inst_begin(const st_target_t *t, u32 running_id) {
     inst.id = inst_new_id(running_id);
     inst.phase = INST_PHASE_WRITE;
     inst.next = 0; inst.err = INST_ERR_NONE; inst.err_lba = 0; inst.mbr_result = INST_MBR_NONE;
+    inst.formatted = 0; inst.fmt_err = 0;
+    u32 room = t->sectors > MW_ROOTFS_LBA ? t->sectors - MW_ROOTFS_LBA : 0;
+    inst.root_sectors = room > 16u * 1024u * 1024u ? 16u * 1024u * 1024u : room;       /* 8 GB: the bitmap walk of `part check` stays quick */
 }
 
 static inline void inst_fail(int err, u32 lba) { inst.phase = INST_PHASE_FAILED; inst.err = err; inst.err_lba = lba; }
@@ -154,15 +172,31 @@ static inline int inst_step(u32 budget) {
     while (budget-- > 0) {
         if (inst.phase == INST_PHASE_WRITE) {
             u32 lba = inst_lba_for(inst.next);
+            if (lba == 0 && !inst.formatted) {                            /* everything but the boot sector is down: now the filesystem */
+                mwfs_vol_t v;
+                mwfs_zero(&v, sizeof v);
+                v.dev = inst.t.pos; v.base = inst.t.base + MW_ROOTFS_LBA; v.sectors = inst.root_sectors;
+                int e = mwfs_mkfs(&v, "MINIWIN");
+                if (e == MWFS_OK) e = vfs_make_root_layout(&v);
+                inst.fmt_err = e;
+                if (e != MWFS_OK) { inst_fail(INST_ERR_FORMAT, MW_ROOTFS_LBA); return inst.phase; }
+                inst.formatted = 1;
+            }
             if (!inst_expected(lba, want)) { inst_fail(INST_ERR_READ_SOURCE, lba); return inst.phase; }
             if (!inst_target_write(lba, want)) { inst_fail(INST_ERR_WRITE, lba); return inst.phase; }
-            if (++inst.next >= ST_INSTALL_SECTORS) { inst.phase = INST_PHASE_VERIFY; inst.next = 0; }
+            if (++inst.next >= INST_COPY_SECTORS) { inst.phase = INST_PHASE_VERIFY; inst.next = 0; }
         } else if (inst.phase == INST_PHASE_VERIFY) {
             u32 lba = inst_lba_for(inst.next);
             if (!inst_expected(lba, want)) { inst_fail(INST_ERR_READ_SOURCE, lba); return inst.phase; }
             if (!inst_target_read(lba, got)) { inst_fail(INST_ERR_READ_TARGET, lba); return inst.phase; }
             for (int i = 0; i < 512; i++) if (want[i] != got[i]) { inst_fail(INST_ERR_VERIFY, lba); return inst.phase; }
-            if (++inst.next >= ST_INSTALL_SECTORS) { inst.phase = INST_PHASE_BOOTCODE; inst.next = 0; }
+            if (++inst.next >= INST_COPY_SECTORS) {
+                mwfs_vol_t v;                                              /* and the new root filesystem must open and be clean-looking */
+                mwfs_zero(&v, sizeof v);
+                v.dev = inst.t.pos; v.base = inst.t.base + MW_ROOTFS_LBA; v.sectors = inst.root_sectors;
+                if (mwfs_open(&v) != MWFS_OK) { inst_fail(INST_ERR_FORMAT, MW_ROOTFS_LBA); return inst.phase; }
+                inst.phase = INST_PHASE_BOOTCODE; inst.next = 0;
+            }
         } else if (inst.phase == INST_PHASE_BOOTCODE) {
             inst_bootcode();
             inst.phase = INST_PHASE_DONE;
@@ -177,8 +211,8 @@ static inline int inst_active(void) { return inst.phase >= INST_PHASE_WRITE && i
 
 /* 0..100 for a progress display: writing is the first half, verifying the second. */
 static inline u32 inst_percent(void) {
-    if (inst.phase == INST_PHASE_WRITE)   return inst.next * 50 / ST_INSTALL_SECTORS;
-    if (inst.phase == INST_PHASE_VERIFY)  return 50 + inst.next * 50 / ST_INSTALL_SECTORS;
+    if (inst.phase == INST_PHASE_WRITE)   return inst.next * 50 / INST_COPY_SECTORS;
+    if (inst.phase == INST_PHASE_VERIFY)  return 50 + inst.next * 50 / INST_COPY_SECTORS;
     if (inst.phase == INST_PHASE_BOOTCODE || inst.phase == INST_PHASE_DONE) return 100;
     return 0;
 }
@@ -189,6 +223,7 @@ static inline const char *inst_error_text(int e) {
         case INST_ERR_WRITE:       return "the target refused a write";
         case INST_ERR_READ_TARGET: return "could not read the target back";
         case INST_ERR_VERIFY:      return "what is on the target is not what was written";
+        case INST_ERR_FORMAT:      return "the new filesystem could not be written to the target";
         default:                   return "";
     }
 }

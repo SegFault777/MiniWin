@@ -2,12 +2,12 @@
 #ifndef MW_APPS_WEB_STATE_H
 #define MW_APPS_WEB_STATE_H
 
-/* apps/web/state.h -- WEB.MWP state, window geometry, address-bar state, bookmarks.
+/* apps/web/state.h -- MINIWEB.MWP state, window geometry, address-bar state, bookmarks.
  * (Split out of kernel.c in pre-29; it is still one translation unit, so modules are included by
  * kernel.c in dependency order -- see the module map there.) */
 
 /* ============================================================
- * WEB.MWP -- MiniWeb, a tiny HTTP client browser.
+ * MINIWEB.MWP -- MiniWeb, a tiny HTTP client browser.
  *
  * This is the actual "layer above TCP/HTTP" -- an application a person
  * clicks on, not a headless bring-up probe. Two hardcoded target rows
@@ -79,7 +79,7 @@ static int  web_waiting_net = 0;             /* a load was requested before DHCP
 static int  web_scroll_px = 0;              /* how far the page is scrolled, in pixels */
 static int  web_doc_h = 0;                  /* the laid-out page's height, in pixels */
 static char web_title[100];                 /* the page's <title>, for the status line */
-#define WEB_SB_W 12                         /* scrollbar width, px */
+#define WEB_SB_W 12                         /* scrollbar width, px (= SB_W in ui/scrollbar.h) */
 static void web_start_fetch(int https, const char *host, u16 port, const char *path);
 
 static inline int web_btn_close_x(void) { return win_btn_close_x(&web_win, 2); }
@@ -99,7 +99,7 @@ static int web_titlebar_drag_hit(int px, int py) {
     return 1;
 }
 
-static inline int web_header_y(void) { return web_win.y + TITLEBAR_H + 3; }
+static inline int web_header_y(void) { return web_win.y + TITLEBAR_H + MB_H + 3; }
 
 /* URL bar row: a sunken text field spanning most of the window's width,
  * with a small "GO" button glued to its right edge -- same sunken/

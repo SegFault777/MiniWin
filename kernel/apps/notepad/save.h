@@ -214,4 +214,27 @@ static inline int edit_y(void) { return active_np->win.y + TITLEBAR_H + FONT_CEL
 static inline int edit_w(void) { return active_np->win.w - 10; }
 static inline int edit_h(void) { return active_np->win.h - TITLEBAR_H - FONT_CELL - 10; }
 
+/* ---- the text area's wrapping, in ONE place so drawing, the scroll bar and the follow-the-typing logic cannot disagree ----
+ * Text wraps at the edge of the area minus the scroll bar. Returns how many rows the text occupies (the row the cursor is in
+ * counts, so an empty note has 1); *end_rel gets the cursor's x offset inside its row, in pixels. */
+static inline int np_wrap_limit(int area_w) { return area_w - SB_W - FONT_CELL - 4; }
+static inline int np_visible_rows(int area_h) { int r = (area_h - 2) / (FONT_CELL + 1); return r < 1 ? 1 : r; }
+static int np_rows_ex(const notepad_t *np, int area_w, int *end_rel) {
+    int limit = np_wrap_limit(area_w), rel = 0, row = 0;
+    for (u32 i = 0; i < np->text_len; ) {
+        int clen = ko_utf8_char_len((unsigned char)np->text_buf[i]);
+        if (clen == 3 && i + 3 <= np->text_len) {
+            if (rel > limit) { rel = 0; row++; }
+            rel += FONT_CELL; i += 3;
+            continue;
+        }
+        char c = np->text_buf[i];
+        if (c == '\n' || rel > limit) { rel = 0; row++; if (c == '\n') { i++; continue; } }
+        rel += FONT_CELL; i++;
+    }
+    if (end_rel) *end_rel = rel;
+    return row + 1;
+}
+static inline int np_rows(const notepad_t *np, int area_w) { return np_rows_ex(np, area_w, 0); }
+
 #endif

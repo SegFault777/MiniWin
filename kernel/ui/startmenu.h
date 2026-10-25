@@ -18,7 +18,7 @@
 #define STARTMENU_W         178   /* fits "MiniFiles.mwp" (13 glyphs @ FONT_CELL) plus banner + margin */
 #define STARTMENU_H         138
 #define STARTMENU_ITEM_H    17
-#define STARTMENU_ITEMS     6   /* 0=Notepad.mwp, 1=Setting.mwp, 2=Web.mwp, 3=Terminal.mwp, 4=MiniFiles.mwp, 5=power */
+#define STARTMENU_ITEMS     6   /* 0=Notepad.mwp, 1=Setting.mwp, 2=MiniWeb.mwp, 3=MiniShell.mwp, 4=MiniFiles.mwp, 5=power */
 #define STARTMENU_POWER_IDX (STARTMENU_ITEMS - 1)
 
 static inline int start_menu_x(void) { return STARTBTN_X; }
@@ -113,7 +113,7 @@ static void draw_start_menu(int mx, int my) {
     bb_fillrect(x + 1, y + 1, STARTMENU_BANNER_W - 1, h - 2, TH_ACCENT);
     font_draw_string_vertical(x + 3, y + h - 9, "MINIWIN", TH_ACCENT_TEXT);
 
-    const char *labels[5] = {"Notepad.mwp", "Setting.mwp", "Web.mwp", "Terminal.mwp", "MiniFiles.mwp"};
+    const char *labels[5] = {"Notepad.mwp", "Setting.mwp", "MiniWeb.mwp", "MiniShell.mwp", "MiniFiles.mwp"};
     int ix = x + STARTMENU_BANNER_W + 2;
     int iw = w - STARTMENU_BANNER_W - 4;
     for (int i = 0; i < STARTMENU_ITEMS; i++) {

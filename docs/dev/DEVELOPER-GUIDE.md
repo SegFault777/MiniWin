@@ -10,14 +10,14 @@
 * Budgets that bite (all checked by `build.sh`): the **kernel image** has 512 KB (1024 sectors, 524,288 bytes) and
   image + `.bss` + stack must end below `0x9FC00`. At 1.1-alpha-2 about **187 KB of image and 186 KB of `.bss`** remain (the Korean font is stored compressed); see
   [ROADMAP.md](../project/ROADMAP.md) for the history of that budget. Check `build.sh`'s last lines before and after a feature.
-* The Terminal is **40 columns wide** and shows 14 rows (Up/Down scroll the history); every `term_print()` string must fit
+* MiniShell is **40 columns wide** and shows 14 rows (Up/Down scroll the history); every `term_print()` string must fit
   40 columns (it truncates silently).
 * Warnings are tracked: the build currently has 8 (2 come from the linker, the rest are old). A change should not add one.
 
 ## Adding a window application (the checklist)
 
 There is no application framework: each app is hand-wired into the same places. MiniFiles is the most recent example
-(`git show` the commit that added it); Terminal is the template. For an app `Foo` with window id `WIN_ID_FOO`:
+(`git show` the commit that added it); MiniShell is the template. For an app `Foo` with window id `WIN_ID_FOO`:
 
 | file | what to add |
 |---|---|

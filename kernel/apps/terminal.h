@@ -2,7 +2,7 @@
 #ifndef MW_APPS_TERMINAL_H
 #define MW_APPS_TERMINAL_H
 
-/* apps/terminal.h -- TERMINAL.MWP: the command-line app and its commands.
+/* apps/terminal.h -- MINISHELL.MWP: the command-line app and its commands.
  * (Split out of kernel.c in pre-29; it is still one translation unit, so modules are included by
  * kernel.c in dependency order -- see the module map there.) */
 
@@ -21,7 +21,7 @@ static void system_restart(void);
 static void system_shutdown(void);
 
 /* ============================================================
- * Terminal.mwp -- MiniWin's command-line app. Built into the kernel
+ * MiniShell.mwp -- MiniWin's command-line app. Built into the kernel
  * today for the same historical reason NOTEPAD/SETTING/WEB are (they
  * all predate kernel/mwp.h's loadable-program format) -- see this
  * file's "Project name: MWP" note in README.md. Its actual job,
@@ -59,7 +59,7 @@ static void system_shutdown(void);
 #define TERM_INPUT_MAXLEN 64
 
 /* One line of scrollback, fixed-width and NUL-terminated -- plain
- * ASCII only (same as the URL bar; see WEB.MWP's own reasoning for why
+ * ASCII only (same as the URL bar; see MINIWEB.MWP's own reasoning for why
  * user-typed command-line text doesn't route through the Hangul IME).
  * A ring buffer (term_scroll_head wraps around TERM_SCROLLBACK_ROWS)
  * rather than a growable log, because this kernel has no heap to grow
@@ -107,10 +107,10 @@ static void term_print_blank(void) { term_print(""); }
  * in-place-ish (writes into caller-owned buffers) -- every command
  * here takes at most one argument (a name), so this never needed to
  * be a real argv[]/argc parser. Returns the token count. */
-static int term_tokenize(const char *s, char tokens[2][TERM_INPUT_MAXLEN + 1]) {
+static int term_tokenize(const char *s, char tokens[5][TERM_INPUT_MAXLEN + 1]) {
     int count = 0;
     u32 i = 0;
-    while (count < 2) {
+    while (count < 5) {
         while (s[i] == ' ') i++;
         if (!s[i]) break;
         u32 j = 0;
@@ -133,19 +133,44 @@ static int term_streq(const char *a, const char *b) {
  * that table yet, and building it speculatively would just be dead
  * weight -- see this project's general house style on not
  * pre-building things only one caller needs. */
+/* Does the typed word match one of the space-separated names? (Unix name first, then the Windows one, then MiniWin's own.) */
+static int term_cmd_is(const char *typed, const char *names) {
+    u32 i = 0;
+    while (names[i]) {
+        char word[24]; u32 w = 0;
+        while (names[i] && names[i] != ' ' && w < sizeof(word) - 1) word[w++] = names[i++];
+        word[w] = 0;
+        while (names[i] == ' ') i++;
+        if (term_streq(typed, word)) return 1;
+    }
+    return 0;
+}
+
 static void term_cmd_help(void) {
-    term_print("?        - show this list");
-    term_print("peek     - list saved documents");
-    term_print("rd <n>   - read document n (1-4)");
-    term_print("del <n>  - delete document n (1-4)");
-    term_print("apps     - list installed programs");
-    term_print("run <nm> - load and run a program");
-    term_print("tick     - show the time and date");
-    term_print("fetch    - show system information");
-    term_print("os-inst  - install MiniWin (os-inst ?)");
-    term_print("wipe     - clear this screen");
-    term_print("re       - restart the machine");
-    term_print("off      - power off the machine");
+    term_print("?          - show this list");
+    term_print("ls [dir]   - list a directory  (dir)");
+    term_print("cd <dir>   - change directory (cd = /)");
+    term_print("pwd        - show the current directory");
+    term_print("mkdir <d>  - make a directory  (md)");
+    term_print("touch <f>  - make an empty file");
+    term_print("cat <file> - show a text file  (type)");
+    term_print("cp <a> <b> - copy a file       (copy)");
+    term_print("mv <a> <b> - move or rename    (move)");
+    term_print("rm <path>  - delete a file or an empty");
+    term_print("             directory (del <path>)");
+    term_print("peek       - list saved documents");
+    term_print("rd <n>     - read document n (see peek)");
+    term_print("del <n>    - delete document n");
+    term_print("apps       - list installed programs");
+    term_print("run <nm>   - load and run a program");
+    term_print("tick       - show the time and date");
+    term_print("fetch      - show system information");
+    term_print("part       - partitions (part ?)");
+    term_print("lsusb      - list USB devices  (plug)");
+    term_print("os-inst    - install MiniWin (os-inst ?)");
+    term_print("clear      - clear this screen (cls)");
+    term_print("reboot     - restart the machine");
+    term_print("shutdown   - power off the machine");
     term_print("Up/Down keys scroll this screen");
 }
 
@@ -176,13 +201,15 @@ static void term_cmd_peek(void) {
  * line longer than TERM_COLS -- term_print() already truncates, and a
  * saved .txt is exactly the kind of content that might genuinely be
  * wider than this window; `rd` is for a quick peek, not a full pager. */
+static void term_cmd_cat(const char *arg);                  /* shell_fs.h: shows a file by path */
 static void term_cmd_read(const char *arg) {
+    for (int i = 0; arg[i]; i++) if (arg[i] < '0' || arg[i] > '9') { term_cmd_cat(arg); return; }     /* not a number: a path */
     int n = 0;
     for (int i = 0; arg[i]; i++) {
         if (arg[i] < '0' || arg[i] > '9') { term_print("  bad slot number"); return; }
         n = n * 10 + (arg[i] - '0');
     }
-    if (n < 1 || n > FS_MAX_FILES) { term_print("  slot must be 1-4"); return; }
+    if (n < 1 || n > FS_MAX_FILES) { term_print("  no such document number (see peek)"); return; }
     int slot = n - 1;
     u32 len;
     if (!fs_check_slot(slot, &len)) { term_print("  that slot is empty"); return; }
@@ -208,13 +235,14 @@ static void term_cmd_read(const char *arg) {
  * one: Terminal is an expert tool by nature (typing an exact command
  * is already more deliberate than clicking an X), so this trusts
  * whoever typed it meant it. */
+static void term_cmd_zap(const char *arg);                    /* shell_fs.h: removes a file or an empty directory by path */
 static void term_cmd_del(const char *arg) {
     int n = 0;
     for (int i = 0; arg[i]; i++) {
-        if (arg[i] < '0' || arg[i] > '9') { term_print("  bad slot number"); return; }
+        if (arg[i] < '0' || arg[i] > '9') { term_cmd_zap(arg); return; }       /* not a number: a path, like `rm` */
         n = n * 10 + (arg[i] - '0');
     }
-    if (n < 1 || n > FS_MAX_FILES) { term_print("  slot must be 1-4"); return; }
+    if (n < 1 || n > FS_MAX_FILES) { term_print("  no such document number (see peek)"); return; }
     int slot = n - 1;
     u32 len;
     if (!fs_check_slot(slot, &len)) { term_print("  that slot is empty"); return; }
@@ -312,7 +340,7 @@ static void term_cmd_fetch(void) {
     append_uint(v, &l, sizeof(v), (int)(s % 60u)); append_str(v, &l, sizeof(v), " s");
     term_fetch_kv("Uptime", v);
 
-    term_fetch_kv("Shell", "Terminal.mwp");
+    term_fetch_kv("Shell", "MiniShell.mwp");
     l = 0;
     append_uint(v, &l, sizeof(v), VGA_WIDTH); append_str(v, &l, sizeof(v), "x"); append_uint(v, &l, sizeof(v), VGA_HEIGHT);
     append_str(v, &l, sizeof(v), " truecolor");
@@ -446,11 +474,16 @@ static void term_fmt_size(char *out, u32 *len, u32 cap, u32 sectors) {
     }
 }
 
+#include "shell_fs.h"
+#include "shell_part.h"
+
 static void term_inst_help(void) {
     term_print("os-inst - install MiniWin on a disk");
     term_print("  os-inst ?       this help");
     term_print("  os-inst list    disks and their ids");
-    term_print("  os-inst <id>    install onto <id>");
+    term_print("  os-inst <id> <arch>");
+    term_print("                  install onto <id>");
+    term_print("arch = i386 (32-bit; x86_64 later)");
     term_print("id = <type><disk><part>");
     term_print("  type  ide sata nvme scsi usb");
     term_print("  disk  1, 2, 3 ... (which disk)");
@@ -518,7 +551,7 @@ static void term_inst_list(void) {
         term_print(line);
     }
     if (!any) term_print("  no ide/sata/scsi/nvme disk found");
-    term_print("usb: no driver yet");
+    term_print("usb: keyboards/mice only (lsusb)");
 }
 
 static void term_inst_start(void) {
@@ -529,9 +562,14 @@ static void term_inst_start(void) {
 }
 
 /* os-inst <id> */
-static void term_cmd_osinst(const char *arg) {
+static void term_cmd_osinst(const char *arg, const char *arch) {
     if (arg[0] == 0 || term_streq(arg, "?")) { term_inst_help(); return; }
     if (term_streq(arg, "list")) { term_inst_list(); return; }
+    if (arch[0]) {
+        int a = inst_arch_check(arch);
+        if (a < 0) { char l2[TERM_COLS + 1]; u32 k = 0; append_str(l2, &k, sizeof(l2), "  unknown architecture: "); append_str(l2, &k, sizeof(l2), arch); term_print(l2); term_print("  arch: i386  (x86_64: not available yet)"); return; }
+        if (a == 0) { char l2[TERM_COLS + 1]; u32 k = 0; append_str(l2, &k, sizeof(l2), "  cannot install for "); append_str(l2, &k, sizeof(l2), arch); term_print(l2); term_print_wrapped("MiniWin is a 32-bit (i386) system; there is no 64-bit kernel yet, so only i386 installs can be made.", 2); return; }
+    }
     st_target_t t;
     int r = st_resolve(arg, &t);
     if (r != ST_OK) { term_print_wrapped(st_error_text(r), 2); return; }
@@ -564,7 +602,8 @@ static void term_cmd_osinst(const char *arg) {
         append_str(line, &l, sizeof(line), ")");
         term_print(line);
     }
-    term_print("It writes 1 MB there and erases it.");
+    term_print("It writes MiniWin + a new empty");
+    term_print("filesystem there and erases it.");
     term_print("Type YES to install; else cancels.");
     term_inst_target = t;
     term_inst_pending = 1;
@@ -617,7 +656,9 @@ static void term_install_poll(void) {
  * with no record of what triggered it), then clears the input line. */
 static void term_run_input(void) {
     char echoed[TERM_COLS + 1]; u32 el = 0;
-    append_str(echoed, &el, sizeof(echoed), "> ");
+    char prompt[40];
+    term_prompt_str(prompt, sizeof prompt);
+    append_str(echoed, &el, sizeof(echoed), prompt);
     append_str(echoed, &el, sizeof(echoed), term_input_buf);
     term_print(echoed);
 
@@ -637,7 +678,14 @@ static void term_run_input(void) {
         return;
     }
 
-    char tokens[2][TERM_INPUT_MAXLEN + 1];
+    if (part_pending.active) {                                  /* a format/delete/merge is waiting for its YES */
+        if (term_streq(term_input_buf, "YES")) part_exec_pending();
+        else { part_pending.active = 0; term_print("  cancelled, nothing was changed"); }
+        term_input_buf[0] = 0;
+        term_input_len = 0;
+        return;
+    }
+    char tokens[5][TERM_INPUT_MAXLEN + 1];
     int n = term_tokenize(term_input_buf, tokens);
 
     if (n == 0) {
@@ -654,17 +702,39 @@ static void term_run_input(void) {
         term_cmd_apps();
     } else if (term_streq(tokens[0], "run")) {
         term_cmd_run(n > 1 ? tokens[1] : "");
+    } else if (term_streq(tokens[0], "part")) {
+        term_cmd_part(n > 1 ? tokens[1] : "", n > 2 ? tokens[2] : "", n > 3 ? tokens[3] : "", n > 4 ? tokens[4] : "");
+    } else if (term_cmd_is(tokens[0], "lsusb plug")) {
+        term_cmd_usb();
+    } else if (term_cmd_is(tokens[0], "pwd where")) {
+        term_cmd_where();
+    } else if (term_cmd_is(tokens[0], "cd go")) {
+        term_cmd_go(n > 1 ? tokens[1] : "");
+    } else if (term_cmd_is(tokens[0], "ls dir look")) {
+        term_cmd_look(n > 1 ? tokens[1] : "");
+    } else if (term_cmd_is(tokens[0], "mkdir md dig")) {
+        term_cmd_dig(n > 1 ? tokens[1] : "");
+    } else if (term_cmd_is(tokens[0], "rm")) {
+        term_cmd_zap(n > 1 ? tokens[1] : "");
+    } else if (term_cmd_is(tokens[0], "cat type")) {
+        term_cmd_cat(n > 1 ? tokens[1] : "");
+    } else if (term_cmd_is(tokens[0], "touch new")) {
+        term_cmd_new(n > 1 ? tokens[1] : "");
+    } else if (term_cmd_is(tokens[0], "cp copy dup")) {
+        term_cmd_dup(n > 1 ? tokens[1] : "", n > 2 ? tokens[2] : "");
+    } else if (term_cmd_is(tokens[0], "mv move")) {
+        term_cmd_ship(n > 1 ? tokens[1] : "", n > 2 ? tokens[2] : "");
     } else if (term_streq(tokens[0], "tick")) {
         term_cmd_tick();
     } else if (term_streq(tokens[0], "fetch")) {
         term_cmd_fetch();
     } else if (term_streq(tokens[0], "os-inst")) {
-        term_cmd_osinst(n > 1 ? tokens[1] : "");
-    } else if (term_streq(tokens[0], "wipe")) {
+        term_cmd_osinst(n > 1 ? tokens[1] : "", n > 2 ? tokens[2] : "");
+    } else if (term_cmd_is(tokens[0], "clear cls wipe")) {
         term_cmd_wipe();
-    } else if (term_streq(tokens[0], "re")) {
+    } else if (term_cmd_is(tokens[0], "reboot re")) {
         system_restart();
-    } else if (term_streq(tokens[0], "off")) {
+    } else if (term_cmd_is(tokens[0], "shutdown poweroff off")) {
         system_shutdown();
     } else {
         char line[TERM_COLS + 1]; u32 l = 0;
@@ -696,7 +766,7 @@ static int term_titlebar_drag_hit(int px, int py) {
 }
 
 /* Input row sits at the bottom of the window (below the scrollback),
- * same "sunken text field" bevel language as WEB.MWP's URL bar --
+ * same "sunken text field" bevel language as MINIWEB.MWP's URL bar --
  * see that window's own comment for why sunken reads as "typeable." */
 #define TERM_INPUT_H 18
 static inline int term_input_y(void) { return term_win.y + term_win.h - TERM_INPUT_H - 3; }
@@ -706,17 +776,56 @@ static int term_input_hit(int px, int py) {
     return in_rect(px, py, term_input_x(), term_input_y(), term_input_w(), TERM_INPUT_H);
 }
 
-static inline int term_output_y(void) { return term_win.y + TITLEBAR_H + 4; }
+static inline int term_output_y(void) { return term_win.y + TITLEBAR_H + MB_H + 4; }
 static inline int term_output_h(void) { return term_input_y() - term_output_y() - 3; }
+
+
+/* ---------------------------------------------------------------- MiniShell's menu bar: the screen, the view, the tools, help */
+#define TERM_MENU_N 4
+static const mb_menu_t term_menus[TERM_MENU_N] = {
+    { { "Shell", "\xec\x85\xb8" }, 3, { { "Clear screen", "\xed\x99\x94\xeb\xa9\xb4 \xec\xa7\x80\xec\x9a\xb0\xea\xb8\xb0" }, { "Command list", "\xeb\xaa\x85\xeb\xa0\xb9 \xeb\xaa\xa9\xeb\xa1\x9d" }, { "Close window", "\xec\xb0\xbd \xeb\x8b\xab\xea\xb8\xb0" } } },
+    { { "View",  "\xeb\xb3\xb4\xea\xb8\xb0" }, 3, { { "Scroll up", "\xec\x9c\x84\xeb\xa1\x9c \xec\x8a\xa4\xed\x81\xac\xeb\xa1\xa4" }, { "Scroll down", "\xec\x95\x84\xeb\x9e\x98\xeb\xa1\x9c \xec\x8a\xa4\xed\x81\xac\xeb\xa1\xa4" }, { "Jump to newest", "\xeb\xa7\xa8 \xec\x95\x84\xeb\x9e\x98\xeb\xa1\x9c" } } },
+    { { "Tools", "\xeb\x8f\x84\xea\xb5\xac" }, 4, { { "Disks (part list)", "\xeb\x94\x94\xec\x8a\xa4\xed\x81\xac (part list)" }, { "Look here", "\xec\x97\xac\xea\xb8\xb0 \xeb\x91\x98\xeb\x9f\xac\xeb\xb3\xb4\xea\xb8\xb0" }, { "USB devices", "USB \xec\x9e\xa5\xec\xb9\x98" }, { "Time and date", "\xec\x8b\x9c\xea\xb0\x84\xea\xb3\xbc \xeb\x82\xa0\xec\xa7\x9c" } } },
+    { { "Help",  "\xeb\x8f\x84\xec\x9b\x80\xeb\xa7\x90" }, 2, { { "About MiniShell", "MiniShell \xec\xa0\x95\xeb\xb3\xb4" }, { "Command list", "\xeb\xaa\x85\xeb\xa0\xb9 \xeb\xaa\xa9\xeb\xa1\x9d" } } },
+};
+static void term_menu_run(const char *cmd) {          /* an item that is just a command: type it for the user, exactly as if they had */
+    u32 i = 0;
+    while (cmd[i] && i < TERM_INPUT_MAXLEN) { term_input_buf[i] = cmd[i]; i++; }
+    term_input_buf[i] = 0;
+    term_input_len = i;
+    term_run_input();
+}
+static void term_menu_action(int menu, int item) {
+    if (menu == 0) {
+        if (item == 0) term_cmd_wipe();
+        else if (item == 1) term_cmd_help();
+        else { term_win.open = 0; win_z_remove(WIN_ID_TERMINAL); }
+    } else if (menu == 1) {
+        if (item == 0) term_scroll_by(TERM_VISIBLE_ROWS - 2);
+        else if (item == 1) term_scroll_by(-(TERM_VISIBLE_ROWS - 2));
+        else term_scroll_off = 0;
+    } else if (menu == 2) {
+        static const char *const cmds[4] = { "part list", "ls", "lsusb", "tick" };
+        if (item >= 0 && item < 4) term_menu_run(cmds[item]);
+    } else {
+        if (item == 0) {
+            term_print("MiniShell - the MiniWin shell");
+            term_print("  " MW_VERSION ", " MW_SLOGAN);
+            term_print("  ? lists every command");
+        } else term_cmd_help();
+    }
+}
 
 static void draw_terminal_window(void) {
     int wx = term_win.x, wy = term_win.y, ww = term_win.w, wh = term_win.h;
 
-    ui_window_frame(wx, wy, ww, wh, term_win.maximized, "TERMINAL.MWP");
+    ui_window_frame(wx, wy, ww, wh, term_win.maximized, "MINISHELL.MWP");
     ui_titlebar_buttons(term_btn_min_x(), term_btn_max_x(), term_btn_close_x(), term_btn_y(),
                         pressed_btn_kind == BTN_MIN && pressed_btn_win == WIN_ID_TERMINAL,
                         pressed_btn_kind == BTN_MAX && pressed_btn_win == WIN_ID_TERMINAL,
                         pressed_btn_kind == BTN_CLOSE && pressed_btn_win == WIN_ID_TERMINAL);
+
+    mb_draw_bar(WIN_ID_TERMINAL, wx, wy, ww, term_menus, TERM_MENU_N);
 
     /* Scrollback: black background (classic terminal look, and a clean
      * visual break from every other window's light-gray body), showing
@@ -725,6 +834,7 @@ static void draw_terminal_window(void) {
     int oh = term_output_h();
     bb_fillrect(wx + 2, oy, ww - 4, oh, TH_CONSOLE);
 
+    sb_draw(WIN_ID_TERMINAL);
     int visible = term_scroll_count < TERM_VISIBLE_ROWS ? term_scroll_count : TERM_VISIBLE_ROWS;
     int start = (term_scroll_head - term_scroll_off - visible + 2 * TERM_SCROLLBACK_ROWS) % TERM_SCROLLBACK_ROWS;
     for (int i = 0; i < visible; i++) {
@@ -738,13 +848,17 @@ static void draw_terminal_window(void) {
     int ix = term_input_x(), iy = term_input_y(), iw = term_input_w();
     ui_field(ix, iy, iw, TERM_INPUT_H, TH_CONSOLE, term_input_focused);
 
-    char prompt_line[TERM_INPUT_MAXLEN + 3]; u32 pl = 0;
-    append_str(prompt_line, &pl, sizeof(prompt_line), "> ");
+    char prompt[40];
+    term_prompt_str(prompt, sizeof prompt);
+    int plen = 0; while (prompt[plen]) plen++;
+    char prompt_line[TERM_INPUT_MAXLEN + 44]; u32 pl = 0;
+    append_str(prompt_line, &pl, sizeof(prompt_line), prompt);
     append_str(prompt_line, &pl, sizeof(prompt_line), term_input_buf);
     font_draw_string(ix + 3, iy + 3, prompt_line, TH_CONSOLE_TEXT);
     if (term_input_focused) {
-        bb_fillrect(ix + 3 + (2 + (int)term_input_len) * FONT_CELL, iy + 3, 2, FONT_CELL, TH_CONSOLE_TEXT);
+        bb_fillrect(ix + 3 + (plen + (int)term_input_len) * FONT_CELL, iy + 3, 2, FONT_CELL, TH_CONSOLE_TEXT);
     }
+    mb_draw_drop(WIN_ID_TERMINAL, wx, wy, term_menus, TERM_MENU_N);
 }
 
 #endif

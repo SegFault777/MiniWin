@@ -4,13 +4,15 @@
 
 # MiniWin
 
+**Mini OS, Many Things.**
+
 A dependency-free 32-bit x86 desktop OS that boots from a single MBR
 disk image straight into a Windows-95-flavored GUI: real mode → protected
 mode by hand, a from-scratch VGA/mouse/keyboard stack with its own disk
 drivers (IDE, SATA/AHCI, SCSI, NVMe), and a windowing system with no libc, no
 bootloader framework, and no borrowed kernel code.
 
-**Current version: 1.1-alpha-8** ([changelog](docs/project/CHANGELOG.md)). Developed and
+**Current version: 1.1-alpha-9** ([changelog](docs/project/CHANGELOG.md)). Developed and
 tested on QEMU; for VMware / VirtualBox see
 [docs/user/VIRTUAL-MACHINES.md](docs/user/VIRTUAL-MACHINES.md).
 
@@ -53,10 +55,12 @@ people who change it ([architecture](docs/dev/ARCHITECTURE.md), [source map](doc
   probe (`INT 15h AX=E801h`) the kernel checks before ever writing
   through it, refusing to boot with a clear message rather than risk
   silently corrupting memory on a machine too small for it.
-- **Kernel**: freestanding C (`kernel/kernel.c` + headers), no libc. A
-  PS/2 mouse + keyboard driver, PC speaker beep, a tiny crash-safe
-  filesystem on the boot disk (4 document slots and 4 program slots for
-  now; documents have names of their own since Save As), PCI enumeration,
+- **Kernel**: freestanding C (`kernel/kernel.c` + headers), no libc. PS/2
+  and **USB** (xHCI, EHCI, OHCI: keyboards, mice with a wheel, tablets) input drivers, PC
+  speaker beep, a real crash-safe filesystem, **MWFS** (directories of any
+  depth, `/` plus other disks under `/mnt/<id>`, any number of documents and
+  programs, a free-space bitmap, a CRC-32 per file, `part` to
+  format/mount/check/edit partitions), PCI enumeration,
   disk drivers for legacy IDE, ATAPI CD/DVD (read-only), SATA (AHCI), SCSI
   (LSI Logic / Fusion-MPT), NVMe and the boot floppy behind one
   block-device table, ACPI power-off, a CPU-exception handler that shows
@@ -82,7 +86,7 @@ people who change it ([architecture](docs/dev/ARCHITECTURE.md), [source map](doc
   Honest manual setting now, real automatic detection once DNS exists
   to ask a service by hostname instead of a hardcoded IP.
 - **Desktop**: one vertical list of icons at a constant spacing -- the five
-  apps (NOTEPAD, SETTING, WEB, TERMINAL, MINIFILES), then a shortcut for every
+  apps (NOTEPAD, SETTING, MINIWEB, MINISHELL, MINIFILES), then a shortcut for every
   saved document, then one for every installed program -- top to bottom, and
   when the next one would not fit above the taskbar it continues at the top of
   the column to the right. Double-click opens a document or runs a program.
@@ -91,7 +95,7 @@ people who change it ([architecture](docs/dev/ARCHITECTURE.md), [source map](doc
   asks for a name, Save keeps the document's own),
   SETTING.MWP (System language switch between English/한국어 -- actually
   retranslates the whole UI live -- and a multi-select IME picker that
-  controls what Right Alt cycles through while typing), and WEB.MWP
+  controls what Right Alt cycles through while typing), and MINIWEB.MWP
   ("MiniWeb" -- a small browser built on kernel/tcp.h, kernel/http.h,
   kernel/tls.h, kernel/https.h, and kernel/dns.h, with a real address
   bar: type a hostname (or a bare IP literal) and it resolves/connects
@@ -185,7 +189,9 @@ file-storage layout from the same constants `boot/boot.asm` and
 numbers), and fails loudly instead of silently shipping something
 broken if: the kernel's `.bss` ever grows enough to collide with the
 boot stack, the compiled kernel exceeds its boot-loader read budget, or
-the file-storage slots would overlap the kernel or overflow the image.
+the kernel, the icon catalog and the root filesystem would overlap or not
+end exactly at the image's end (and formats the stock image's root volume
+with `tools/mwfs.py`).
 
 ## Running
 
@@ -281,11 +287,14 @@ kernel/dom.h        HTML5 tokenizer + tree builder (nodes, attributes, text pool
 kernel/css.h        CSS parser, selectors, cascade, computed style, UA stylesheet
 kernel/layout.h     block/inline/table/flex/grid layout -> a pixel-positioned display list
 kernel/render.h     paints the display list, hit-tests, form state + submission, page loaders
-kernel/memmap.h     every fixed physical address in one place (net arena, HTML arena, MWP slot)
+kernel/memmap.h     every fixed physical address in one place (net arena, HTML arena, USB DMA, MWP slot)
+kernel/mwfs.h       MWFS: the file system (inodes, directories, bitmap, fsck); kernel/vfs.h: paths, `/mnt` mounts
+kernel/usb/         USB host controllers (xhci, ehci, ohci) + HID keyboards/mice/tablets
 kernel/kernel.c     entry: the layer map (include order = dependency order) + the boot/loop skeleton
 kernel/ui/          the desktop shell: theme.h + themes/ (the whole look), widgets.h (all chrome),
-                    window/taskbar/startmenu/clock/icons/cursor/compose, input.h (mouse + keyboard dispatch)
-kernel/apps/        the apps: notepad/*, setting, web/* (state, address, fetch, page, view), terminal
+                    window/taskbar/startmenu/clock/icons/cursor/compose, menubar.h + scrollbar.h (shared
+                    widgets), input.h (mouse + keyboard dispatch)
+kernel/apps/        the apps: notepad/*, setting, web/* (MiniWeb), terminal + shell_fs + shell_part (MiniShell), minifiles
 kernel/sys/         util, lang (language + IME), power, boot (everything before the main loop)
 kernel/net_stack.h  wires all of the above into one init()/poll() pair
 programs/           .mwp source, built independently of the kernel (see tools/build_mwp.sh)
@@ -295,7 +304,8 @@ tools/gen_latin_font.py    generates font_latin_data.h from Galmuri11
 tools/gen_hangul_font.py   generates font_ko_data.h from Galmuri11
 tools/bdf_common.py        shared BDF-parsing logic both generators above use
 tools/build_mwp.sh         compiles one programs/*.c into a loadable build/*.mwp
-tools/install_mwp.py       writes a built .mwp into an os-image.img program slot
+tools/install_mwp.py       writes a built .mwp into /progs of an os-image.img
+tools/mwfs.py              formats/fills an MWFS volume inside an image (the offline twin of kernel/mwfs.h)
 tools/install_icons.py     writes the icon bundle into an os-image.img icon catalog
 tools/gen_cursors.py       generates kernel/cursor_data.h (the mouse cursors) from the icon pack
 tools/gen_source_map.py    generates docs/dev/SOURCE-MAP.md (one line per source file)
@@ -316,7 +326,7 @@ screenshots/        yep
 ## Project name: MWP
 
 Every app here is a `.mwp` file ("**M**ini**W**in **P**rogram") --
-NOTEPAD.MWP, SETTING.MWP, WEB.MWP are built into the kernel today
+NOTEPAD.MWP, SETTING.MWP, MINIWEB.MWP, MINISHELL.MWP, MINIFILES.MWP are built into the kernel today
 (historical reasons: they predate the loadable-program loader), but
 share the same `.mwp` naming as genuinely loadable, separately-compiled
 programs like GREETER.MWP. See kernel/mwp.h for the loader and
@@ -328,11 +338,12 @@ This is being actively built out. Current honest state of the bigger
 asks:
 
 - **Persistence**: real, already working -- saved files live on the disk
-  image itself (`kernel/fs.h`), and survive across QEMU runs as long
-  as `os-image.img` isn't rebuilt from scratch. Saves are crash-safe (a
-  write-ahead journal plus a CRC-32 per file: after a power cut you get the
-  old file or the whole new one, and damaged files are refused instead of
-  being opened half-read).
+  image itself (an MWFS volume, `kernel/mwfs.h`), and survive across QEMU runs as long
+  as `os-image.img` isn't rebuilt from scratch. Saves are crash-safe by construction (the new
+  file is written complete before one directory-entry write switches the name over, and a
+  CRC-32 per file is checked on load: after a power cut you get the old file or the whole
+  new one, and damaged files are refused instead of being opened half-read). The file
+  system is tested with a power cut after every possible sector write of every operation.
 - **Networking**: a real, layered TCP/IP stack, built from raw Ethernet
   all the way up to HTTP, running on top of two independently verified
   NIC drivers sharing one common interface (`kernel/nic.h`):
@@ -442,7 +453,7 @@ asks:
   run standalone against a live server (a real X25519 exchange, a real
   3-certificate chain walked and signature-verified, a real AES-GCM
   decryption of the response). Separately, *inside this kernel, booted
-  in QEMU*, clicking WEB.MWP's PYPI.ORG row drives DNS, TCP, and a real
+  in QEMU*, clicking MINIWEB.MWP's PYPI.ORG row drives DNS, TCP, and a real
   TLS handshake attempt against pypi.org, and correctly rejects the
   certificate chain the local development network happens to present
   (an intercepting proxy's certificate authority, not a publicly

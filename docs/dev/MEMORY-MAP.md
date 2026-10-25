@@ -2,7 +2,7 @@
 
 MiniWin runs in one flat 32-bit address space with **no paging and no memory protection** (everything, including `.MWP` programs, runs
 in ring 0). There is no allocator: every big buffer lives at a fixed, named address, and `kernel/memmap.h` is the **single source of
-truth** (compile-time asserts there keep regions from overlapping). The table is the picture as of 1.1-alpha-8; when it disagrees
+truth** (compile-time asserts there keep regions from overlapping). The table is the picture as of 1.1-alpha-9; when it disagrees
 with `memmap.h`, the header wins.
 
 | range | what | defined in |
@@ -18,10 +18,11 @@ with `memmap.h`, the header wins.
 | `0x180000`-`0x3FFFFF` | the **network arena** (2.5 MB): TCP and TLS buffers, the 256 KB HTTP body, NIC DMA rings (e1000, RTL8139) | `MW_NETMEM_*` |
 | `0x400000`-`0x52BFFF` | the **back buffer** (640 x 480 x 32-bit) the desktop is composed in | `VGA_BACKBUF_PHYS_ADDR` |
 | `0x530000`-`0x7BFFFF` | the **HTML5 engine's** arenas (DOM nodes, CSS rules, layout items, scratch) | `MW_RD_*` |
-| `0x7C0000`-`0x7C6FFF` | 32x32 **icon cache** (7 icons: NOTEPAD, SETTING, WEB, DOC, TERMINAL, FILEMANAGER, PROGRAM) | `MW_ICON_CACHE_*` |
+| `0x7C0000`-`0x7C6FFF` | 32x32 **icon cache** (7 icons: NOTEPAD, SETTING, WEB, DOC, TERMINAL, FILEMANAGER, PROGRAM -- the catalog's image names; the desktop labels are MINIWEB and MINISHELL) | `MW_ICON_CACHE_*` |
 | `0x7C7000`-`0x7C7FFF` | MiniFiles' four 16x16 icons | `MW_FILES_ICON_*` |
 | `0x7D0000`-`0x80CFFF` | the **Korean font**, inflated from the compressed table at boot (245,784 bytes) | `MW_KFONT_*` |
 | `0x810000`-`0x82FFFF` | **storage DMA**: AHCI (`+0x0000`, 8 x 2 KB), SCSI/MPT (`+0x4000`, 2 x 4 KB), NVMe (`+0x6000`, 2 x 24 KB), floppy (`+0x12000`, track buffer + sector) | `MW_STOR_DMA_*` |
+| `0x830000`-`0x86FFFF` | **USB DMA**: four 64 KB slices, one per host controller (xHCI: DCBAA, rings, device contexts, scratchpad pages; EHCI: frame list, QHs, qTDs; OHCI: HCCA, EDs, TDs -- each driver header has its own map) | `MW_USB_DMA_*` |
 | `0x8F0000`-`0x8F0FFF` | the **MWP syscall table** (programs find the kernel's functions here) | `MW_MWP_SYSCALL_ADDR` |
 | `0x8F1000`-`0x8FFFFF` | where a **`.MWP` program** is loaded and run (up to 24 KB used) | `MW_MWP_LOAD_ADDR` |
 | `0x900000`- | free (beyond the end of the fixed regions) | |

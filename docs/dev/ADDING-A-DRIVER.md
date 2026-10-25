@@ -28,7 +28,7 @@ card follows the same steps with `nic.h` instead of `blk.h`.
    copy into `st_devs[]` in `st_scan()`.
 2. `kernel/storage.h`: the type's name in `st_type_names[]`, `st_type_has_driver()`, and -- for read-only media -- an error code
    instead of a target.
-3. The Terminal's `os-inst list` and MiniFiles' DISKS tab already loop over every device, so nothing more is needed there.
+3. MiniShell's `os-inst list` and `part list` and MiniFiles' DISKS tab already loop over every device, so nothing more is needed there.
 
 ## 4. Make the boot disk findable
 

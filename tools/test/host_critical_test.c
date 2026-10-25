@@ -18,6 +18,10 @@
 #include <signal.h>
 #include <sys/mman.h>
 
+/* (Until 1.1-alpha-8 this file also tested the slot journals, torn writes and power cuts of the old filesystem. That
+ * filesystem is gone; its replacement's crash safety is swept exhaustively -- every cut point of every operation -- by
+ * tools/test/host_mwfs_test.c.) */
+
 /* ---- fake io.h: claim the include guard, then provide the same API ---- */
 #define IO_H
 typedef unsigned char  u8;
@@ -109,9 +113,9 @@ static void on_alarm(int s) { (void)s; printf("FAIL: HANG (a bounded wait never 
 static void disk_reset(void) {
     memset(disk, 0, sizeof disk);
     ata_mode = MODE_OK; ata_err_lba = 0xFFFFFFFFu; cur_cmd = 0; flush_done = 0;
-    cut_after = -1; sector_writes_done = 0; fs_doc_journal_ok = 0; fs_prog_journal_ok = 0;
+    cut_after = -1; sector_writes_done = 0;
 }
-static void reboot(void) { cut_after = -1; ata_mode = MODE_OK; fs_doc_journal_ok = 0; fs_prog_journal_ok = 0; }   /* power back on: nothing is remembered in RAM */
+static void reboot(void) { cut_after = -1; ata_mode = MODE_OK; }   /* power back on: nothing is remembered in RAM */
 
 /* ------------------------------------------------------------------ C-01 */
 static void test_ata_timeouts(void) {
@@ -144,42 +148,64 @@ static void test_ata_timeouts(void) {
 }
 
 /* ------------------------------------------------------------------ C-02 */
+/* A fresh MWFS root volume on the fake disk (sectors 0..3999), mounted, with the program slots re-read. */
+static void fs_fresh(void) {
+    mwfs_vol_t v; memset(&v, 0, sizeof v);
+    v.dev = blk_boot_dev; v.base = 0; v.sectors = 4000;
+    CHECK(mwfs_mkfs(&v, "T") == MWFS_OK && vfs_make_root_layout(&v) == MWFS_OK, "format the test volume");
+    memset(prog_tab, 0, sizeof prog_tab); memset(prog_names, 0, sizeof prog_names);
+    CHECK(vfs_mount_root(blk_boot_dev, 0, 4000) == MWFS_OK, "mount the test volume");
+    fs_rescan_progs();
+}
+/* the disk sector holding the idx-th sector of program slot `slot` (to aim a read error at it) */
+static u32 prog_sector(int slot, u32 idx) {
+    mwfs_ino_t t; u32 lba = 0;
+    mwfs_ino_get(&vfs_vols[0], prog_tab[slot].ino, &t);
+    mwfs_bmap(&vfs_vols[0], &t, idx, 0, 0, &lba);
+    return vfs_vols[0].base + lba;
+}
 static void test_partial_program(void) {
     static u8 prog[5000], dst[PROG_MAX_BYTES], ref[PROG_MAX_BYTES];
     for (int i = 0; i < 5000; i++) prog[i] = (u8)(i * 13 + 5);
 
     disk_reset();
+    fs_fresh();
     CHECK(prog_save_slot(0, "TEST.MWP", prog, 5000, 0) == 1, "save a 5000-byte program");
+    int s0 = prog_find_by_name("TEST.MWP");
+    CHECK(s0 >= 0, "the saved program is in the slot index");
     memset(dst, 0xEE, sizeof dst);
-    CHECK(prog_load_slot(0, dst, PROG_MAX_BYTES) == 5000, "intact program loads in full");
+    CHECK(prog_load_slot(s0, dst, PROG_MAX_BYTES) == 5000, "intact program loads in full");
     CHECK(memcmp(dst, prog, 5000) == 0, "loaded bytes match what was saved");
 
     /* one sector in the MIDDLE of the program fails to read: sector index 4 of 10 */
-    ata_mode = MODE_READ_ERR_LBA; ata_err_lba = prog_slot_data_lba(0) + 4;
+    ata_mode = MODE_READ_ERR_LBA; ata_err_lba = prog_sector(s0, 4);
     memset(dst, 0xEE, sizeof dst);
-    u32 got = prog_load_slot(0, dst, PROG_MAX_BYTES);
+    u32 got = prog_load_slot(s0, dst, PROG_MAX_BYTES);
     CHECK(got == 0, "mid-program read error => load fails (got %u, old behaviour returned the partial count 2048)", got);
 
     /* the LAST sector fails */
-    ata_err_lba = prog_slot_data_lba(0) + 9;
-    CHECK(prog_load_slot(0, dst, PROG_MAX_BYTES) == 0, "last-sector read error => load fails");
+    ata_err_lba = prog_sector(s0, 9);
+    CHECK(prog_load_slot(s0, dst, PROG_MAX_BYTES) == 0, "last-sector read error => load fails");
 
     /* a destination that cannot hold the whole program is refused, not silently truncated */
     ata_mode = MODE_OK;
-    CHECK(prog_load_slot(0, dst, 4096) == 0, "maxlen smaller than the program => refused, not truncated");
+    CHECK(prog_load_slot(s0, dst, 4096) == 0, "maxlen smaller than the program => refused, not truncated");
 
     /* empty slot */
-    CHECK(prog_load_slot(1, dst, PROG_MAX_BYTES) == 0, "empty slot => 0");
+    CHECK(prog_load_slot(5, dst, PROG_MAX_BYTES) == 0, "empty slot => 0");
 
-    /* the header itself fails to read */
-    ata_mode = MODE_READ_ERR_LBA; ata_err_lba = prog_slot_header_lba(0);
-    CHECK(prog_load_slot(0, dst, PROG_MAX_BYTES) == 0, "header read error => 0");
+    /* a flipped bit inside the file is caught by the CRC and the program is not run */
+    u32 lba = prog_sector(s0, 2);
+    disk[lba * 512 + 7] ^= 0x40;
+    CHECK(prog_load_slot(s0, dst, PROG_MAX_BYTES) == 0, "a damaged sector => CRC mismatch => load fails");
+    disk[lba * 512 + 7] ^= 0x40;
+    CHECK(prog_load_slot(s0, dst, PROG_MAX_BYTES) == 5000, "...and the repaired sector loads again");
 
     /* full-size program still fine */
-    ata_mode = MODE_OK;
     for (u32 i = 0; i < PROG_MAX_BYTES; i++) ref[i] = (u8)(i ^ (i >> 8));
     CHECK(prog_save_slot(2, "BIG.MWP", ref, PROG_MAX_BYTES, 0) == 1, "save a max-size program");
-    CHECK(prog_load_slot(2, dst, PROG_MAX_BYTES) == PROG_MAX_BYTES && memcmp(dst, ref, PROG_MAX_BYTES) == 0,
+    int s1 = prog_find_by_name("BIG.MWP");
+    CHECK(s1 >= 0 && prog_load_slot(s1, dst, PROG_MAX_BYTES) == PROG_MAX_BYTES && memcmp(dst, ref, PROG_MAX_BYTES) == 0,
           "max-size program loads in full");
 }
 
@@ -797,145 +823,8 @@ static u32 ref_crc32(const u8 *d, u32 n) {   /* independent reference CRC-32 */
 static void fill_pat(u8 *b, u32 n, u32 seed) { for (u32 i = 0; i < n; i++) b[i] = (u8)(seed + i * 31 + (i >> 8)); }
 static u8 snap_disk[sizeof disk];
 
-static void test_fs_atomic(void) {
-    static u8 A[4096], B[4096], got[4096]; u32 outlen;
-    fill_pat(A, 4096, 1); fill_pat(B, 3000, 77);
 
-    /* roundtrip + commit record */
-    disk_reset();
-    CHECK(fs_save_slot(1, (const char *)A, 4096) == 1, "save a full-size (4096 B) document");
-    CHECK(fs_read_slot(1, (char *)got, 4096, &outlen) == 1 && outlen == 4096 && memcmp(got, A, 4096) == 0, "it reads back identically");
-    { u8 *h = &disk[fs_slot_header_lba(1) * 512];
-      CHECK(*(u32 *)(h + FS_HDR_COMMIT_OFF) == FS_COMMIT_MAGIC && *(u32 *)(h + FS_HDR_CRC_OFF) == ref_crc32(A, 4096), "header carries the commit marker and the correct CRC-32");
-      CHECK(*(u32 *)(h + FS_HDR_TARGET_OFF) == 0, "the live header carries no journal target"); }
-    { u8 *j = &disk[FS_JOURNAL_LBA * 512]; int z = 1; for (int i = 0; i < 512; i++) if (j[i]) z = 0; CHECK(z, "the journal is retired (zeroed) after a clean save"); }
-    CHECK(fs_load_slot(1, (char *)got, 4096) == 4096, "the older fs_load_slot() API still works");
 
-    /* a document that is too big is refused BEFORE anything is touched */
-    memcpy(snap_disk, disk, sizeof disk);
-    static u8 big[4097]; fill_pat(big, 4097, 5);
-    CHECK(fs_save_slot(1, (const char *)big, 4097) == 0, "a 4097-byte document is refused (it used to be cut to 4096 and reported as saved)");
-    CHECK(memcmp(snap_disk, disk, sizeof disk) == 0, "...and the disk is byte-for-byte unchanged (old file intact, journal untouched)");
-    CHECK(fs_read_slot(1, (char *)got, 4096, &outlen) == 1 && memcmp(got, A, 4096) == 0, "the previous file still reads back");
-    CHECK(fs_read_slot(1, (char *)got, 4000, &outlen) == 0, "reading into a buffer smaller than the file is refused, not truncated");
-
-    /* empty document is valid and distinguishable from a damaged one */
-    disk_reset();
-    CHECK(fs_save_slot(0, "", 0) == 1 && fs_read_slot(0, (char *)got, 10, &outlen) == 1 && outlen == 0, "an empty document is valid (len 0)");
-    CHECK(fs_read_slot(2, (char *)got, 10, &outlen) == 0, "an empty SLOT is not a document");
-
-    /* power cut at EVERY possible point of a save over an existing file */
-    int old_survived = 0, new_survived = 0, bad = 0;
-    for (int k = 0; k <= 25; k++) {
-        disk_reset(); fs_save_slot(2, (const char *)A, 4096); memcpy(snap_disk, disk, sizeof disk);
-        sector_writes_done = 0; cut_after = k; int ok = fs_save_slot(2, (const char *)B, 3000);
-        reboot();
-        int rd = fs_read_slot(2, (char *)got, 4096, &outlen);
-        int is_old = rd && outlen == 4096 && memcmp(got, A, 4096) == 0;
-        int is_new = rd && outlen == 3000 && memcmp(got, B, 3000) == 0;
-        if (!(is_old || is_new)) { bad++; printf("  power cut after %d writes => neither old nor new (rd=%d len=%u)\n", k, rd, outlen); }
-        if (k < 10)  CHECK(is_old && !ok, "cut after %d sector writes (before the commit point): the OLD file survives and the save reports failure", k);
-        if (k >= 10) CHECK(is_new, "cut after %d sector writes (after the commit point): the NEW file survives (completed by recovery)", k);
-        if (k >= 21) CHECK(ok == 1, "with %d writes available the save succeeds", k);
-        old_survived += is_old; new_survived += is_new;
-    }
-    CHECK(bad == 0, "no power-cut point produced a corrupt or mixed file (%d old-survives, %d new-survives, %d bad)", old_survived, new_survived, bad);
-
-    /* the same for a first save into an EMPTY slot: before the commit point nothing exists, after it the file does */
-    for (int k = 0; k <= 22; k += 1) {
-        disk_reset(); sector_writes_done = 0; cut_after = k; fs_save_slot(3, (const char *)B, 3000); reboot();
-        int rd = fs_read_slot(3, (char *)got, 4096, &outlen);
-        if (k < 10) CHECK(!rd, "first save, cut after %d writes: the slot is still empty (not a half-written file)", k);
-        else        CHECK(rd && outlen == 3000 && memcmp(got, B, 3000) == 0, "first save, cut after %d writes: the complete file exists", k);
-    }
-
-    /* corruption is detected on read */
-    disk_reset(); fs_save_slot(0, (const char *)A, 4096);
-    disk[fs_slot_data_lba(0) * 512 + 1500] ^= 0x10;
-    CHECK(fs_read_slot(0, (char *)got, 4096, &outlen) == 0 && fs_load_slot(0, (char *)got, 4096) == 0, "a flipped bit in the data is caught by the CRC (the read fails)");
-    disk_reset(); fs_save_slot(0, (const char *)A, 4096);
-    memset(&disk[(fs_slot_data_lba(0) + 5) * 512], 0, 512);
-    CHECK(fs_read_slot(0, (char *)got, 4096, &outlen) == 0, "a data sector that was zeroed (lost write) is caught too");
-    /* legacy header (written before commit records existed): accepted, unverified */
-    disk_reset(); fs_save_slot(0, (const char *)A, 4096);
-    memset(&disk[fs_slot_header_lba(0) * 512 + FS_HDR_CRC_OFF], 0, 8);
-    CHECK(fs_read_slot(0, (char *)got, 4096, &outlen) == 1 && memcmp(got, A, 4096) == 0, "a legacy header without a commit record is still readable");
-    /* impossible length in a header */
-    disk_reset(); fs_save_slot(0, (const char *)A, 4096);
-    *(u32 *)&disk[fs_slot_header_lba(0) * 512 + 4] = 4097;
-    { u32 l; CHECK(fs_check_slot(0, &l) == 0, "a header claiming more than FS_MAX_FILE_BYTES is not a valid slot"); }
-
-    /* a committed-but-unapplied journal is completed before a delete, so it cannot resurrect the file */
-    disk_reset(); sector_writes_done = 0; cut_after = 11; fs_save_slot(1, (const char *)B, 3000); reboot();
-    CHECK(fs_delete_slot(1) == 1, "delete");
-    { u32 l; CHECK(fs_check_slot(1, &l) == 0, "a deleted file stays deleted (a pending journal did not bring it back)"); }
-    /* a pending journal for slot 2 is completed before a save to slot 1 starts, and neither is lost */
-    disk_reset(); sector_writes_done = 0; cut_after = 12; fs_save_slot(2, (const char *)B, 3000); reboot();
-    CHECK(fs_save_slot(1, (const char *)A, 4096) == 1, "a save to another slot first settles the pending journal");
-    CHECK(fs_read_slot(2, (char *)got, 4096, &outlen) == 1 && outlen == 3000 && memcmp(got, B, 3000) == 0, "...the interrupted save (slot 2) is complete");
-    CHECK(fs_read_slot(1, (char *)got, 4096, &outlen) == 1 && memcmp(got, A, 4096) == 0, "...and the new save (slot 1) is complete");
-    /* journal whose staged data was damaged is discarded, the live file untouched */
-    disk_reset(); fs_save_slot(2, (const char *)A, 4096);
-    sector_writes_done = 0; cut_after = 10; fs_save_slot(2, (const char *)B, 3000); reboot();   /* committed, live slot not yet touched */
-    disk[(FS_JOURNAL_LBA + 3) * 512 + 7] ^= 0x01;
-    CHECK(fs_read_slot(2, (char *)got, 4096, &outlen) == 1 && outlen == 4096 && memcmp(got, A, 4096) == 0, "a journal with damaged staged data is discarded; the live file stays as it was");
-    { u8 *j = &disk[FS_JOURNAL_LBA * 512]; int z = 1; for (int i = 0; i < 512; i++) if (j[i]) z = 0; CHECK(z, "...and the bad journal is cleared"); }
-}
-
-static void test_verify_delete(void) {
-    static u8 A[3000]; fill_pat(A, 3000, 9);
-    disk_reset();
-    CHECK(!fs_verify_slot(0), "an empty slot is not a healthy file");
-    fs_save_slot(0, (const char *)A, 3000);
-    CHECK(fs_verify_slot(0) == 1, "a freshly saved document verifies");
-    disk[fs_slot_data_lba(0) * 512 + 2000] ^= 0x04;
-    CHECK(fs_verify_slot(0) == 0, "a flipped bit makes it fail verification");
-    disk_reset(); fs_save_slot(0, (const char *)A, 3000); memset(&disk[fs_slot_header_lba(0) * 512 + FS_HDR_CRC_OFF], 0, 8);
-    CHECK(fs_verify_slot(0) == 1, "a legacy document (no commit record) verifies by readability alone");
-    disk_reset(); fs_save_slot(0, (const char *)A, 3000); ata_mode = MODE_READ_ERR_LBA; ata_err_lba = fs_slot_data_lba(0) + 2;
-    CHECK(fs_verify_slot(0) == 0, "an unreadable sector fails verification");
-    ata_mode = MODE_OK;
-
-    disk_reset();
-    CHECK(prog_save_slot(1, "P.MWP", A, 3000, 0) == 1 && prog_verify_slot(1) == 1, "a program verifies after saving");
-    disk[prog_slot_data_lba(1) * 512 + 100] ^= 1;
-    CHECK(prog_verify_slot(1) == 0, "a damaged program fails verification");
-    disk_reset(); prog_save_slot(1, "P.MWP", A, 3000, 0);
-    CHECK(prog_delete_slot(1) == 1, "delete a program");
-    { u32 l; CHECK(prog_check_slot(1, &l, 0, 0) == 0, "a deleted program is gone"); }
-    CHECK(prog_delete_slot(-1) == 0 && prog_delete_slot(99) == 0, "bad slot numbers are refused");
-    /* a pending journaled save cannot resurrect a deleted program */
-    disk_reset(); sector_writes_done = 0; cut_after = 52; prog_save_slot(2, "Q.MWP", A, 3000, 0); reboot();
-    CHECK(prog_delete_slot(2) == 1, "delete with a pending journal");
-    { u32 l; CHECK(prog_check_slot(2, &l, 0, 0) == 0, "...the journal did not bring it back"); }
-}
-
-static void test_prog_atomic(void) {
-    static u8 A[24576], B[20000], got[24576];
-    fill_pat(A, 24576, 3); fill_pat(B, 20000, 99);
-    disk_reset();
-    CHECK(prog_save_slot(1, "A.MWP", A, 24576, 0) == 1 && prog_load_slot(1, got, 24576) == 24576 && memcmp(got, A, 24576) == 0, "a max-size program saves and loads");
-    { u8 *h = &disk[prog_slot_header_lba(1) * 512]; CHECK(*(u32 *)(h + FS_HDR_CRC_OFF) == ref_crc32(A, 24576), "program header carries the right CRC-32"); }
-    memcpy(snap_disk, disk, sizeof disk);
-    static u8 big[24577];
-    CHECK(prog_save_slot(1, "BIG.MWP", big, 24577, 0) == 0 && memcmp(snap_disk, disk, sizeof disk) == 0, "a 24577-byte program is refused and the disk is untouched");
-    disk[prog_slot_data_lba(1) * 512 + 9000] ^= 0x80;
-    CHECK(prog_load_slot(1, got, 24576) == 0, "a program with a flipped bit is never loaded (CRC mismatch)");
-
-    int bad = 0;
-    for (int k = 0; k <= 110; k += 1) {
-        disk_reset(); prog_save_slot(2, "A.MWP", A, 24576, 0);
-        sector_writes_done = 0; cut_after = k; int ok = prog_save_slot(2, "B.MWP", B, 20000, 16); reboot();
-        u32 len = prog_load_slot(2, got, 24576); u32 entry = 0; char nm[PROG_NAME_MAXLEN]; prog_check_slot(2, 0, &entry, nm);
-        int is_old = len == 24576 && memcmp(got, A, 24576) == 0 && entry == 0 && nm[0] == 'A';
-        int is_new = len == 20000 && memcmp(got, B, 20000) == 0 && entry == 16 && nm[0] == 'B';
-        if (!(is_old || is_new)) { bad++; printf("  program: power cut after %d writes => neither old nor new (len %u)\n", k, len); }
-        if (k < 50)  CHECK(is_old && !ok, "program: cut after %d writes (before commit): old program intact", k);
-        if (k >= 50) CHECK(is_new, "program: cut after %d writes (after commit): new program, completed by recovery", k);
-        if (k >= 101) CHECK(ok == 1, "program: save succeeds with %d writes available", k);
-    }
-    CHECK(bad == 0, "no program power-cut point produced a corrupt or mixed program");
-}
 
 /* ------------------------------------------------------------------ M-06 */
 static void test_peer_window(void) {
@@ -1013,9 +902,6 @@ int main(void) {
     test_dns();
     test_dhcp();
     test_tls();
-    test_fs_atomic();
-    test_prog_atomic();
-    test_verify_delete();
     test_peer_window();
 
     printf("%d checks, %d failures\n", checks, failures);

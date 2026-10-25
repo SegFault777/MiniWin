@@ -43,14 +43,13 @@ ld -m elf_i386 -T kernel/mwp_link.ld -nostdlib --gc-sections \
 objcopy -O binary "$BUILD/$NAME.elf" "$BUILD/$NAME.mwp"
 
 echo "[3/3] Checking size against PROG_MAX_BYTES..."
-PROG_DATA_SECTORS=$(grep -oP '#define\s+PROG_DATA_SECTORS\s+\K[0-9]+' kernel/fs.h)
-PROG_MAX_BYTES=$((PROG_DATA_SECTORS * 512))
+PROG_MAX_BYTES=$(grep -oP '#define\s+PROG_MAX_BYTES\s+\K[0-9]+' kernel/fs.h)
 ACTUAL_BYTES=$(stat -c%s "$BUILD/$NAME.mwp")
 echo "  $NAME.mwp: $ACTUAL_BYTES / $PROG_MAX_BYTES bytes"
 if [ "$ACTUAL_BYTES" -gt "$PROG_MAX_BYTES" ]; then
     echo "ERROR: $NAME.mwp ($ACTUAL_BYTES bytes) exceeds PROG_MAX_BYTES" \
          "($PROG_MAX_BYTES bytes, see kernel/fs.h). Either trim the" \
-         "program or grow PROG_DATA_SECTORS there (and re-run" \
+         "program or grow PROG_MAX_BYTES there (and re-run" \
          "build.sh, since that changes the disk layout)."
     exit 1
 fi

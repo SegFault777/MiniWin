@@ -44,7 +44,7 @@ typedef struct {
     u32 bar0, bar1;
 } pci_device_t;
 
-#define PCI_MAX_DEVICES 32
+#define PCI_MAX_DEVICES 64
 static pci_device_t pci_devices[PCI_MAX_DEVICES];
 static int pci_device_count = 0;
 

@@ -34,6 +34,7 @@
 #include "fatal.h"
 #include "sysinfo.h"
 #include "pci.h"
+#include "usb/core.h"
 #include "nic.h"
 #include "rtl8139.h"
 #include "e1000.h"
@@ -69,6 +70,8 @@
 #include "ui/clock.h"
 #include "ui/taskbar_metrics.h"
 #include "ui/window.h"
+#include "ui/menubar.h"
+#include "ui/scrollbar.h"
 #include "apps/notepad/windows.h"
 #include "apps/notepad/file_menu.h"
 #include "apps/notepad/save.h"
@@ -85,6 +88,7 @@
 #include "apps/terminal.h"
 #include "apps/minifiles.h"
 #include "apps/notepad/dialogs.h"
+#include "ui/scroll_targets.h"
 #include "ui/desktop_files.h"
 #include "ui/resize.h"
 #include "ui/cursor.h"
@@ -102,13 +106,14 @@ void kmain(void) {
         u32 pass_start = sysinfo_tsc32();          /* for `fetch`'s CPU load: work vs the pacing spin below */
         tick++;
 
+        usb_poll();                                /* USB reports -> the same key/mouse state PS/2 fills */
         handle_mouse();
         handle_keyboard();
 
         net_stack_poll(); /* drains and dispatches any received frames: ARP, IP/ICMP/UDP/TCP, DHCP */
         term_install_poll(); /* advances a running `os-inst` a few sectors (kernel/os_inst.h) */
 
-        /* Advances whatever MiniWeb (WEB.MWP) currently has outstanding
+        /* Advances whatever MiniWeb (MINIWEB.MWP) currently has outstanding
          * -- a DNS lookup, an HTTP fetch, or nothing at all. The app
          * itself is the network stack's real verification now (see
          * draw_web_window()/web_go() above): it drove a real DNS

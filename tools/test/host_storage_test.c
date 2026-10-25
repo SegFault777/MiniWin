@@ -157,7 +157,7 @@ static void source_sector(int dev, u32 src_base, u32 lba, u8 *out) {
 }
 /* Independent check: the target holds exactly the expected installation at `base` */
 static int image_ok(int tdev, u32 base, u32 id, int sdev, u32 src_base, u32 *bad_lba) {
-    for (u32 lba = 0; lba < ST_INSTALL_SECTORS; lba++) {
+    for (u32 lba = 0; lba < MW_ROOTFS_LBA; lba++) {                  /* the copied part; the root filesystem after it is formatted, not copied */
         source_sector(sdev, src_base, lba, expect_buf);
         if (lba == 0) { put32(expect_buf + ST_BOOT_FIELDS_OFF, base); put32(expect_buf + ST_BOOT_FIELDS_OFF + 4, id); }
         if (memcmp(sec(tdev, base + lba), expect_buf, 512) != 0) { *bad_lba = lba; return 0; }
@@ -168,8 +168,22 @@ static int run_job(void) { int guard = 0; while (inst_active() && guard++ < 2000
 static void sentinel(int d) { memset(dev_img[d], 0xEE, (size_t)dev_sectors[d] * 512); }
 static int all_sentinel(int d, u32 from, u32 to) { for (u32 l = from; l < to; l++) for (int i = 0; i < 512; i++) if (dev_img[d][l * 512 + i] != 0xEE) return 0; return 1; }
 
+/* A fresh root volume must be openable in a target of `target_sectors` and hold the standard directories and nothing else. */
+static int root_volume_ok(int dev, u32 base, u32 target_sectors, u32 *data_end) {
+    mwfs_vol_t v; memset(&v, 0, sizeof v);
+    v.dev = dev; v.base = base + MW_ROOTFS_LBA; v.sectors = target_sectors - MW_ROOTFS_LBA;
+    if (mwfs_open(&v) != MWFS_OK || v.sectors != target_sectors - MW_ROOTFS_LBA) return 0;
+    u32 ino; u8 t;
+    if (mwfs_dir_lookup(&v, MWFS_ROOT_INO, "docs", &ino, &t) != MWFS_OK || mwfs_dir_lookup(&v, MWFS_ROOT_INO, "progs", &ino, &t) != MWFS_OK) return 0;
+    mwfs_dirent_t e; u32 n = 0; while (mwfs_dir_nth(&v, MWFS_ROOT_INO, n, &e) == 1) n++;
+    mwfs_report_t r;
+    if (n != 4 || mwfs_check(&v, 0, &r) != MWFS_OK || r.bad_entries || r.orphans || r.leaked || r.unmarked) return 0;
+    if (data_end) *data_end = MW_ROOTFS_LBA + v.data_lba;
+    return 1;
+}
+static long full_writes = 0;                                  /* how many sector writes a complete install of the 8192-sector target takes */
 static void test_install(void) {
-    st_target_t t; u32 bad = 0;
+    st_target_t t; u32 bad = 0, dend = 0;
 
     /* ---- 1. whole device ---- */
     reset_all(); add_disk(0, 4096, "RUNNING"); add_disk(2, 8192, "TARGET"); fill_source(0, 0, 0); sentinel(2);
@@ -180,13 +194,12 @@ static void test_install(void) {
     inst_step(10); CHECK(inst_percent() == 0 && inst.phase == INST_PHASE_WRITE, "progress starts at 0%% (%u)", inst_percent());
     CHECK(run_job() == INST_PHASE_DONE && inst.err == INST_ERR_NONE, "whole-device install completes (phase %d err %d lba %u)", inst.phase, inst.err, inst.err_lba);
     CHECK(image_ok(2, 0, 0x1234ABCD, 0, 0, &bad), "the target holds exactly the expected installation (first bad sector: %u)", bad);
-    CHECK(all_sentinel(2, ST_INSTALL_SECTORS, 8192), "nothing beyond the 2048-sector installation was touched");
+    CHECK(root_volume_ok(2, 0, 8192, &dend), "the target got a fresh, clean root filesystem with /docs /progs /mnt /sys");
+    CHECK(dend > MW_ROOTFS_LBA && all_sentinel(2, dend + 8, 8192), "the volume's data area (beyond its few directory sectors) was not touched (%u)", dend);
+    full_writes = writes_done[2];
     CHECK(inst.mbr_result == INST_MBR_NONE && inst_percent() == 100, "no disk MBR logic for a whole-device install");
     CHECK(st_le32(sec(2, 0) + ST_BOOT_FIELDS_OFF) == 0 && st_le32(sec(2, 0) + ST_BOOT_FIELDS_OFF + 4) == 0x1234ABCD, "install_base 0 and the id are patched into the boot sector");
-    { int zeros = 1; for (u32 l = FS_BASE_LBA; l < ICON_BASE_LBA; l++) for (int i = 0; i < 512; i++) if (sec(2, l)[i]) zeros = 0;
-      for (u32 l = ICON_BASE_LBA + ICON_MAX_SLOTS * ICON_SLOT_SECTORS; l < ST_INSTALL_SECTORS; l++) for (int i = 0; i < 512; i++) if (sec(2, l)[i]) zeros = 0;
-      CHECK(zeros, "documents, programs, journals and headroom are zero -- the running system's user data was NOT copied"); }
-    CHECK(writes_done[2] == ST_INSTALL_SECTORS, "exactly %d sector writes (got %ld)", ST_INSTALL_SECTORS, writes_done[2]);
+    CHECK(writes_done[2] >= MW_ROOTFS_LBA && writes_done[2] < MW_ROOTFS_LBA + 256, "the copied sectors plus a small filesystem format (got %ld writes)", writes_done[2]);
     /* the new installation can find itself at boot */
     st_boot_locate(0, 0x1234ABCD); CHECK(blk_boot_dev == 2 && blk_boot_base == 0, "booted from that disk, the kernel locates it by id (pos %d)", blk_boot_dev);
     blk_boot_dev = 0; blk_boot_base = 0;
@@ -237,16 +250,21 @@ static void test_install(void) {
       CHECK(memcmp(before, sec(1, 0), 512) == 0, "protective MBR unchanged"); }
 
     /* ---- 6. the target refuses a write part-way: never bootable, old sector 0 survives ---- */
-    long cuts[] = { 0, 1, 100, 1500, 2046, 2047 };
+    /* a write refused during the COPY is a write error at that sector; one refused during the filesystem FORMAT is a format error;
+     * one refused at the very last write (the boot sector itself) names sector 0. In every case sector 0 still holds the old table. */
+    long cuts[] = { 0, 1, 100, 1500, 1731, 1733, 1760, full_writes - 2, full_writes - 1 };
     for (unsigned c = 0; c < sizeof cuts / sizeof cuts[0]; c++) {
         reset_all(); add_disk(0, 4096, "RUNNING"); add_disk(2, 8192, "TARGET"); fill_source(0, 0, 0); sentinel(2);
         u8 *m = sec(2, 0); memset(m, 0, 512); mbr_entry(m, 0, 0x80, 0x83, 2048, 4096); sign(m);   /* the disk's existing table */
         u8 before[512]; memcpy(before, m, 512);
         st_resolve("ide300", &t); inj_write_fail_dev = 2; inj_write_fail_after = cuts[c];
         inst_begin(&t, 0);
-        CHECK(run_job() == INST_PHASE_FAILED && inst.err == INST_ERR_WRITE, "write refused after %ld sectors: job fails (phase %d err %d)", cuts[c], inst.phase, inst.err);
-        CHECK(memcmp(before, sec(2, 0), 512) == 0, "...and the old sector 0 / partition table is intact (it is written last), after %ld writes", cuts[c]);
-        CHECK(inst.err_lba == inst_lba_for((u32)cuts[c]), "...the error names the right sector (%u)", inst.err_lba);
+        int in_copy = cuts[c] < (long)MW_ROOTFS_LBA, is_last = cuts[c] == full_writes - 1;
+        int want_err = (in_copy || is_last) ? INST_ERR_WRITE : INST_ERR_FORMAT;
+        u32 want_lba = in_copy ? inst_lba_for((u32)cuts[c]) : is_last ? 0 : MW_ROOTFS_LBA;
+        CHECK(run_job() == INST_PHASE_FAILED && inst.err == want_err, "write refused after %ld sectors: job fails (phase %d err %d, wanted %d)", cuts[c], inst.phase, inst.err, want_err);
+        CHECK(memcmp(before, sec(2, 0), 512) == 0 || is_last, "...and the old sector 0 / partition table is intact (it is written last), after %ld writes", cuts[c]);
+        CHECK(inst.err_lba == want_lba, "...the error names the right sector (%u, wanted %u)", inst.err_lba, want_lba);
     }
 
     /* ---- 7. a write that is acknowledged but silently lost is caught by the read-back ---- */

@@ -6,6 +6,7 @@
    Scenarios: boot from IDE master / IDE slave / an AHCI SATA disk / the second of two SATA disks / IDE + SATA mixed,
    and `os-inst sata200` driven through the Terminal (write + read-back through the AHCI driver), after which the
    installed disk must boot by itself. (Subprocess.Popen + kill, not pkill -f: the latter kills its own shell.)"""
+import sys
 import os, subprocess, sys, time
 HERE = os.path.dirname(os.path.abspath(__file__)); ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 IMG = os.path.join(ROOT, "build", "os-image.img"); DISK2 = "/tmp/mw_disk2.img"; SER = "/tmp/mw_storage.log"; MON = "/tmp/mw_storage.sock"
@@ -61,8 +62,8 @@ log = qemu(["-device", "ich9-ahci,id=ahci"] + ahci(IMG, 0, True) + ahci(DISK2, 1
 check("AHCI: two disks are both found", "sata2 = port 1, 16384 sectors" in log)
 a = open(DISK2, "rb").read(1048576); b = open(IMG, "rb").read()
 diff = sorted({i // 512 for i in range(1048576) if a[i] != b[i]})
-check("os-inst sata200: the whole system was written through AHCI and verified (only sector 0 = install id, and user-data slots differ)",
-      diff[:1] == [0] and all(d == 0 or 1029 <= d <= 2047 for d in diff) and a[436:440] != b"\0\0\0\0", str(diff[:10]))
+check("os-inst sata200: the whole system was written through AHCI and verified (only sector 0 = install id, and the freshly formatted root filesystem differ)",
+      diff[:1] == [0] and all(d == 0 or 1733 <= d <= 2047 for d in diff) and a[436:440] != b"\0\0\0\0", str(diff[:10]))
 
 log = qemu(["-device", "ich9-ahci,id=ahci"] + ahci(IMG, 0) + ahci(DISK2, 1, True), 12)
 check("installed disk on the 2nd SATA port is found by its install id", "LBA 0 on sata2" in boot_line(log), boot_line(log))
@@ -93,7 +94,7 @@ log = qemu(MPT + scsi(IMG, 0, True) + scsi(DISK2, 3), mon_cmds=cmds)
 check("SCSI: two targets (0 and 3) are both found", "target 3, 16384 sectors" in log, log[-300:])
 a = open(DISK2, "rb").read(1048576)
 diff = sorted({i // 512 for i in range(1048576) if a[i] != b[i]})
-check("os-inst scsi200: written through the MPT controller and verified", diff[:1] == [0] and all(d == 0 or 1029 <= d <= 2047 for d in diff) and a[436:440] != b"\0\0\0\0", str(diff[:10]))
+check("os-inst scsi200: written through the MPT controller and verified", diff[:1] == [0] and all(d == 0 or 1733 <= d <= 2047 for d in diff) and a[436:440] != b"\0\0\0\0", str(diff[:10]))
 log = qemu(MPT + scsi(IMG, 0) + scsi(DISK2, 3, True), 14)
 check("installed disk on SCSI target 3 is found by its install id", "LBA 0 on scsi2" in boot_line(log), boot_line(log))
 
@@ -124,7 +125,15 @@ cmds = ["wait 40", "move 50 25", "click", "click", "wait 2", "type Floppy write 
 qemu(fargs, mon_cmds=cmds)
 after = open(FLOPPY, "rb").read()
 changed = sorted({i // 512 for i in range(len(before)) if before[i] != after[i]})
-check("floppy: a Notepad save is written to the floppy (document header, content, journal sectors change)", 1029 in changed and 1030 in changed, str(changed[:10]))
+sys.path.insert(0, "tools")
+import mwfs
+try:
+    fv = mwfs.Vol(FLOPPY, 1733, 315); fv.open()
+    docs = [n for n, _, _ in fv.entries(fv.walk("/docs"))]
+except Exception as e:
+    docs = ["error: %s" % e]
+check("floppy: a Notepad save is written to the floppy (only the root volume changes, and the document is in /docs)",
+      bool(changed) and min(changed) >= 1733 and "NEWDOC.TXT" in docs, str(changed[:10]) + " " + str(docs))
 
 # ---- NVMe (QEMU's `nvme` device: one controller per -device, namespace 1 is the drive) ----
 def nvme(img, n, boot=False):
@@ -142,7 +151,7 @@ log = qemu(nvme(IMG, 0, True) + nvme(DISK2, 1), mon_cmds=cmds)
 check("NVMe: two controllers are both found", "nvme2 = controller 1, namespace 1, 16384 sectors" in log, log[-300:])
 a = open(DISK2, "rb").read(1048576)
 diff = sorted({i // 512 for i in range(1048576) if a[i] != b[i]})
-check("os-inst nvme200: written through NVMe and verified", diff[:1] == [0] and all(d == 0 or 1029 <= d <= 2047 for d in diff) and a[436:440] != b"\0\0\0\0", str(diff[:10]))
+check("os-inst nvme200: written through NVMe and verified", diff[:1] == [0] and all(d == 0 or 1733 <= d <= 2047 for d in diff) and a[436:440] != b"\0\0\0\0", str(diff[:10]))
 log = qemu(nvme(IMG, 0) + nvme(DISK2, 1, True), 14)
 check("installed disk on the 2nd NVMe controller is found by its install id", "LBA 0 on nvme2" in boot_line(log), boot_line(log))
 

@@ -11,7 +11,7 @@
  *
  * Deliberately does nothing clever: fills the screen, draws a message,
  * waits for any key, then returns. No windows, no mouse, no icons --
- * Terminal.mwp (a later, separate piece of work) is what actually gives
+ * MiniShell.mwp (a later, separate piece of work) is what actually gives
  * loaded programs a place to live in the UI. This one file's whole job
  * is to be small and obviously correct enough that if something's wrong
  * with the loader, the bug is in the loader, not hiding in a
