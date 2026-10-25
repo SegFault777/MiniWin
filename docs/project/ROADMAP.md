@@ -41,17 +41,19 @@ same way (`tools/gen_hangul_font.py` has the compressor), moving `.bss` tables t
 
 ## The next alphas
 
-**1.1-alpha-10** (planned, in the order the author asked for it):
+**1.1-alpha-10** is done (see the [changelog](CHANGELOG.md)): the explorer-style MiniFiles, icons in the start menu, task bar, title
+bars and dialogs, the memory manager, the SDK and MWP API version 2. What it did not get to:
 
-* MiniFiles rebuilt as an **explorer**: a folder tree on the left, the contents of the selected folder on the right (name, size, type,
-  modified), a toolbar, a status bar with the number of objects and the free space; **Save As** rebuilt the same way (*Save in:*, up one
-  level, file list, *File name:*, *Save as type:*, Save/Cancel).
+* **Save As rebuilt like the explorer** (*Save in:*, up one level, file list, *File name:*, *Save as type:*, Save/Cancel). MiniFiles'
+  tree and list code is the model for it.
 * **Kerning** for the text renderer (the Latin font is monospaced; "MINIWEB" shows it).
 * All UI pieces (buttons, scroll bars, fields, menus, dialogs) as proper modules, and the headers of `kernel/` out of one crowded
   folder into subdirectories.
-* Kernel and memory-management modernisation, a real **SDK** (`sdk/`) and a richer MWP API, icons in the start menu, taskbar, title
-  bars and warning dialogs.
-* Carried over: **ring 3** (user mode and memory protection).
+
+**1.1-alpha-11** (planned by the author; the scope is settled when work starts): **ring 3** (user mode, paging, a per-program address
+space) and **programs that run in a window** instead of taking over the screen; and the web engine work -- HTML5 and CSS3 implemented
+completely, JavaScript in part. The MWP API's append-only layout (`sdk/include/mwp_abi.h`) and the memory manager are the base for
+the first part.
 
 Other ideas, no order: more virtual-machine / hardware compatibility (NICs: e1000e, vmxnet3, PCnet, virtio-net; storage: virtio-scsi,
 VMware Paravirtual SCSI, NVMe namespaces beyond the first); USB hubs and USB storage; GPT/UEFI boot; Korean labels in MiniFiles' list.

@@ -12,7 +12,7 @@ mode by hand, a from-scratch VGA/mouse/keyboard stack with its own disk
 drivers (IDE, SATA/AHCI, SCSI, NVMe), and a windowing system with no libc, no
 bootloader framework, and no borrowed kernel code.
 
-**Current version: 1.1-alpha-9** ([changelog](docs/project/CHANGELOG.md)). Developed and
+**Current version: 1.1-alpha-10** ([changelog](docs/project/CHANGELOG.md)). Developed and
 tested on QEMU; for VMware / VirtualBox see
 [docs/user/VIRTUAL-MACHINES.md](docs/user/VIRTUAL-MACHINES.md).
 

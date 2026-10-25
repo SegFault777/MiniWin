@@ -108,7 +108,7 @@ static void build_option_label(char *out, u32 outsz, int is_radio, int selected,
 static void draw_setting_window(void) {
     int wx = setting.x, wy = setting.y, ww = setting.w, wh = setting.h;
 
-    ui_window_frame(wx, wy, ww, wh, setting.maximized, "SETTING.MWP");
+    ui_window_frame_ic(wx, wy, ww, wh, setting.maximized, "SETTING.MWP", IC_SETTING);
 
     /* the three title-bar buttons (this window keeps its own 3px/2px inset -- see setting_btn_*()) */
     ui_titlebar_buttons(setting_btn_min_x(), setting_btn_max_x(), setting_btn_close_x(), setting_btn_y(),

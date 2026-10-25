@@ -95,6 +95,14 @@ typedef struct {
 } mwfs_ino_t;                                    /* exactly 64 bytes */
 typedef char mwfs_assert_inode_size[sizeof(mwfs_ino_t) == MWFS_INO_SIZE ? 1 : -1];
 
+
+/* ---------------------------------------------------------------- modified time
+ * The inode's `gen` field was reserved from day one and never used, so it carries the "modified" stamp -- no format change:
+ * an old disk simply has 0 there, which MiniFiles shows as a dash. The stamp is the FAT/DOS packed date-time (year-1980 in
+ * bits 25-31, month 21-24, day 16-20, hour 11-15, minute 5-10, seconds/2 in 0-4) because it sorts as a plain integer.
+ * mwfs.h has no clock of its own (it must build on the host too): the kernel hands it one with mwfs_clock_fn. */
+static u32 (*mwfs_clock_fn)(void) = 0;
+static inline u32 mwfs_now(void) { return mwfs_clock_fn ? mwfs_clock_fn() : 0; }
 /* ---------------------------------------------------------------- small helpers */
 static inline void mwfs_zero(void *p, u32 n) { u8 *b = (u8 *)p; for (u32 i = 0; i < n; i++) b[i] = 0; }
 static inline void mwfs_copy(void *d, const void *s, u32 n) { u8 *a = (u8 *)d; const u8 *b = (const u8 *)s; for (u32 i = 0; i < n; i++) a[i] = b[i]; }
@@ -109,10 +117,13 @@ static inline int mwfs_name_ok(const char *name) {
     int n = 0;
     for (; name[n]; n++) {
         char c = name[n];
-        int ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-' || c == ',';
+        /* Space and parentheses are allowed from alpha-10 so that "DOC (1).TXT" (what Notepad names a second new document) is a
+         * legal name -- but never a leading or trailing space, which nobody can see or type reliably. MiniShell takes such names
+         * in double quotes. */
+        int ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-' || c == ',' || c == ' ' || c == '(' || c == ')';
         if (!ok || n >= MWFS_NAME_MAX) return 0;
     }
-    return n > 0 && name[0] != '.';
+    return n > 0 && name[0] != '.' && name[0] != ' ' && name[n - 1] != ' ';
 }
 static inline int mwfs_name_eq(const char *a, const char *b) {          /* case-insensitive, like the DOS names these imitate */
     for (;; a++, b++) {
@@ -362,6 +373,33 @@ static inline int mwfs_dir_nth(mwfs_vol_t *v, u32 dino, u32 idx, mwfs_dirent_t *
     return 0;
 }
 
+/* Every USED entry of a directory in ONE pass over its sectors (mwfs_dir_nth() restarts from the first sector for each index, so
+ * listing n entries with it reads O(n^2/8) sectors -- fine for a shell command, not for a file manager redrawing a folder).
+ * fn returns 0 to stop early. 0 = walked (or stopped), -1 = the directory could not be read. */
+typedef int (*mwfs_dirent_fn)(const mwfs_dirent_t *e, void *ctx);
+static inline int mwfs_dir_each(mwfs_vol_t *v, u32 dino, mwfs_dirent_fn fn, void *ctx) {
+    mwfs_ino_t d;
+    if (!mwfs_ino_get(v, dino, &d) || d.type != MWFS_T_DIR) return -1;
+    for (u32 s = 0; s * 512 < d.size; s++) {
+        u32 lba;
+        if (mwfs_bmap(v, &d, s, 0, 0, &lba) != MWFS_OK || !lba) return -1;
+        u8 b[512];
+        if (!mwfs_rd(v, lba, b)) return -1;
+        for (u32 e = 0; e < 8; e++) {
+            const u8 *p = b + e * MWFS_DENT_SIZE;
+            u32 ino = (u32)p[0] | ((u32)p[1] << 8) | ((u32)p[2] << 16) | ((u32)p[3] << 24);
+            if (!ino) continue;
+            mwfs_dirent_t out;
+            out.ino = ino; out.type = p[4];
+            u32 nl = p[5]; if (nl > MWFS_NAME_MAX) nl = MWFS_NAME_MAX;
+            for (u32 k = 0; k < nl; k++) out.name[k] = (char)p[6 + k];
+            out.name[nl] = 0;
+            if (!fn(&out, ctx)) return 0;
+        }
+    }
+    return 0;
+}
+
 static inline int mwfs_dir_find(mwfs_vol_t *v, u32 dino, const char *name, u32 *ino_out, u8 *type_out, u32 *sec_out, u32 *ent_out) {
     mwfs_ino_t d;
     if (!mwfs_ino_get(v, dino, &d)) return MWFS_E_IO;
@@ -482,7 +520,7 @@ static inline int mwfs_file_put(mwfs_vol_t *v, u32 dino, const char *name, const
     if (!ino) return MWFS_E_FULL;
     mwfs_ino_t t;
     if (!mwfs_ino_get(v, ino, &t)) return MWFS_E_IO;
-    t.aux = aux;
+    t.aux = aux; t.gen = mwfs_now();
     int e = len ? mwfs_pwrite(v, &t, 0, data, len) : MWFS_OK;
     if (e == MWFS_OK) t.crc = ~mwfs_crc32_update(0xFFFFFFFFu, data, len);
     return mwfs_file_install(v, dino, name, ino, &t, e);
@@ -501,7 +539,7 @@ static inline int mwfs_file_copy(mwfs_vol_t *sv, u32 src_ino, mwfs_vol_t *dv, u3
     if (!ino) return MWFS_E_FULL;
     mwfs_ino_t t;
     if (!mwfs_ino_get(dv, ino, &t)) return MWFS_E_IO;
-    t.aux = s.aux;
+    t.aux = s.aux; t.gen = mwfs_now();
     u32 crc = 0xFFFFFFFFu;
     int e = MWFS_OK;
     for (u32 off = 0; off < s.size && e == MWFS_OK; off += 512) {
@@ -546,6 +584,7 @@ static inline int mwfs_mkdir(mwfs_vol_t *v, u32 dino, const char *name, u32 *ino
     if (f != MWFS_E_NOENT) return f;
     u32 ino = mwfs_ino_alloc(v, MWFS_T_DIR);
     if (!ino) return MWFS_E_FULL;
+    { mwfs_ino_t dt; if (mwfs_ino_get(v, ino, &dt)) { dt.gen = mwfs_now(); mwfs_ino_put(v, ino, &dt); } }   /* the stamp is a nicety: a failed write here is not an error */
     int e = mwfs_dir_add(v, dino, name, ino, MWFS_T_DIR);
     if (e != MWFS_OK) { mwfs_ino_release(v, ino); return e; }
     if (ino_out) *ino_out = ino;

@@ -14,8 +14,9 @@ headers with `gcc` and need no emulator; the **QEMU** suites boot the real image
 | x509 | `tools/test/run_host_x509.sh` | certificate extensions: 19 OpenSSL-generated variants (critical/non-critical, keyUsage, CA flags) |
 | storage | `tools/test/run_host_storage.sh` | storage ids, IDENTIFY, MBR/EBR/GPT parsing, `st_resolve` refusals, and **the installer**: whole disk, partition, existing boot code, logical, GPT, write failures (during the copy, during the filesystem format, at the boot sector), silently lost writes, read failures, self-install; the new root volume must open and check clean. Fake four-position IDE controller; ASan + UBSan |
 | mwfs | `tools/test/run_host_mwfs.sh` | the file system (`mwfs.h`, `vfs.h`) on a RAM disk: files from 0 bytes past the double-indirect boundary, nested directories, a full volume, path normalisation, mounts and cross-volume copy/move, a 4000-step randomized run checked against a model, a **crash sweep** (every operation cut off after every possible number of sector writes: old-or-new, nothing referenced-but-unmarked, clean after `check fix`) and an image built by `tools/mwfs.py`. ASan + UBSan |
+| mm | `tools/test/run_host_mm.sh` | the memory manager (`mm.h`) on an 8 MB array: page runs and exhaustion, refused bad frees, heap alignment, split/merge, chunk growth and release, `krealloc`, double free, a smashed header found by `mm_check`, and a 60,000-step random run where every live block carries a pattern checked when it is freed. ASan + UBSan |
 
-Counts at 1.1-alpha-9: web 134, engine fuzz 300 iterations, crypto 952, critical 204 (the rest of the old 416 tested the retired slot journals; their job is `mwfs` now), x509 22, storage 166, mwfs 6216, font + cursor 15 (`run_host_font.sh`).
+Counts at 1.1-alpha-10: web 134, engine fuzz 300 iterations, crypto 952, critical 204 (the rest of the old 416 tested the retired slot journals; their job is `mwfs` now), x509 22, storage 166, mwfs 6224, mm 29647, font + cursor 15 (`run_host_font.sh`).
 Other checks:
 
 | script | what it checks | time |

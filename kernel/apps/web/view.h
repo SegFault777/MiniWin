@@ -245,7 +245,7 @@ static int web_page_click(int mx, int my) {
 static void draw_web_window(void) {
     int wx = web_win.x, wy = web_win.y, ww = web_win.w, wh = web_win.h;
 
-    ui_window_frame(wx, wy, ww, wh, web_win.maximized, "MINIWEB.MWP");
+    ui_window_frame_ic(wx, wy, ww, wh, web_win.maximized, "MINIWEB.MWP", IC_WEB);
     ui_titlebar_buttons(web_btn_min_x(), web_btn_max_x(), web_btn_close_x(), web_btn_y(),
                         pressed_btn_kind == BTN_MIN && pressed_btn_win == WIN_ID_WEB,
                         pressed_btn_kind == BTN_MAX && pressed_btn_win == WIN_ID_WEB,

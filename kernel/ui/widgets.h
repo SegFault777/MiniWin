@@ -45,10 +45,21 @@ static void ui_titlebar(int x, int y, int w, const char *title) {
     font_draw_string(x + 3, y + 1, title, TH_ACCENT_TEXT);
 }
 
+/* The same, with a 12x12 program icon (ui/icon16.h, IC_*) in front of the title -- the way Windows 95 shows what a window is. */
+static void ui_titlebar_ic(int x, int y, int w, const char *title, int icon) {
+    bb_fillrect(x + 1, y + 1, w - 2, TITLEBAR_H, TH_ACCENT);
+    ic16_blit12(x + 3, y + 1 + (TITLEBAR_H - 12) / 2, icon);
+    font_draw_string(x + 3 + 14, y + 1, title, TH_ACCENT_TEXT);
+}
+
 /* A whole window frame: shadow (not when maximized -- it would hang off the screen edge), body, outline, title bar. */
 static void ui_window_frame(int x, int y, int w, int h, int maximized, const char *title) {
     ui_panel(x, y, w, h, maximized ? 0 : TH_WINDOW_SHADOW);
     ui_titlebar(x, y, w, title);
+}
+static void ui_window_frame_ic(int x, int y, int w, int h, int maximized, const char *title, int icon) {
+    ui_panel(x, y, w, h, maximized ? 0 : TH_WINDOW_SHADOW);
+    ui_titlebar_ic(x, y, w, title, icon);
 }
 
 /* A sunken, typeable field: `fill` background, a 1px frame that is TH_SHADOW (or TH_ACCENT when focused) on the

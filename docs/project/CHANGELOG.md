@@ -1,5 +1,38 @@
 # Changelog
 
+## MiniWin 1.1-alpha-10 (2026-10)
+
+* **MiniFiles is an explorer now** (`kernel/apps/minifiles.h`, rewritten). A **folder tree** on the left (+/- to open and close, the
+  mount points under `/mnt` with disk icons), the **contents of the selected folder** on the right in columns -- **Name, Size, Type,
+  Modified** (click a header to sort) -- a **tool bar** (up, new folder, copy, cut, paste, delete, refresh, Disks), a **status bar**
+  (object count or the selected file's date, size, and the volume's free space) and the menus *File Edit View Tools Help*. It reads
+  the real directories of the root file system, any depth: you can make folders, **rename** (inline, like Explorer), copy and move
+  files, delete, and open a document or run a program from `/docs` and `/progs`. The old DISKS tab is **View > Disks**.
+  Files get a **modified time**: MWFS stores it in the inode field `gen`, unused until now, as a FAT-style packed date and time -- the
+  disk layout did not change, and files written earlier show a dash.
+* **Icons in more places** (`kernel/ui/icon16.h`): one shared 16x16 cache (36 icons, loaded on first use) used by MiniFiles' lists
+  and tree, the **title bars** (shrunk to 12x12 with a bilinear filter), the **task bar** buttons, the **start menu** (programs, shut
+  down, restart) and the **warning dialog**.
+* **Notepad names new documents `DOC.TXT`** (then `DOC (1).TXT`, `DOC (2).TXT`, ...), not `NEWDOC.TXT`. For that, MWFS names may
+  now contain spaces and parentheses (never a leading or trailing space), the Save As field accepts them, and **MiniShell takes
+  double-quoted words** (`cat "DOC (1).TXT"`).
+* **Memory manager** (`kernel/mm.h`): a page-frame allocator and a heap (`kmalloc kzalloc krealloc kfree`) over everything above
+  `0x900000` (118 MB on a 128 MB machine). Double frees, frees of pointers that are not blocks, and smashed block headers are
+  refused and counted; `mm_check()` walks the whole heap. New MiniShell command **`mem`** (`mem test` runs a self-check). Tested on
+  the host with the address and undefined-behaviour sanitizers (`tools/test/run_host_mm.sh`, 29,647 checks). Not paging: there is
+  still no memory protection.
+* **A real SDK** (`sdk/`): `sdk/include/miniwin.h` and `mwp_abi.h`, `sdk/build.sh`, `sdk/install.sh`, three example programs
+  (`hello`, `browse`, `paint`, installed on every image) and `sdk/README.md`. The syscall table now has **one definition**
+  (`mwp_abi.h`, read by the kernel and by programs).
+* **MWP API version 2** (`kernel/mwp_api2.h`): memory (`mem_alloc`/`mem_free`, released automatically when the program returns),
+  files and folders (`file_size file_read file_write file_delete dir_make dir_list err_text`), time (`ticks_ms sleep_ms time_now`),
+  `mouse_poll`, icons, `text_width`, `bevel`, `button`, `window_frame`, `log`, `rand32`. Version 1 programs run unchanged.
+  `key_poll` now also drains the mouse: the keyboard and mouse share one controller output buffer, and a pending mouse byte used to
+  make a program deaf to the keys.
+* **Single-pass directory reads** (`mwfs_dir_each`, `vfs_ls_each`): listing a folder no longer rereads it once per entry.
+* **Not done, moved on:** Save As in the explorer style, kerning, and the split of the UI widgets and headers into subfolders (see
+  [ROADMAP.md](ROADMAP.md)). Ring 3 and windowed programs are planned for alpha-11. Nothing here was run on real hardware.
+
 ## MiniWin 1.1-alpha-9 (2026-10)
 
 Slogan, from this version on: **Mini OS, Many Things.**

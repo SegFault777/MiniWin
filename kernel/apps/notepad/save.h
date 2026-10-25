@@ -117,10 +117,10 @@ static int open_document_slot(int slot) {
  * clicks and the Y/N keyboard shortcuts. What "Yes"/"No" actually do
  * depends on why the dialog was opened (active_np->confirm_mode). */
 /* ---- Save As ---- */
-/* Opens the dialog, suggesting the document's current name (or NEWDOC.TXT for one that was never saved). */
+/* Opens the dialog, suggesting the document's current name (or DOC.TXT for one that was never saved). */
 static void saveas_begin(void) {
     if (ko_ime_is_composing()) ko_ime_commit(active_np->text_buf, &active_np->text_len, sizeof(active_np->text_buf));
-    const char *suggest = active_np->bound_slot >= 0 ? fs_doc_name(active_np->bound_slot) : "NEWDOC.TXT";
+    const char *suggest = active_np->bound_slot >= 0 ? fs_doc_name(active_np->bound_slot) : "DOC.TXT";
     int n = 0;
     while (suggest[n] && n < FS_NAME_MAXLEN) { active_np->saveas_name[n] = suggest[n]; n++; }
     active_np->saveas_name[n] = 0;

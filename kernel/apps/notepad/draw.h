@@ -21,7 +21,7 @@ static void draw_window(void) {
     int wx = active_np->win.x, wy = active_np->win.y, ww = active_np->win.w, wh = active_np->win.h;
 
     /* shadow (not when maximized), body, outline, title bar */
-    ui_window_frame(wx, wy, ww, wh, active_np->win.maximized, "NOTEPAD.MWP");
+    ui_window_frame_ic(wx, wy, ww, wh, active_np->win.maximized, "NOTEPAD.MWP", IC_NOTEPAD);
 
     draw_titlebar_buttons();
 

@@ -71,6 +71,15 @@ static void taskbar_pill_label(int id, char *out, u32 outsz) {
     }
 }
 
+/* Which icon a minimized window shows on its taskbar pill. */
+static int taskbar_pill_icon(int id) {
+    if (id == WIN_ID_SETTING) return IC_SETTING;
+    if (id == WIN_ID_WEB) return IC_WEB;
+    if (id == WIN_ID_TERMINAL) return IC_TERM;
+    if (id == WIN_ID_FILES) return IC_FILES;
+    return IC_NOTEPAD;
+}
+
 static void draw_taskbar(void) {
     bb_fillrect(0, TASKBAR_Y, VGA_WIDTH, TASKBAR_H, TH_FACE);
     ui_hline(0, TASKBAR_Y, VGA_WIDTH, TH_LIGHT);
@@ -94,9 +103,13 @@ static void draw_taskbar(void) {
         int py = TASKBTN_Y;
 
         ui_pill(px, py, pill_w, TASKBTN_H);
-        char label[8];
-        taskbar_pill_label(id, label, sizeof(label));
-        font_draw_string(px + 3, py + 2, label, TH_TEXT);
+        /* the program's icon, then (when the pill is wide enough to keep clear of the two glyphs at its right end) a short label */
+        ic16_blit12(px + 3, py + 1, taskbar_pill_icon(id));
+        if (pill_w >= 90) {
+            char label[8];
+            taskbar_pill_label(id, label, sizeof(label));
+            font_draw_string(px + 3 + 14, py + 2, label, TH_TEXT);
+        }
 
         /* restore glyph: two overlapping squares */
         int rx = px + pill_w - 26, ry = py + 2;

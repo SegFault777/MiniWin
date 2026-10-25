@@ -35,7 +35,7 @@ echo "[1/3] Compiling $SRC..."
 # code is not optional polish, it's how a program fits at all.
 gcc -m32 -ffreestanding -fno-pie -fno-stack-protector -nostdlib -nostdinc \
     -Wall -Wextra -Os -ffunction-sections -fdata-sections \
-    -I programs -c "$SRC" -o "$BUILD/$NAME.o"
+    -I programs -I sdk/include -c "$SRC" -o "$BUILD/$NAME.o"
 
 echo "[2/3] Linking $NAME..."
 ld -m elf_i386 -T kernel/mwp_link.ld -nostdlib --gc-sections \

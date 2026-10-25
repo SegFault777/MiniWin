@@ -89,6 +89,16 @@ static void rtc_read(rtc_time_t *out) {
     out->weekday = compute_weekday(out->year, out->month, out->day);
 }
 
+/* The clock as the FAT/DOS packed stamp mwfs.h stores in an inode (see "modified time" there). The RTC is read as the
+ * hardware has it (no timezone offset): a file's stamp should not change when the user moves the clock setting. 0 means
+ * "the RTC is unusable" (a year before 2000 cannot be packed), which MiniFiles shows as a dash. */
+static u32 rtc_dos_stamp(void) {
+    rtc_time_t t;
+    rtc_read(&t);
+    if (t.year < 2000 || t.year > 2107 || t.month < 1 || t.month > 12 || t.day < 1 || t.day > 31) return 0;
+    return ((u32)(t.year - 1980) << 25) | ((u32)t.month << 21) | ((u32)t.day << 16) | ((u32)t.hour << 11) | ((u32)t.minute << 5) | ((u32)t.second >> 1);
+}
+
 static int rtc_is_leap_year(int y) {
     return (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
 }

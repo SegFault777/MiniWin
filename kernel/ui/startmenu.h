@@ -94,9 +94,13 @@ static void draw_power_menu(int mx, int my) {
         int iy = power_menu_item_y(i);
         int hover = in_rect(mx, my, x + 2, iy, w - 4, POWERMENU_ITEM_H);
         u32 fg = ui_item(x + 2, iy, w - 4, POWERMENU_ITEM_H, hover);
-        ko_draw_mixed_string(x + 5, iy + 2, labels[i], fg);
+        ic16_blit(x + 4, iy + 1, i == 0 ? IC_POWER : IC_REFRESH);
+        ko_draw_mixed_string(x + 5 + 18, iy + 2, labels[i], fg);
     }
 }
+
+/* One 16x16 icon per program row (ui/icon16.h); the power row has its own handling below. */
+static const u8 start_menu_icons[5] = { IC_NOTEPAD, IC_SETTING, IC_WEB, IC_TERM, IC_FILES };
 
 static void draw_start_menu(int mx, int my) {
     int x = start_menu_x(), y = start_menu_y();
@@ -125,9 +129,11 @@ static void draw_start_menu(int mx, int my) {
                         || in_rect(mx, my, ix, iy, iw, STARTMENU_ITEM_H);
         u32 fg = ui_item(ix, iy, iw, STARTMENU_ITEM_H, hover);
         if (i == STARTMENU_POWER_IDX) {
-            draw_power_icon(ix + 3, iy + 2, fg);
+            if (ic16_ready(IC_POWER)) ic16_blit(ix + 2, iy + 1, IC_POWER);
+            else draw_power_icon(ix + 3, iy + 2, fg);          /* a catalog without the pack: the hand-drawn glyph */
         } else {
-            ko_draw_mixed_string(ix + 3, iy + 2, labels[i], fg);
+            ic16_blit(ix + 2, iy + 1, start_menu_icons[i]);
+            ko_draw_mixed_string(ix + 3 + 18, iy + 2, labels[i], fg);
         }
     }
 

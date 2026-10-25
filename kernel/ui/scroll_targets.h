@@ -36,6 +36,14 @@ static int sbt_files_geom(int *x, int *y, int *h, int *total, int *page, int *po
     return 1;
 }
 static void sbt_files_set(int p) { files_scroll = p; }
+/* MiniFiles' folder tree: a second bar in the same window, registered under its own owner id (SB_OWNER_FILES_TREE). */
+static int sbt_ftree_geom(int *x, int *y, int *h, int *total, int *page, int *pos) {
+    if (!files_win.open || files_win.minimized || fx_view_disks || fx_tree_n <= fx_tree_vis()) return 0;
+    *x = fx_tree_x() + fx_tree_w() - SB_W - 1; *y = fx_tl_y() + 1; *h = fx_tl_h() - 2;
+    *total = fx_tree_n; *page = fx_tree_vis(); *pos = fx_tscroll;
+    return 1;
+}
+static void sbt_ftree_set(int p) { fx_tscroll = p; }
 
 /* ---- Notepad: wrapped text rows, one pair of callbacks per window (the callbacks carry no window number) ---- */
 #define SBT_NP(n)                                                                                                        \
@@ -55,6 +63,7 @@ static void sb_register_all(void) {
     sb_register(WIN_ID_WEB,      sbt_web_geom,   sbt_web_set,   14);        /* a line of body text, in pixels */
     sb_register(WIN_ID_TERMINAL, sbt_term_geom,  sbt_term_set,  1);
     sb_register(WIN_ID_FILES,    sbt_files_geom, sbt_files_set, 1);
+    sb_register(SB_OWNER_FILES_TREE, sbt_ftree_geom, sbt_ftree_set, 1);
     sb_register(0, sbt_np0_geom, sbt_np0_set, 1);
     sb_register(1, sbt_np1_geom, sbt_np1_set, 1);
     sb_register(2, sbt_np2_geom, sbt_np2_set, 1);

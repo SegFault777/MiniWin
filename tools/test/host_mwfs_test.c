@@ -104,7 +104,12 @@ static void test_basic(void) {
     CHECK(mwfs_free_count(&v) + root_dir_sectors(&v) == free0);                  /* everything came back, except the sectors the root directory itself grew by */
     /* names */
     CHECK(mwfs_file_put(&v, MWFS_ROOT_INO, ".hidden", s, 1, 0) == MWFS_E_NAME);
-    CHECK(mwfs_file_put(&v, MWFS_ROOT_INO, "has space", s, 1, 0) == MWFS_E_NAME);
+    CHECK(mwfs_file_put(&v, MWFS_ROOT_INO, " lead", s, 1, 0) == MWFS_E_NAME);              /* a space may sit INSIDE a name (alpha-10), never at either end */
+    CHECK(mwfs_file_put(&v, MWFS_ROOT_INO, "trail ", s, 1, 0) == MWFS_E_NAME);
+    CHECK(mwfs_file_put(&v, MWFS_ROOT_INO, "bad*name", s, 1, 0) == MWFS_E_NAME);
+    CHECK(mwfs_file_put(&v, MWFS_ROOT_INO, "DOC (1).TXT", s, 1, 0) == MWFS_OK);            /* what Notepad calls a second new document */
+    CHECK(mwfs_dir_lookup(&v, MWFS_ROOT_INO, "doc (1).txt", 0, 0) == MWFS_OK);              /* and lookups ignore case as before */
+    CHECK(mwfs_unlink(&v, MWFS_ROOT_INO, "DOC (1).TXT") == MWFS_OK);
     CHECK(mwfs_file_put(&v, MWFS_ROOT_INO, "this_name_is_far_too_long_for_the_filesystem", s, 1, 0) == MWFS_E_NAME);
     CHECK(mwfs_file_put(&v, MWFS_ROOT_INO, "a/b", s, 1, 0) == MWFS_E_NAME);
 }

@@ -16,6 +16,13 @@ IMG="${1:-build/os-image.img}"
 # from before that address moved would load fine and then jump into garbage. It takes a fraction of a second.
 tools/build_mwp.sh programs/greeter.c
 python3 tools/install_mwp.py "$IMG" 0 GREETER.MWP build/greeter.mwp
+
+# The SDK's example programs (sdk/examples): they show the version-2 API and double as a smoke test of it on every build.
+for ex in hello:HELLO browse:BROWSE paint:PAINT; do
+    src="${ex%%:*}"; name="${ex##*:}"
+    tools/build_mwp.sh "sdk/examples/$src.c"
+    python3 tools/install_mwp.py "$IMG" 0 "$name.MWP" "build/$src.mwp"
+done
 python3 tools/install_icons.py "$IMG" third_party/icon-bundle
 echo "install_all: GREETER.MWP + icon catalog written to $IMG"
 # The same image padded to a 1.44 MB floppy: what VMware / VirtualBox want when the image is attached as a floppy (the BIOS then boots

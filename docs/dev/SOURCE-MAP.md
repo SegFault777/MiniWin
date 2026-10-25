@@ -58,10 +58,12 @@ For how the pieces fit together see [ARCHITECTURE.md](ARCHITECTURE.md); for the 
 | `kernel/link.ld` | Every section pattern below uses the trailing "*" wildcard (.text*, .data*, etc.) instead of matching the bare section name. |
 | `kernel/lz.h` | A tiny decoder for the standard LZ4 *block* format (token: high nibble = literal count, low nibble = match length - 4, either one extended by 255-run bytes; literals; 16-bit... |
 | `kernel/memmap.h` | The ONE place that decides who owns which chunk of physical memory above 1MB. Paging is off in this kernel, so a raw physical address IS a pointer (the same trick vga.h already uses for... |
+| `kernel/mm.h` | The kernel's memory manager (1.1-alpha-10): a page-frame allocator and a heap on top of it. |
 | `kernel/mouse.h` | The mouse: initialises the auxiliary device of the i8042 controller and decodes its 3-byte packets into movement and button state, by polling. |
 | `kernel/mpt.h` | SCSI disks behind an LSI "Fusion-MPT" controller. |
 | `kernel/mwfs.h` | MWFS, the MiniWin File System: a small real filesystem (directories of any depth, files that grow, a free-space bitmap) that lives inside any run of sectors -- a partition, a whole disk,... |
-| `kernel/mwp.h` | .mwp loader -- MiniWin's answer to "can I run code I didn't compile into the kernel." Short version: yes, but the honest way, not the pretend way. |
+| `kernel/mwp.h` | The syscall table's layout, shared with the program SDK |
+| `kernel/mwp_api2.h` | The kernel's side of the syscall table's version-2 functions (layout: sdk/include/mwp_abi.h; the program's view of them: sdk/include/miniwin.h and sdk/README.md). |
 | `kernel/mwp_link.ld` | Linker script for loadable .mwp programs (see kernel/mwp.h). |
 | `kernel/net.h` | The shared toolbox every layer above the NIC drivers reaches into. |
 | `kernel/net_stack.h` | The front door. |
@@ -89,7 +91,7 @@ For how the pieces fit together see [ARCHITECTURE.md](ARCHITECTURE.md); for the 
 | `kernel/vga.h` | The video mode itself (a real 640x480, 32-bit-per-pixel, direct-color VBE mode -- true color, not a 256-entry palette) is found and set by the bootloader's second stage in real mode --... |
 | `kernel/x25519.h` | Curve25519 Diffie-Hellman, per RFC 7748. |
 | `kernel/x509.h` | Turns a DER-encoded X.509 certificate into the handful of fields kernel/tls.h actually needs to establish trust: who signed it, what its public key is, whether it's still within its... |
-| `kernel/apps/minifiles.h` | MINIFILES.MWP, the file manager (1.1-alpha-1). |
+| `kernel/apps/minifiles.h` | MINIFILES.MWP, the file manager, laid out like the Windows 95 Explorer (1.1-alpha-10). |
 | `kernel/apps/notepad/dialogs.h` | Notepad's File dropdown and the save/new confirm dialog (drawing). |
 | `kernel/apps/notepad/draw.h` | Drawing a Notepad window (title bar, menu bar, text area, caret). |
 | `kernel/apps/notepad/file_menu.h` | Notepad's File menu: items, geometry, hit-testing. |
@@ -113,6 +115,7 @@ For how the pieces fit together see [ARCHITECTURE.md](ARCHITECTURE.md); for the 
 | `kernel/ui/compose.h` | Frame composition: the order everything is drawn in. |
 | `kernel/ui/cursor.h` | The mouse cursor shapes. |
 | `kernel/ui/desktop_files.h` | The desktop shortcuts for saved documents and installed programs (the cells after the app icons). |
+| `kernel/ui/icon16.h` | The small icons (16x16) every part of the UI shares: folder tree and file lists, window title bars, taskbar pills, the Start menu, dialogs. |
 | `kernel/ui/icons.h` | The desktop icon grid, the 32x32 icon cache, and the five app launcher icons. |
 | `kernel/ui/input.h` | The desktop's input handling: the mouse (clicks, drags, buttons, menus, icons) and the keyboard routing. |
 | `kernel/ui/menubar.h` | The menu bar MiniShell, MiniWeb and MiniFiles show under their title bar, and its drop-downs. |
@@ -139,7 +142,7 @@ For how the pieces fit together see [ARCHITECTURE.md](ARCHITECTURE.md); for the 
 | file | what it is |
 |---|---|
 | `programs/greeter.c` | The "hello, world" of MiniWin's loadable-program story. |
-| `programs/mwp_api.h` | Minimal freestanding type aliases -- a .mwp has no libc, same as the kernel itself (see kernel/io.h, which this deliberately doesn't include: a program built against kernel/io.h would... |
+| `programs/mwp_api.h` | Kept for the programs written before the SDK existed (programs/greeter.c includes "mwp_api.h"). |
 
 ## Tools (`tools/`)
 
@@ -172,6 +175,7 @@ For how the pieces fit together see [ARCHITECTURE.md](ARCHITECTURE.md); for the 
 | `tools/test/host_dom_dump.c` | Dumps the DOM kernel/dom.h builds for an HTML file: a quick way to eyeball the tree builder. |
 | `tools/test/host_engine_test.c` | Deterministic tests for the HTML5 engine (kernel/dom.h, css.h, layout.h, render.h). |
 | `tools/test/host_lz_test.c` | Host test for kernel/lz.h (the LZ4 block decoder) and the compressed Korean font table in kernel/font_ko_data.h. |
+| `tools/test/host_mm_test.c` | Kernel/mm.h on an ordinary array: the page allocator (contiguous runs, exhaustion, refused bad frees), the heap (alignment, split/merge, chunk growth and release, krealloc, double free,... |
 | `tools/test/host_mwfs_test.c` | Kernel/mwfs.h on a RAM disk: mkfs/open, files from 0 bytes to past the double-indirect boundary, directories of any depth, replace/rename/unlink, a full volume, a randomized run checked... |
 | `tools/test/host_rd_fuzz.c` | Fuzzer for the HTML engine: random tag soup + random CSS through dom_parse -> rd_layout -> rd_paint, under ASan/UBSan. |
 | `tools/test/host_render.c` | Renders an HTML file through the real engine (dom.h/css.h/layout.h/render.h) into a PPM image: host_render page.html out.ppm [width] [height] The screen is `width` x 480 by default; the... |
@@ -190,6 +194,7 @@ For how the pieces fit together see [ARCHITECTURE.md](ARCHITECTURE.md); for the 
 | `tools/test/run_host_crypto.sh` | Host-side crypto unit tests: reference vectors from OpenSSL/hashlib vs MiniWin's actual kernel headers. |
 | `tools/test/run_host_engine.sh` | Host-side tests for the HTML5 engine (dom/css/layout/render), then a burst of the ASan/UBSan fuzzer. |
 | `tools/test/run_host_font.sh` | The compressed Korean font: the checked-in header is up to date and round-trips, and the kernel's LZ4 decoder (kernel/lz.h) inflates it to exactly the bytes the generator says, and... |
+| `tools/test/run_host_mm.sh` | Kernel/mm.h (page allocator + heap) on an ordinary array, with the address and undefined-behaviour sanitizers on. |
 | `tools/test/run_host_mwfs.sh` | Kernel/mwfs.h on a RAM disk: files, directories, a full volume, a randomized run against a model, and a crash sweep. |
 | `tools/test/run_host_storage.sh` | Kernel/storage.h (+ the generalized ata.h) against a fake four-position IDE controller. |
 | `tools/test/run_host_web.sh` | Host-side tests for the HTTP response handling and the HTML renderer. |

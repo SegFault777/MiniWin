@@ -62,7 +62,7 @@ static struct { u8 used; u32 ino, len; } fs_doc_tab[FS_MAX_FILES];
 static char fs_doc_names[FS_MAX_FILES][FS_NAME_MAXLEN + 1];          /* the name of a used slot, or a name reserved for a save in progress */
 
 static const char *fs_doc_name(int slot) {
-    return (slot >= 0 && slot < FS_MAX_FILES && fs_doc_names[slot][0]) ? fs_doc_names[slot] : "NEWDOC.TXT";
+    return (slot >= 0 && slot < FS_MAX_FILES && fs_doc_names[slot][0]) ? fs_doc_names[slot] : "DOC.TXT";
 }
 static inline mwfs_vol_t *fs_root(void) { return vfs_is_root_ok() ? &vfs_vols[0] : 0; }
 static inline int fs_dir_ino(const char *name, u32 *ino) {
@@ -108,7 +108,7 @@ static inline int fs_find_by_name(const char *name) {
     for (int i = 0; i < FS_MAX_FILES; i++) if (fs_doc_tab[i].used && mwfs_name_eq(fs_doc_names[i], name)) return i;
     return -1;
 }
-/* A free slot with a fresh default name reserved in it (NEWDOC.TXT, NEWDOC_2.TXT, ...), or -1. */
+/* A free slot with a fresh default name reserved in it (DOC.TXT, DOC (1).TXT, DOC (2).TXT, ...), or -1. */
 static inline int fs_find_empty_slot(void) {
     mwfs_vol_t *v = fs_root();
     u32 dino;
@@ -117,10 +117,10 @@ static inline int fs_find_empty_slot(void) {
     for (int i = 0; i < FS_MAX_FILES; i++) if (!fs_doc_names[i][0]) { slot = i; break; }
     if (slot < 0) return -1;
     for (int n = 1; n < 1000; n++) {
-        char name[24]; int k = 0;
-        const char *base = "NEWDOC";
+        char name[32]; int k = 0;
+        const char *base = "DOC";
         while (*base) name[k++] = *base++;
-        if (n > 1) { name[k++] = '_'; char d[6]; int dl = 0, x = n; while (x) { d[dl++] = (char)('0' + x % 10); x /= 10; } while (dl) name[k++] = d[--dl]; }
+        if (n > 1) { name[k++] = ' '; name[k++] = '('; char d[6]; int dl = 0, x = n - 1; while (x) { d[dl++] = (char)('0' + x % 10); x /= 10; } while (dl) name[k++] = d[--dl]; name[k++] = ')'; }
         const char *ext = ".TXT"; while (*ext) name[k++] = *ext++;
         name[k] = 0;
         int taken = 0;

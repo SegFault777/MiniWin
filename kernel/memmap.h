@@ -120,8 +120,11 @@ typedef char mw_assert_netmem_fits[(MW_NETMEM_USED_END <= MW_NETMEM_END) ? 1 : -
 #define MW_MISC_BASE        0x007C0000u
 #define MW_ICON_CACHE_ADDR  (MW_MISC_BASE)               /* 7 icons x 32x32 x u32 = 28KB */
 #define MW_ICON_CACHE_SIZE  0x00007000u
-#define MW_FILES_ICON_ADDR  (MW_MISC_BASE + MW_ICON_CACHE_SIZE)   /* MiniFiles: 4 small icons x 16x16 x u32 = 4KB */
-#define MW_FILES_ICON_SIZE  0x00001000u
+/* The shared 16x16 icon cache (ui/icon16.h): up to 36 icons x 16x16 x u32 = 36KB, filled one icon at a time the first time it is
+ * drawn. It runs right up to the Korean font below. (Before alpha-10 this was MiniFiles' private 4-icon cache.) */
+#define MW_ICON16_ADDR      (MW_MISC_BASE + MW_ICON_CACHE_SIZE)
+#define MW_ICON16_MAX       36u
+#define MW_ICON16_SIZE      (MW_ICON16_MAX * 1024u)
 
 /* The Korean font: 11172 syllables x 11 rows x u16 = 245,784 bytes, inflated here at boot from the LZ4 table in
  * font_ko_data.h (63 KB in the image instead of 245 KB -- the image has a hard 512 KB budget, this region does not).
@@ -164,8 +167,8 @@ typedef char mw_assert_netmem_fits[(MW_NETMEM_USED_END <= MW_NETMEM_END) ? 1 : -
 typedef char mw_assert_usb_dma_fits[(MW_USB_DMA_ADDR >= (MW_STOR_DMA_ADDR + MW_STOR_DMA_SIZE) && (MW_USB_DMA_ADDR + MW_USB_DMA_SIZE) <= MW_MWP_SYSCALL_ADDR && (MW_USB_DMA_ADDR & 0xFFFu) == 0) ? 1 : -1];
 typedef char mw_assert_rd_fits[(MW_RD_END <= MW_MISC_BASE) ? 1 : -1];
 typedef char mw_assert_misc_fits[((MW_MISC_BASE + MW_ICON_CACHE_SIZE) <= MW_MWP_SYSCALL_ADDR) ? 1 : -1];
-typedef char mw_assert_files_icons_fit[((MW_FILES_ICON_ADDR + MW_FILES_ICON_SIZE) <= MW_MWP_SYSCALL_ADDR) ? 1 : -1];
-typedef char mw_assert_kfont_fits[((0x007D0000u + MW_KFONT_SIZE) <= MW_MWP_SYSCALL_ADDR && 0x007D0000u >= (MW_MISC_BASE + MW_ICON_CACHE_SIZE + MW_FILES_ICON_SIZE)) ? 1 : -1];
+typedef char mw_assert_icon16_fits[((MW_ICON16_ADDR + MW_ICON16_SIZE) <= 0x007D0000u) ? 1 : -1];
+typedef char mw_assert_kfont_fits[((0x007D0000u + MW_KFONT_SIZE) <= MW_MWP_SYSCALL_ADDR && 0x007D0000u >= (MW_MISC_BASE + MW_ICON_CACHE_SIZE + MW_ICON16_SIZE)) ? 1 : -1];
 typedef char mw_assert_stor_dma_fits[((0x00810000u + MW_STOR_DMA_SIZE) <= MW_MWP_SYSCALL_ADDR && 0x00810000u >= (0x007D0000u + MW_KFONT_SIZE) && MW_AHCI_DMA_SIZE <= 0x4000u && 0x4000u + MW_MPT_DMA_SIZE + MW_NVME_DMA_SIZE + MW_FD_DMA_SIZE <= MW_STOR_DMA_SIZE && (MW_NVME_DMA_ADDR & 0xFFFu) == 0 && (MW_FD_DMA_ADDR >> 16) == ((MW_FD_DMA_ADDR + MW_FD_DMA_SIZE - 1) >> 16) && (MW_FD_DMA_ADDR + MW_FD_DMA_SIZE) < 0x01000000u) ? 1 : -1];
 typedef char mw_assert_rd_above_backbuf[(MW_RD_BASE >= 0x0052C000u) ? 1 : -1];
 typedef char mw_assert_mwp_in_ram[(MW_MWP_END <= 0x0092C000u) ? 1 : -1];

@@ -135,6 +135,20 @@ static inline int vfs_ls_nth(const vfs_node_t *dir, u32 idx, mwfs_dirent_t *out)
     return mwfs_dir_nth(&vfs_vols[dir->vol], dir->ino, idx, out);
 }
 
+/* The whole directory in one pass (see mwfs_dir_each); for /mnt it walks the mount table like vfs_ls_nth does. */
+static inline int vfs_ls_each(const vfs_node_t *dir, mwfs_dirent_fn fn, void *ctx) {
+    if (dir->is_mnt_dir) {
+        for (int i = 1; i < VFS_MAX_VOLS; i++) {
+            if (!vfs_vols[i].used) continue;
+            mwfs_dirent_t e;
+            e.ino = MWFS_ROOT_INO; e.type = MWFS_T_DIR; mwfs_strcpy(e.name, vfs_vols[i].id, sizeof e.name);
+            if (!fn(&e, ctx)) return 0;
+        }
+        return 0;
+    }
+    return mwfs_dir_each(&vfs_vols[dir->vol], dir->ino, fn, ctx);
+}
+
 static inline int vfs_mkdir(const char *path) {
     vfs_node_t n;
     int e = vfs_lookup(path, &n);

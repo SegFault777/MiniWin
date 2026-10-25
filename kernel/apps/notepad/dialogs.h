@@ -52,7 +52,8 @@ static void draw_confirm_dialog(int mx, int my) {
     /* Title bar -- deliberately just an X, no minimize/maximize. This is
      * a modal warning, not a document window; the only two things you
      * can do with it are answer it or dismiss it. */
-    ui_titlebar(x, y, CONFIRM_W, active_np->confirm_mode == CONFIRM_SAVEAS ? "Save As" : "Warning!");
+    ui_titlebar_ic(x, y, CONFIRM_W, active_np->confirm_mode == CONFIRM_SAVEAS ? "Save As" : "Warning!",
+                   active_np->confirm_mode == CONFIRM_SAVEAS ? IC_DOC : IC_WARNING);
     int clx = confirm_close_x(), cy = confirm_close_y();
     int p_close = (pressed_btn_kind == BTN_CONFIRM_CLOSE && pressed_btn_win == active_np->id);
     ui_glyph_close(clx, cy, p_close, 1);
@@ -67,7 +68,8 @@ static void draw_confirm_dialog(int mx, int my) {
         int cx = fx + 3 + FONT_CELL * active_np->saveas_len;       /* the caret */
         if (cx + 2 < fx + fw) bb_fillrect(cx, fy + 2, 2, 10, TH_FIELD_TEXT);
     } else {
-    draw_warning_icon(x + 8, body_y);
+    if (ic16_ready(IC_WARNING)) ic16_blit(x + 6, body_y, IC_WARNING);     /* the pack's own warning sign ... */
+    else draw_warning_icon(x + 8, body_y);                                 /* ... or the hand-drawn one when the image has no icon pack */
     ko_draw_mixed_string(x + 26, body_y + 1,  t(STR_SAVE_CHANGES), TH_TEXT);
     if (active_np->confirm_mode == CONFIRM_CLOSE) {
         ko_draw_mixed_string(x + 26, body_y + 11, t(STR_BEFORE_CLOSING), TH_TEXT);

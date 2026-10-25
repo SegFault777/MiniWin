@@ -53,8 +53,11 @@
 #include "net_stack.h"
 #include "mwp.h"
 
+#include "mm.h"              /* page allocator + heap (kmalloc/kfree); mm_init_boot() runs from boot.h */
+
 /* ---- design: color roles + metrics, and every reusable piece of chrome ---- */
 #include "ui/theme.h"      /* pick a look with  THEME=name ./build.sh  (kernel/ui/themes/<name>.h) */
+#include "ui/icon16.h"      /* shared 16x16 icons (needs fs.h's catalog + vga.h) */
 #include "ui/widgets.h"
 
 #define DESKTOP_COLOR_BG      TH_DESKTOP
@@ -93,6 +96,7 @@
 #include "ui/resize.h"
 #include "ui/cursor.h"
 #include "ui/compose.h"
+#include "mwp_api2.h"       /* the program syscall table's version-2 functions (needs mm.h, vfs.h, icons, widgets, MiniFiles) */
 #include "sys/power.h"
 #include "sys/boot.h"
 #include "ui/input.h"

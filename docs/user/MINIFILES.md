@@ -1,84 +1,91 @@
 # MiniFiles
 
-*`MINIFILES.MWP`, added in 1.1-alpha-1. Implementation: `kernel/apps/minifiles.h` (state, geometry, drawing, clicks);
-window plumbing in `window.h`, `windows.h`, `icons.h`, `startmenu.h`, `taskbar.h`, `compose.h`, `input.h`.*
+*`MINIFILES.MWP`, added in 1.1-alpha-1, rebuilt as an explorer in 1.1-alpha-10. Implementation: `kernel/apps/minifiles.h` (state,
+geometry, drawing, clicks); window plumbing in `window.h`, `windows.h`, `icons.h`, `startmenu.h`, `taskbar.h`, `compose.h`,
+`input.h`; the small icons in `ui/icon16.h`.*
 
-MiniFiles is MiniWin's file manager. Open it by **double-clicking the folder icon** (the fifth icon of the desktop's vertical list)
-(labelled `MINIFILES`) or from the **start menu** (`MiniFiles.mwp`). It is an ordinary window: drag it by the title bar,
-resize it by its edges, minimise (to the task bar), maximise, close.
+MiniFiles is MiniWin's file manager, laid out like the Windows 95 Explorer. Open it by **double-clicking the folder icon** on the desktop
+(labelled `MINIFILES`) or from the **start menu** (`MiniFiles.mwp`). It is an ordinary window: drag it by the title bar, resize it by
+its edges, minimise (to the task bar), maximise, close.
 
-It has a **menu bar** and two tabs.
+```
+ File  Edit  View  Tools  Help
+ [up][new] [Copy][Cut][Paste] [delete][refresh][disks]
+ All Folders          | Contents of /docs
+ [-] MiniWin          | Name         Size     Type     Modified
+   [+] docs           | DOC.TXT      12 B     Text     26-10-25
+   [+] mnt            | NOTES.TXT    1 KB     Text     26-10-24
+   [+] progs          |
+   [+] sys            |
+ 2 object(s)                         | 1 KB | Free: 149 KB
+```
 
-## Menu bar
+## The two panes
 
-* **File:** *Open / Run / Install* (what the main button does for the selection), *Delete* (asks first, like the button), *Refresh*,
-  *Close window*.
-* **View:** *Files* and *Disks* (the two tabs).
-* **Help:** *About MiniFiles*.
+* **Left, All Folders:** the folder tree of the root file system. `[+]` / `[-]` (or a double-click on a name) opens and closes a
+  folder; clicking a name shows its contents on the right. The volumes mounted under `/mnt` show with a disk icon. The tree has its own
+  scroll bar and wheel scrolling.
+* **Right, Contents of ...:** the entries of the selected folder, folders first. Columns: **Name**, **Size**, **Type** (`Folder`, `Text`,
+  `Prog`, `HTML`, `CSS`, `Script`, `C src`, `Asm`, `File`, from the file's ending), **Modified** (`YY-MM-DD`; a dash for a file written
+  before alpha-10, or when the clock could not be read). **Click a column header to sort**; click it again to reverse. In a narrow
+  window the Type column goes first, then Modified, then Size. Up to 192 entries of one folder are listed.
 
-(The explorer-style tree and the *Save in:* dialog planned for the next version are listed in [ROADMAP.md](../project/ROADMAP.md).)
+The **status bar** shows the number of objects, or (with a file selected) its date and time and size; at the right the **free space** of
+the volume. Messages ("Deleted.", "That is not a valid name.", ...) replace the object count until you do something else.
 
-## FILES
+## The tool bar and the menus
 
-Lists the documents in `/docs` and the programs in `/progs`, one row per item (up to 100 rows; the scroll bar and the mouse wheel
-move through them; other directories are for MiniShell's `ls` for now):
+| button | menu | what it does |
+|---|---|---|
+| up arrow | | the parent folder |
+| folder | File > New Folder | makes `NewFolder` (then `NewFolder2`, ...) in the open folder and starts renaming it |
+| Copy / Cut / Paste | Edit | copy a **file** (folders can be moved with Cut, not copied), then open another folder and Paste there; a name that is already used is refused, never overwritten |
+| trash | File > Delete | the first click arms it (*Click DELETE again: NAME*), the second deletes; a folder must be empty; the folders the system stands on (`/docs`, `/progs`, `/mnt`, `/sys`, the volumes) cannot be deleted or renamed; a document open in Notepad cannot be deleted or renamed |
+| refresh | File > Refresh | rereads the disk (the lists are built when you open a folder and after your own actions, not continuously) |
+| computer | View > Disks | switches to the disk list (below); press again for the folders |
+| | File > Rename | an inline name box on the selected row: type, **Enter** accepts, **Esc** cancels; a click elsewhere accepts |
+| | File > Open | a folder: go into it; a program in `/progs`: run it (the screen is repainted when it returns); a document in `/docs`: open it in Notepad |
+| | Tools > MiniShell here | opens MiniShell with `cd <this folder>` typed in (press Enter) |
 
-| column | meaning |
-|---|---|
-| icon + name | a document icon and the document's name (`NEWDOC.TXT`, ...), or a program icon and the program's name (`GREETER.MWP`); names are cut to 12 characters in the column |
-| size | bytes |
-| `DOC` / `PRG` | a document or a loadable program |
-| remark | empty, or `DAMAGED` |
+A file elsewhere than `/docs` and `/progs` cannot be opened from here yet (*Only files in /docs open in Notepad.*, *Programs run from
+/progs.*); MiniShell's `cat` and `cp` work on any path. Changes under `/docs` and `/progs` also update the desktop icons.
 
-**DAMAGED is real**: every file is read through completely and its CRC-32 checked when the list is built
-(`fs_verify_slot()` / `prog_verify_slot()`, see [DISK-LAYOUT.md](../dev/DISK-LAYOUT.md)), so a file that would open as garbage is
-flagged instead of looking fine.
+A file that fails its CRC-32 check when you select it (small files only) is flagged **DAMAGED** and refuses to open
+(see [DISK-LAYOUT.md](../dev/DISK-LAYOUT.md)).
 
-Buttons (the first changes with what is selected):
-
-* **OPEN** (a document) opens it in Notepad. If it is already open in a Notepad window that window is brought to the front
-  instead (a second editable copy would race on Save). A damaged document is refused.
-* **RUN** (a program) loads and runs it, the same as MiniShell's `run`; the screen is repainted when it returns.
-* **DELETE** erases the selected file. It asks first: the first click turns the button into **SURE?** and the status line
-  says *Click DELETE again: NAME*; the second click deletes. Clicking anywhere else, or selecting another row, cancels.
-  A document that is open in Notepad cannot be deleted (*It is open in Notepad*).
-* **REFRESH** rereads the disk (the list is built when the window opens, when you switch tabs and after your own actions,
-  not continuously: a file saved in Notepad shows up after REFRESH).
-
-## DISKS
+## Disks (View > Disks)
 
 Lists the disks and their partitions, with the **id** each is called by in `os-inst`
 ([STORAGE-IDS.md](../dev/STORAGE-IDS.md)):
 
 ```
-[disk icon] ide100     1 MB   DISK  RUNNING     <- the disk MiniWin runs from
-[disk icon] ide200    16 MB   DISK
-   [partition icon] ide201     2 MB   PART
-   [partition icon] ide202     4 MB   PART
+[disk icon] ide100     1 MB   Disk  RUNNING     <- the disk MiniWin runs from
+[disk icon] ide200    16 MB   Disk
+   [partition icon] ide201     2 MB   Part
+   [partition icon] ide202     4 MB   Part
 ```
 
-(the icons are the catalog's `IDE_Drive` for disks and `Drive` for partitions)
+Remarks: `RUNNING` (MiniWin is running from there, not installable), `EXTENDED` (a container, pick a logical partition inside it),
+`TOO SMALL` (under 1 MB).
 
-Remarks: `RUNNING` (MiniWin is running from there, not installable), `EXTENDED` (a container, pick a logical partition inside
-it), `TOO SMALL` (under 1 MB).
-
-**INSTALL** does *not* install by itself. It opens MiniShell with `os-inst <id>` already typed in; you press Enter,
-read the summary, and type `YES` ([OS-INSTALL.md](INSTALLING.md)). A row that cannot be installed on says why in the
-status line (*That is where MiniWin runs from.*, *Pick a logical partition inside it.*, *Too small: needs at least 1 MB.*).
+**Install** (the button, or Enter / double-click on a row) does *not* install by itself. It opens MiniShell with `os-inst <id>` already
+typed in; you press Enter, read the summary, and type `YES` ([INSTALLING.md](INSTALLING.md)). A row that cannot be installed on says why
+in the status line.
 
 ## Mouse and keyboard
 
 | | |
 |---|---|
-| click a row | select it |
-| double-click a row (FILES) | OPEN / RUN |
-| click a tab | switch tab (Left/Right arrows too) |
-| Up / Down | move the selection (the list scrolls to keep it visible) |
-| Enter | the primary button: OPEN / RUN / INSTALL |
+| click a row / a tree name | select it / show that folder |
+| double-click a row | open it (a folder, a program, a document) |
+| double-click a tree name | open or close it |
+| Up / Down | move the selection |
+| Enter or Right | open the selection |
+| Backspace or Left | up one folder |
+| wheel | scroll the pane under the pointer |
 
 ## Limits (alpha)
 
-* Only `/docs` and `/progs` are shown, as a flat list; there is no folder tree, rename or copy yet (use MiniShell's `ls cd cp mv rm`;
-  see [ROADMAP.md](../project/ROADMAP.md)).
-* The window's labels and messages are English only apart from the menu bar (the rest of the system is bilingual; the task bar and
-  status line entries for the window are translated).
+* No overwrite or "Copy of" naming on Paste, no copying of folders, no multiple selection, no drag and drop, no undo.
+* The column order and the tree width are fixed (the tree takes 30% of the window).
+* The window's labels are bilingual; its messages are English only.

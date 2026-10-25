@@ -8,6 +8,7 @@
 #include "font_ko.h"
 #include "fs.h"
 #include "serial.h"
+#include "../sdk/include/mwp_abi.h"   /* the syscall table's layout, shared with the program SDK */
 
 /* ============================================================
  * .mwp loader -- MiniWin's answer to "can I run code I didn't compile
@@ -73,32 +74,14 @@
  * windows-being-dragged concept); if that ever changes, this table
  * would need to move to per-slot storage, but building that speculatively
  * now would just be dead weight. */
-#define MWP_SYSCALL_TABLE_ADDR MW_MWP_SYSCALL_ADDR    /* 0x8F0000: one page below the load address */
+/* (MWP_SYSCALL_TABLE_ADDR itself comes from mwp_abi.h; the assert below proves it equals memmap.h's) */
+typedef char mw_assert_mwp_table_addr[(MWP_SYSCALL_TABLE_ADDR == MW_MWP_SYSCALL_ADDR) ? 1 : -1];
 typedef char mw_assert_mwp_addrs[(MWP_LOAD_ADDR == 0x8F1000u && MWP_SYSCALL_TABLE_ADDR == 0x8F0000u) ? 1 : -1];
 
-typedef struct {
-    void (*put_pixel)(int x, int y, u32 color);
-    void (*fill_rect)(int x, int y, int w, int h, u32 color);
-    void (*draw_rect)(int x, int y, int w, int h, u32 color);
-    void (*draw_string)(int x, int y, const char *s, u32 color);          /* Latin only, via font.h */
-    void (*draw_string_ko)(int x, int y, const char *s, u32 color);       /* Latin+Hangul mixed, via font_ko.h */
-    void (*present)(void);        /* flips the backbuffer to the real
-                                   * screen -- every draw_* / fill_rect /
-                                   * put_pixel call above only touches
-                                   * the off-screen backbuffer (same
-                                   * double-buffering this kernel's own
-                                   * render_frame() uses internally), so
-                                   * nothing a .mwp draws is actually
-                                   * visible until it calls this */
-    int  (*key_poll)(void);       /* returns an ASCII byte (or a Hangul
-                                   * codepoint's low bits are NOT exposed
-                                   * here -- see the note below), 0 if no
-                                   * key is waiting; never blocks, same
-                                   * contract as this kernel's own main
-                                   * loop uses internally */
-    u32  screen_w;
-    u32  screen_h;
-} mwp_syscalls_t;
+/* The table's layout lives in sdk/include/mwp_abi.h, shared with the program side -- see the comments there (and the version
+ * history: version 2 arrived in 1.1-alpha-10). The fields are filled in by mwp_init() (the drawing and keyboard ones) and
+ * mwp_api2.h's mwp_api2_init() (everything added in version 2). */
+
 
 /* The syscall table itself lives at a fixed address (see
  * MWP_SYSCALL_TABLE_ADDR) so a separately-compiled .mwp can find it
@@ -130,6 +113,9 @@ static inline void mwp_init(void) {
 }
 
 typedef void (*mwp_entry_fn)(void);
+/* Runs right after a program returns (mwp_api2.h frees the memory the program left allocated). */
+static void (*mwp_on_exit)(void) = 0;
+static void (*mwp_on_start)(void) = 0;
 
 /* Loads program `slot` into MWP_LOAD_ADDR and jumps to it. Returns 0
  * (and doesn't jump anywhere) if the slot's empty or something about it
@@ -157,7 +143,9 @@ static inline int mwp_run(int slot) {
     if (got == 0 || got != len) return 0;
 
     mwp_entry_fn entry = (mwp_entry_fn)(MWP_LOAD_ADDR + entry_offset);
+    if (mwp_on_start) mwp_on_start();
     entry();
+    if (mwp_on_exit) mwp_on_exit();
     return 1;
 }
 

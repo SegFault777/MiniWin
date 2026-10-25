@@ -59,6 +59,7 @@ static void handle_mouse(void) {
             int notches = mouse_wheel;
             mouse_wheel = 0;
             (void)compute_hover_resize_zone(mx, my, &wh_id);
+            if (wh_id == WIN_ID_FILES && files_in_tree(mx, my)) wh_id = SB_OWNER_FILES_TREE;     /* the wheel over the folder tree scrolls the tree */
             if (wh_id >= 0) sb_wheel(wh_id, notches);
         }
 
@@ -260,7 +261,7 @@ static void handle_mouse(void) {
                     resize_start_y = rw->y;
                     resize_start_w = rw->w;
                     resize_start_h = rw->h;
-                } else if (hit_id >= 0 && sb_press(hit_id, mx, my)) {
+                } else if (hit_id >= 0 && (sb_press(hit_id, mx, my) || (hit_id == WIN_ID_FILES && sb_press(SB_OWNER_FILES_TREE, mx, my)))) {
                     win_z_raise(hit_id);                       /* a press on a scroll bar: arrow, page jump or the start of a thumb drag */
                 } else if (hit_id == WIN_ID_SETTING) {
                     /* Clicking anywhere on a window -- not just a
@@ -725,7 +726,7 @@ static void handle_keyboard(void) {
             else if (c == 27) confirm_no_action();                   /* Esc */
             else if (c == '\b') { if (active_np->saveas_len > 0) active_np->saveas_name[--active_np->saveas_len] = 0; }
             else if (k > 0 && active_np->saveas_len < FS_NAME_MAXLEN &&
-                     ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-')) {
+                     ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-' || c == ' ' || c == '(' || c == ')')) {
                 active_np->saveas_name[active_np->saveas_len++] = c;
                 active_np->saveas_name[active_np->saveas_len] = 0;
             }

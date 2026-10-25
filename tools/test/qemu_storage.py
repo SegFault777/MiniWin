@@ -133,7 +133,7 @@ try:
 except Exception as e:
     docs = ["error: %s" % e]
 check("floppy: a Notepad save is written to the floppy (only the root volume changes, and the document is in /docs)",
-      bool(changed) and min(changed) >= 1733 and "NEWDOC.TXT" in docs, str(changed[:10]) + " " + str(docs))
+      bool(changed) and min(changed) >= 1733 and "DOC.TXT" in docs, str(changed[:10]) + " " + str(docs))
 
 # ---- NVMe (QEMU's `nvme` device: one controller per -device, namespace 1 is the drive) ----
 def nvme(img, n, boot=False):

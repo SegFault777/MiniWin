@@ -101,10 +101,10 @@ static window_t term_win = {
 };
 
 /* MINIFILES.MWP, the file manager (apps/minifiles.h) */
-#define FILES_DEFAULT_X   110
-#define FILES_DEFAULT_Y   84
-#define FILES_DEFAULT_W   430
-#define FILES_DEFAULT_H   260
+#define FILES_DEFAULT_X   40
+#define FILES_DEFAULT_Y   36
+#define FILES_DEFAULT_W   560
+#define FILES_DEFAULT_H   340
 
 static window_t files_win = {
     .open = 0, .minimized = 0, .maximized = 0,

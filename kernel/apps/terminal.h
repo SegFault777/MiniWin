@@ -103,7 +103,7 @@ static void term_scroll_by(int d) {
 
 static void term_print_blank(void) { term_print(""); }
 
-/* Splits the input line into up to 4 whitespace-separated tokens
+/* Splits the input line into up to 5 whitespace-separated tokens (a "double-quoted" token may contain spaces)
  * in-place-ish (writes into caller-owned buffers) -- every command
  * here takes at most one argument (a name), so this never needed to
  * be a real argv[]/argc parser. Returns the token count. */
@@ -114,7 +114,13 @@ static int term_tokenize(const char *s, char tokens[5][TERM_INPUT_MAXLEN + 1]) {
         while (s[i] == ' ') i++;
         if (!s[i]) break;
         u32 j = 0;
-        while (s[i] && s[i] != ' ' && j < TERM_INPUT_MAXLEN) tokens[count][j++] = s[i++];
+        if (s[i] == '"') {                                  /* "DOC (1).TXT": a quoted token may hold spaces */
+            i++;
+            while (s[i] && s[i] != '"' && j < TERM_INPUT_MAXLEN) tokens[count][j++] = s[i++];
+            if (s[i] == '"') i++;
+        } else {
+            while (s[i] && s[i] != ' ' && j < TERM_INPUT_MAXLEN) tokens[count][j++] = s[i++];
+        }
         tokens[count][j] = 0;
         count++;
     }
@@ -165,6 +171,7 @@ static void term_cmd_help(void) {
     term_print("run <nm>   - load and run a program");
     term_print("tick       - show the time and date");
     term_print("fetch      - show system information");
+    term_print("mem [test] - memory: RAM, pages, heap");
     term_print("part       - partitions (part ?)");
     term_print("lsusb      - list USB devices  (plug)");
     term_print("os-inst    - install MiniWin (os-inst ?)");
@@ -325,6 +332,59 @@ static void term_fetch_mib(char *out, u32 *l, u32 cap, u32 kb) {
     append_uint(out, l, cap, (int)(tenths / 10u));
     append_str(out, l, cap, ".");
     append_uint(out, l, cap, (int)(tenths % 10u));
+}
+
+/* mem -- what the memory manager (mm.h) has: the RAM the BIOS reported, the managed pages, the heap, and the call counters.
+ * `mem test` allocates 64 blocks of mixed sizes, fills each with its own pattern, frees them in a scrambled order and walks the
+ * heap -- a quick way to see on real hardware that the allocator works there too. */
+static void term_kb_text(char *out, u32 cap, u32 kb) {
+    u32 l = 0; out[0] = 0;
+    if (kb >= 10240u) { append_uint(out, &l, cap, (int)(kb / 1024u)); append_str(out, &l, cap, " MB"); }
+    else { append_uint(out, &l, cap, (int)kb); append_str(out, &l, cap, " KB"); }
+}
+static void term_cmd_mem(const char *arg) {
+    char v[TERM_COLS + 1], t1[16], t2[16]; u32 l;
+    mm_stats_t s; mm_stats(&s);
+    if (arg[0] && term_streq(arg, "test")) {
+        void *p[64]; u32 n[64]; int bad = 0, got = 0;
+        for (int i = 0; i < 64; i++) {
+            n[i] = 24u + (u32)i * 57u + (u32)((i * i) % 7) * 900u;
+            p[i] = kmalloc(n[i]);
+            if (!p[i]) continue;
+            got++;
+            for (u32 k = 0; k < n[i]; k++) ((u8 *)p[i])[k] = (u8)(i + 1);
+        }
+        for (int step = 0; step < 64; step++) {                 /* a fixed shuffle: 0, 37, 10, 47, ... */
+            int i = (step * 37) % 64;
+            if (!p[i]) continue;
+            for (u32 k = 0; k < n[i]; k++) if (((u8 *)p[i])[k] != (u8)(i + 1)) { bad++; break; }
+            if (!kfree(p[i])) bad++;
+            p[i] = 0;
+        }
+        int problems = mm_check();
+        l = 0; append_uint(v, &l, sizeof(v), got); append_str(v, &l, sizeof(v), "/64 blocks, ");
+        append_uint(v, &l, sizeof(v), bad); append_str(v, &l, sizeof(v), " damaged, heap check: ");
+        if (problems) { append_uint(v, &l, sizeof(v), problems); append_str(v, &l, sizeof(v), " problem(s)"); } else append_str(v, &l, sizeof(v), "ok");
+        term_print(v);
+        return;
+    }
+    u32 ram_kb = *(volatile u32 *)0x9200;
+    term_kb_text(t1, sizeof t1, ram_kb);
+    term_fetch_kv("RAM", t1);
+    term_kb_text(t1, sizeof t1, s.total_pages * 4u); term_kb_text(t2, sizeof t2, s.free_pages * 4u);
+    l = 0; append_str(v, &l, sizeof(v), t1); append_str(v, &l, sizeof(v), ", free "); append_str(v, &l, sizeof(v), t2);
+    term_fetch_kv("Pages", v);
+    l = 0; append_uint(v, &l, sizeof(v), (int)s.heap_chunks); append_str(v, &l, sizeof(v), " chunk(s), ");
+    term_kb_text(t1, sizeof t1, (s.heap_used + 1023u) / 1024u); append_str(v, &l, sizeof(v), t1); append_str(v, &l, sizeof(v), " used");
+    term_fetch_kv("Heap", v);
+    term_kb_text(t1, sizeof t1, s.heap_largest_free / 1024u);
+    l = 0; append_str(v, &l, sizeof(v), "largest free block "); append_str(v, &l, sizeof(v), t1);
+    term_fetch_kv("", v);
+    l = 0; append_uint(v, &l, sizeof(v), (int)s.allocs); append_str(v, &l, sizeof(v), " allocs, "); append_uint(v, &l, sizeof(v), (int)s.frees);
+    append_str(v, &l, sizeof(v), " frees, "); append_uint(v, &l, sizeof(v), (int)(s.bad_frees + s.failed_allocs)); append_str(v, &l, sizeof(v), " refused");
+    term_fetch_kv("Calls", v);
+    int problems = mm_check();
+    term_fetch_kv("Check", problems ? "PROBLEMS FOUND" : "heap and pages consistent");
 }
 
 static void term_cmd_fetch(void) {
@@ -728,6 +788,8 @@ static void term_run_input(void) {
         term_cmd_tick();
     } else if (term_streq(tokens[0], "fetch")) {
         term_cmd_fetch();
+    } else if (term_streq(tokens[0], "mem")) {
+        term_cmd_mem(n > 1 ? tokens[1] : "");
     } else if (term_streq(tokens[0], "os-inst")) {
         term_cmd_osinst(n > 1 ? tokens[1] : "", n > 2 ? tokens[2] : "");
     } else if (term_cmd_is(tokens[0], "clear cls wipe")) {
@@ -819,7 +881,7 @@ static void term_menu_action(int menu, int item) {
 static void draw_terminal_window(void) {
     int wx = term_win.x, wy = term_win.y, ww = term_win.w, wh = term_win.h;
 
-    ui_window_frame(wx, wy, ww, wh, term_win.maximized, "MINISHELL.MWP");
+    ui_window_frame_ic(wx, wy, ww, wh, term_win.maximized, "MINISHELL.MWP", IC_TERM);
     ui_titlebar_buttons(term_btn_min_x(), term_btn_max_x(), term_btn_close_x(), term_btn_y(),
                         pressed_btn_kind == BTN_MIN && pressed_btn_win == WIN_ID_TERMINAL,
                         pressed_btn_kind == BTN_MAX && pressed_btn_win == WIN_ID_TERMINAL,

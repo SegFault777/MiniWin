@@ -69,6 +69,7 @@ static void kernel_boot(void) {
                                     "", "Give the machine more memory (64 MB is enough)." };
         fatal_screen(msg, 7);
     }
+    mm_init_boot();     /* everything above the last fixed region (0x900000 up) becomes pages + a heap; a failure only means kmalloc() returns 0 */
     if (!vga_color_layout_is_standard()) {
         /* Every real 32bpp direct-color VBE implementation this kernel
          * has ever encountered uses the same red=16/green=8/blue=0 bit
@@ -93,6 +94,7 @@ static void kernel_boot(void) {
     icon_cache_init();
     mwp_init();
     mwp_syscalls.key_poll = keyboard_poll_key;
+    mwp_api2_init();                      /* ABI version 2: memory, files, time, mouse, icons, widgets */
 
     mouse_init();
     sb_register_all();           /* which windows have scroll bars (ui/scroll_targets.h) */
@@ -113,6 +115,7 @@ static void kernel_boot(void) {
     /* The root filesystem "/" (MWFS, kernel/mwfs.h): mounted from the tail of the installation, then the slot indexes
      * the desktop, Notepad and MiniFiles use are filled from /docs and /progs. If it cannot be mounted the desktop still
      * comes up -- just with no documents -- and the shell says why. */
+    mwfs_clock_fn = rtc_dos_stamp;               /* files and folders made from now on carry their modified time */
     if (fs_boot_mount() != MWFS_OK) serial_puts("[FS] root volume not mounted\n");
     fs_rescan_docs();
     fs_rescan_progs();

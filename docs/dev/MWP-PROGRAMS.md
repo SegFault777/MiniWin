@@ -1,7 +1,9 @@
 # Programs (`.MWP`)
 
 A **`.MWP`** ("MiniWin Program") is a small flat binary that the kernel copies to a fixed address and jumps into. This page documents
-the interface **as it is today** (1.1-alpha-9); a larger SDK with a proper API is planned and will extend it.
+the interface **as it is today** (1.1-alpha-10, ABI version 2). The practical guide is [sdk/README.md](../../sdk/README.md); the table is
+defined once, in [sdk/include/mwp_abi.h](../../sdk/include/mwp_abi.h), and read by both the kernel and programs. Version 1 (the table
+below, from alpha-3) is unchanged; version 2 appends memory, file, time, mouse, icon and widget functions.
 
 > **Important: there is no isolation.** MiniWin has no paging and no ring 3 yet. A program runs in ring 0 with the kernel: a buggy
 > program can crash the machine, overwrite kernel memory or hang it, exactly as easily as a kernel bug could. Ring 3 is planned
@@ -21,7 +23,7 @@ the interface **as it is today** (1.1-alpha-9); a larger SDK with a proper API i
 
 Programs are built separately from the kernel, so they cannot know the kernel's function addresses. Instead the kernel fills in a
 table of function pointers at the fixed address **`0x8F0000`** (`MWP_SYSCALL_TABLE_ADDR`) before it jumps. The layout is the C struct
-`mwp_syscalls_t` in `kernel/mwp.h`, mirrored for programs in `programs/mwp_api.h`:
+`mwp_syscalls_t` in `sdk/include/mwp_abi.h` (the kernel's `kernel/mwp.h` includes it; `programs/mwp_api.h` is now a shim for old programs):
 
 | member | meaning |
 |---|---|
