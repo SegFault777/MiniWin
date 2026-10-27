@@ -60,6 +60,9 @@ static void taskbar_pill_label(int id, char *out, u32 outsz) {
     } else if (id == WIN_ID_TERMINAL) {
         const char *s = "T...";
         while (*s) kstrcpy_append(out, &len, outsz, *s++);
+    } else if (id == WIN_ID_PROG) {
+        const char *s = "P...";
+        while (*s) kstrcpy_append(out, &len, outsz, *s++);
     } else if (id == WIN_ID_FILES) {
         const char *s = "F...";
         while (*s) kstrcpy_append(out, &len, outsz, *s++);
@@ -77,6 +80,7 @@ static int taskbar_pill_icon(int id) {
     if (id == WIN_ID_WEB) return IC_WEB;
     if (id == WIN_ID_TERMINAL) return IC_TERM;
     if (id == WIN_ID_FILES) return IC_FILES;
+    if (id == WIN_ID_PROG) return pw_icon_id();
     return IC_NOTEPAD;
 }
 

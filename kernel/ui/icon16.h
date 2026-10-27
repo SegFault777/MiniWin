@@ -33,11 +33,18 @@ static const char *const ic16_names[IC16_COUNT] = {
     "POWER", "REFRESH", "TRASHCAN", "SEARCH", "SECURITY", "EARTH", "UNKNOWN_DRIVE", "NEXT", "OPEN2"
 };
 
+/* Icons that are not in the catalog: a program's own (packed into its file, mwp_meta.h) and the one a running program set with
+ * sys.set_icon. They are ids too, so every caller (task bar, title bar, MiniFiles' rows) draws them with the same two functions. */
+#define IC_CUSTOM_BASE 64                       /* IC_CUSTOM_BASE + slot (0..PROG_MAX_SLOTS-1): the icon of the program in /progs slot `slot` */
+#define IC_RUNTIME     96                       /* the icon the program in the window set at run time */
+static const u32 *ic16_custom_ptr(int idx);     /* defined in apps/progwin.h: the pixels of a custom id, or 0 */
+
 #define ic16_cache ((u32 (*)[16 * 16])MW_ICON16_ADDR)
 static u8 ic16_state[IC16_COUNT];          /* 0 = not tried yet, 1 = loaded, 2 = not in the catalog */
 
 /* Makes sure icon `idx` is in the cache. 1 = it can be drawn, 0 = no such icon. */
 static int ic16_ready(int idx) {
+    if (idx >= IC_CUSTOM_BASE) return ic16_custom_ptr(idx) != 0;
     if (idx < 0 || idx >= IC16_COUNT) return 0;
     if (ic16_state[idx]) return ic16_state[idx] == 1;
     ic16_state[idx] = 2;
@@ -67,7 +74,7 @@ static inline void ic16_plot(int px, int py, u32 rgb, u32 a) {
 /* The icon at its real size, top-left at (x,y). */
 static void ic16_blit(int x, int y, int idx) {
     if (!ic16_ready(idx)) return;
-    const u32 *src = ic16_cache[idx];
+    const u32 *src = idx >= IC_CUSTOM_BASE ? ic16_custom_ptr(idx) : ic16_cache[idx];
     for (int j = 0; j < 16; j++)
         for (int i = 0; i < 16; i++) { u32 p = src[j * 16 + i]; ic16_plot(x + i, y + j, p, p >> 24); }
 }
@@ -77,7 +84,7 @@ static void ic16_blit(int x, int y, int idx) {
  * that add up to ~256 (w>>8), each scaled by that pixel's alpha. Everything stays below 2^32: 256 x 255 x 255 = 16.6M. */
 static void ic16_blit12(int x, int y, int idx) {
     if (!ic16_ready(idx)) return;
-    const u32 *src = ic16_cache[idx];
+    const u32 *src = idx >= IC_CUSTOM_BASE ? ic16_custom_ptr(idx) : ic16_cache[idx];
     for (int j = 0; j < 12; j++) {
         int sy = (int)(((2 * j + 1) * 2048) / 12) - 128; if (sy < 0) sy = 0;
         int y0 = sy >> 8, fy = sy & 255, y1 = y0 + 1 > 15 ? 15 : y0 + 1;

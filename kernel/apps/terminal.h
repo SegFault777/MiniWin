@@ -168,7 +168,7 @@ static void term_cmd_help(void) {
     term_print("rd <n>     - read document n (see peek)");
     term_print("del <n>    - delete document n");
     term_print("apps       - list installed programs");
-    term_print("run <nm>   - load and run a program");
+    term_print("run <nm> [args] - run a program in a window (-f: full screen)");
     term_print("tick       - show the time and date");
     term_print("fetch      - show system information");
     term_print("mem [test] - memory: RAM, pages, heap");
@@ -284,17 +284,30 @@ static void term_cmd_apps(void) {
  * (see mwp.h's own top-of-file comment), so control simply doesn't come
  * back to Terminal's own event loop until the program's entry function
  * returns on its own. */
-static void term_cmd_run(const char *name) {
-    if (!name[0]) { term_print("  usage: run <name>"); return; }
+static void term_cmd_run(const char *a1, const char *a2, const char *a3, const char *a4) {
+    int full = (a1[0] == '-' && (a1[1] == 'f' || a1[1] == 'F') && a1[2] == 0);     /* run -f NAME: the old way, the program takes the whole screen */
+    const char *name = full ? a2 : a1;
+    if (!name[0]) { term_print("  usage: run [-f] <name> [args]"); term_print("  (in a window; -f = full screen)"); return; }
     int slot = prog_find_by_name(name);
     if (slot < 0) { term_print("  no program by that name"); return; }
-    int ok = mwp_run(slot);
-    if (!ok) { term_print("  failed to load or run"); return; }
-    /* The program ran and returned control here -- redraw Terminal's
-     * own window immediately rather than waiting for the next main-loop
-     * tick, since whatever the program drew (and presented) is still
-     * sitting in the backbuffer/front buffer over top of everything. */
-    render_frame(-1, -1, 0);
+    char args[64]; u32 al = 0; args[0] = 0;                                         /* what follows the name, as one string for sys.args */
+    const char *rest[3] = { full ? a3 : a2, full ? a4 : a3, full ? "" : a4 };
+    for (int i = 0; i < 3; i++) {
+        if (!rest[i][0]) continue;
+        if (al) kstrcpy_append(args, &al, sizeof args, ' ');
+        append_str(args, &al, sizeof args, rest[i]);
+    }
+    if (full) {
+        if (pw_running()) { term_print("  close the program in the window first"); return; }
+        if (!mwp_run(slot)) { term_print(mwp_load_error ? mwp_load_error : "  failed to load or run"); return; }
+        /* The program ran and returned control here -- redraw immediately rather than waiting for the next main-loop tick, since
+         * whatever the program drew (and presented) is still sitting in the backbuffer/front buffer over top of everything. */
+        render_frame(-1, -1, 0);
+        return;
+    }
+    const char *why = pw_launch_args(slot, prog_name_of(slot), args);
+    if (why) { char m[TERM_COLS + 1]; u32 l = 0; append_str(m, &l, sizeof(m), "  "); append_str(m, &l, sizeof(m), why); term_print(m); return; }
+    term_print("  started in a window");
 }
 
 /* tick -- current time and date, same rtc_read()/rtc_apply_offset()
@@ -344,6 +357,7 @@ static void term_kb_text(char *out, u32 cap, u32 kb) {
 }
 static void term_cmd_mem(const char *arg) {
     char v[TERM_COLS + 1], t1[16], t2[16]; u32 l;
+    (void)t2;
     mm_stats_t s; mm_stats(&s);
     if (arg[0] && term_streq(arg, "test")) {
         void *p[64]; u32 n[64]; int bad = 0, got = 0;
@@ -371,8 +385,8 @@ static void term_cmd_mem(const char *arg) {
     u32 ram_kb = *(volatile u32 *)0x9200;
     term_kb_text(t1, sizeof t1, ram_kb);
     term_fetch_kv("RAM", t1);
-    term_kb_text(t1, sizeof t1, s.total_pages * 4u); term_kb_text(t2, sizeof t2, s.free_pages * 4u);
-    l = 0; append_str(v, &l, sizeof(v), t1); append_str(v, &l, sizeof(v), ", free "); append_str(v, &l, sizeof(v), t2);
+    term_kb_text(t1, sizeof t1, s.total_pages * 4u);
+    l = 0; append_str(v, &l, sizeof(v), t1); append_str(v, &l, sizeof(v), ", free "); append_uint(v, &l, sizeof(v), (int)(s.free_pages * 4u)); append_str(v, &l, sizeof(v), " KB");
     term_fetch_kv("Pages", v);
     l = 0; append_uint(v, &l, sizeof(v), (int)s.heap_chunks); append_str(v, &l, sizeof(v), " chunk(s), ");
     term_kb_text(t1, sizeof t1, (s.heap_used + 1023u) / 1024u); append_str(v, &l, sizeof(v), t1); append_str(v, &l, sizeof(v), " used");
@@ -383,6 +397,15 @@ static void term_cmd_mem(const char *arg) {
     l = 0; append_uint(v, &l, sizeof(v), (int)s.allocs); append_str(v, &l, sizeof(v), " allocs, "); append_uint(v, &l, sizeof(v), (int)s.frees);
     append_str(v, &l, sizeof(v), " frees, "); append_uint(v, &l, sizeof(v), (int)(s.bad_frees + s.failed_allocs)); append_str(v, &l, sizeof(v), " refused");
     term_fetch_kv("Calls", v);
+    {
+        char pgs[64]; u32 pl = 0; pgs[0] = 0;
+        if (!pg_enabled) append_str(pgs, &pl, sizeof pgs, "off");
+        else {
+            append_str(pgs, &pl, sizeof pgs, "on, ");
+            append_uint(pgs, &pl, sizeof pgs, (int)pg_ro_pages); append_str(pgs, &pl, sizeof pgs, " RO, "); append_uint(pgs, &pl, sizeof pgs, (int)pg_guards); append_str(pgs, &pl, sizeof pgs, " guards");
+        }
+        term_fetch_kv("Paging", pgs);
+    }
     int problems = mm_check();
     term_fetch_kv("Check", problems ? "PROBLEMS FOUND" : "heap and pages consistent");
 }
@@ -761,7 +784,7 @@ static void term_run_input(void) {
     } else if (term_streq(tokens[0], "apps")) {
         term_cmd_apps();
     } else if (term_streq(tokens[0], "run")) {
-        term_cmd_run(n > 1 ? tokens[1] : "");
+        term_cmd_run(n > 1 ? tokens[1] : "", n > 2 ? tokens[2] : "", n > 3 ? tokens[3] : "", n > 4 ? tokens[4] : "");
     } else if (term_streq(tokens[0], "part")) {
         term_cmd_part(n > 1 ? tokens[1] : "", n > 2 ? tokens[2] : "", n > 3 ? tokens[3] : "", n > 4 ? tokens[4] : "");
     } else if (term_cmd_is(tokens[0], "lsusb plug")) {

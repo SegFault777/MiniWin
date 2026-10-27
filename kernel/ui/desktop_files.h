@@ -50,7 +50,9 @@ static void draw_desktop_file_icons(void) {
         int x = desk_item_x(n), y = desk_item_y(n);
         char stem[8], ext[5];
         desk_label(kind == DESK_KIND_DOC ? fs_doc_name(slot) : desktop_prog_name[slot], stem, ext);
-        blit_icon32(x + (ICON_SLOT_W - ICON_GLYPH_W) / 2, y, kind == DESK_KIND_DOC ? ICONC_DOC : ICONC_PROG);
+        const u32 *own = kind == DESK_KIND_PROG ? mwp_icon32_of(slot) : 0;           /* a program may carry its own icon (tools/mwp_pack.py) */
+        if (own) blit_rgba32(x + (ICON_SLOT_W - ICON_GLYPH_W) / 2, y, own);
+        else blit_icon32(x + (ICON_SLOT_W - ICON_GLYPH_W) / 2, y, kind == DESK_KIND_DOC ? ICONC_DOC : ICONC_PROG);
         int n1 = 0, n2 = 0; while (stem[n1]) n1++; while (ext[n2]) n2++;
         font_draw_string(x + (ICON_SLOT_W - FONT_CELL * n1) / 2, y + ICON_GLYPH_H + 4, stem, TH_DESKTOP_TEXT);
         if (n2) font_draw_string(x + (ICON_SLOT_W - FONT_CELL * n2) / 2, y + ICON_GLYPH_H + 4 + FONT_CELL + 1, ext, TH_DESKTOP_TEXT);

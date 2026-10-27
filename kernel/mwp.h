@@ -112,6 +112,13 @@ static inline void mwp_init(void) {
     t->screen_h      = VGA_HEIGHT;
 }
 
+/* The blocks a running program has asked for (mem_alloc). One table per run: the full-screen run uses mwp_mem_legacy, the program in
+ * a window carries its own (apps/progwin.h) and points mwp_mem at it while it executes. mwp_api2.h does the allocating. */
+#define MWP_ALLOC_MAX 64
+typedef struct { void *p[MWP_ALLOC_MAX]; u32 bytes; } mwp_mem_t;
+static mwp_mem_t mwp_mem_legacy;
+static mwp_mem_t *mwp_mem = &mwp_mem_legacy;
+
 typedef void (*mwp_entry_fn)(void);
 /* Runs right after a program returns (mwp_api2.h frees the memory the program left allocated). */
 static void (*mwp_on_exit)(void) = 0;
@@ -128,7 +135,12 @@ static void (*mwp_on_start)(void) = 0;
  * reaching its own closing brace) when it's done -- at which point
  * control comes back here and mwp_run() returns 1 -- not to expect the
  * kernel to survive it doing anything else. */
-static inline int mwp_run(int slot) {
+#include "mwp_trailer.h"                    /* the optional icon/title trailer: parsing and validation (host-tested) */
+static const char *mwp_load_error = 0;           /* why the last mwp_load() said no, when it is more than "the slot is bad" */
+
+/* Copies program `slot` to MWP_LOAD_ADDR and returns its entry function, or 0 if the slot is empty or anything about it looks wrong
+ * (see mwp_run's comment: this loader never hands out an entry point into memory it did not fill completely). */
+static inline mwp_entry_fn mwp_load(int slot) {
     u32 len = 0, entry_offset = 0;
     if (!prog_check_slot(slot, &len, &entry_offset, 0)) return 0;
     if (len == 0 || entry_offset >= len) return 0;
@@ -141,8 +153,24 @@ static inline int mwp_run(int slot) {
      * contain. (prog_load_slot() already returns 0 for any short read;
      * this check is the belt to that function's suspenders.) */
     if (got == 0 || got != len) return 0;
+    mwp_load_error = 0;
+    mwp_trailer_t tr;
+    if (mwp_trailer_parse(dst, got, &tr)) {                          /* a program with a trailer: icon/title are the kernel's business, not code */
+        if (tr.min_abi > MWP_ABI_VERSION) { mwp_load_error = "That program needs a newer MiniWin."; return 0; }
+        if (entry_offset >= tr.payload_len) return 0;
+    }
+    return (mwp_entry_fn)(MWP_LOAD_ADDR + entry_offset);
+}
 
-    mwp_entry_fn entry = (mwp_entry_fn)(MWP_LOAD_ADDR + entry_offset);
+/* The FULL-SCREEN run (`run -f`): loads program `slot` and calls it on the kernel's own stack; the program owns the screen until it
+ * returns. Returns 0 (and doesn't jump anywhere) if the slot's empty or something about it looks wrong. Once it DOES jump, all bets
+ * are off in the way this file's top comment already explained: there is no returning-with-an-error-code from a crashed .mwp,
+ * because there is no protection boundary to catch a crash at. A .mwp is expected to return normally (its entry function just
+ * reaching its own closing brace) when it's done -- at which point control comes back here and mwp_run() returns 1.
+ * (The default `run` starts programs in a WINDOW instead: apps/progwin.h.) */
+static inline int mwp_run(int slot) {
+    mwp_entry_fn entry = mwp_load(slot);
+    if (!entry) return 0;
     if (mwp_on_start) mwp_on_start();
     entry();
     if (mwp_on_exit) mwp_on_exit();

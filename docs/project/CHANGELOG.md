@@ -1,5 +1,47 @@
 # Changelog
 
+## MiniWin 1.1-alpha-11 (2026-10)
+
+* **Programs run in a window.** `run NAME.MWP` in MiniShell, a double-click on a program's desktop icon, and opening one in MiniFiles
+  now start it in an ordinary window (title bar with the program's icon, minimise, maximise, close, drag, resize, taskbar button)
+  instead of taking over the screen; `run -f NAME.MWP` still gives it the whole screen. The desktop, the other windows, the
+  network and the mouse keep working while it runs, and a program written for the full screen runs in the window **unchanged**.
+  (`kernel/apps/progwin.h`, `kernel/coro.h`.)
+  * How: the program runs as a **coroutine** on its own 128 KB stack and hands the CPU back at `sys.present()`, at `sys.key_poll()`
+    (when no key is waiting, or after a few polls in a row) and at `sys.sleep_ms()`; the main loop resumes it once per pass. It draws
+    into a private 640x480 surface (the `backbuf` pointer is swapped while it runs, so no drawing code changed), which the window
+    shows; `sys.screen_w/screen_h` are the window's client size and follow a resize. Keys go to it while its window is in front; the
+    pointer arrives in window coordinates; closing the window stops the program on the spot and frees its stack, surface and memory.
+  * Limits: **one program window at a time** (all programs are linked for one load address), cooperative (a program that never calls
+    present/key_poll/sleep_ms freezes the OS), still ring 0 with no memory protection. These are exactly what ring 3 and paging lift.
+* **MWP API version 3**: `run_flags` (`mw_windowed()` in `miniwin.h`) and `set_title`. The three SDK examples draw only their inside
+  when windowed and adapt to the window's size.
+* Programs' `mem_alloc` tables are per run (a window's blocks are freed when it closes); `mwp_load()` split out of `mwp_run()`.
+* `mem` shows the free pages in exact KB (a leak check: run a program, close it, `mem` again).
+* **Paging** (`kernel/paging.h`): the CPU runs with an identity-mapped page table. Page 0 is not present, the kernel's code and constants
+  are read-only, and guard pages sit under the kernel stack and every program window's stack. A CPU exception inside a program in a
+  window (null pointer, write into the kernel's code, stack overflow, divide by zero, invalid instruction) **stops that program only**:
+  its window closes and the status line says what happened; a stack overflow is caught through a double-fault **task gate** with its own
+  stack. The error screen shows the address of a page fault. `mem` shows the paging state. `sdk/examples/crash.c` and
+  `tools/test/qemu_paging.sh` provoke and check all six. Still ring 0 and supervisor-only pages: a program can write the kernel's data.
+* **Notepad has File, Edit and Help** (`kernel/apps/notepad/menus.h`; the menu bar is the shared `ui/menubar.h`): New/Save/Save As/Close;
+  Undo, Cut, Copy, Paste, Delete, Select All, Time/Date; Help > Keys / About. Ctrl+Z/X/C/V/A. Selection is all-or-nothing (Notepad types at the
+  end of the text). A new OS **clipboard** (`kernel/clipboard.h`) is shared with programs.
+* **Programs can carry their own icon**: `tools/mwp_pack.py` appends a trailer (icon 16/32 from a PNG, title, minimum ABI) to a `.mwp`
+  (`kernel/mwp_trailer.h` validates it, `kernel/mwp_meta.h` caches it); the desktop, the program window's title bar and task bar and
+  MiniFiles show it. `tools/build_mwp.sh` takes `NAME.png` beside `NAME.c` and `@mwp title:` / `@mwp abi:` comments. A program file may
+  be up to 32 KB. Tested on 20,000 damaged files under ASan (`tools/test/run_host_mwp.sh`).
+* **MWP API version 3** gained `args` (`run NAME args`), `clipboard_get/set`, `set_size`, `set_icon`, `theme_color` (programs follow the dark
+  theme) and `beep`, besides `run_flags` and `set_title`.
+* **SDK 2.0** (`sdk/VERSION`): `mw_libc.h` (strings, `mw_snprintf`, `mw_isqrt`, `mw_muldiv`, sine/cosine, sort), `mw_gfx.h` (lines, circles,
+  gradients, aligned and wrapped text, `mw_printf`), `mw_ui.h` (an immediate-mode toolkit: buttons, check boxes, text boxes, lists, progress
+  bars, message boxes, file and clipboard helpers), and the examples **MiniCalc** (a calculator: toolkit, clipboard, its own icon, `set_size`,
+  `args`), `crash`, besides `hello`, `browse` and `paint`.
+* **Documents have the `doc.png` icon** on the desktop (it was `docx.png`), and **new documents are named `DOC.TXT`** (`DOC (1).TXT`, ...).
+* **`tools/install_all.sh --no-demos`** (or `MW_NO_DEMOS=1`) leaves GREETER and the SDK examples out of the image.
+* Not done: **ring 3** (user mode, per-program address spaces), turning the built-in apps (Notepad, Settings, MiniWeb, MiniShell, MiniFiles)
+  into dynamically loaded programs, and the HTML5/CSS3/JS work -- still planned (see [ROADMAP.md](ROADMAP.md)).
+
 ## MiniWin 1.1-alpha-10 (2026-10)
 
 * **MiniFiles is an explorer now** (`kernel/apps/minifiles.h`, rewritten). A **folder tree** on the left (+/- to open and close, the

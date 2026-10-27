@@ -34,9 +34,18 @@ ordinary PCs do; otherwise the screen simply stays).
 A plain-text editor; you can have several windows open at once.
 
 * **Typing:** the keyboard works as expected. **Right Alt** switches to the next enabled input method (English / Korean Hangul).
-* **File menu:** *Save As* (choose a name), *Save* (keep the document's own name), *New* (empty page; asks before throwing away
-  unsaved text). Shortcuts: **Ctrl+S** save, **Ctrl+N** new, **Ctrl+W** close the window.
-* **Save As:** a small dialog asks for the file name (1-31 letters, digits, `.`, `_`, `-`). Enter or *Save* saves a copy under the
+* **Menu bar (File, Edit, Help):**
+  * **File:** *New* (empty page; asks before throwing away unsaved text), *Save* (keep the document's own name), *Save As...*,
+    *Close*. Shortcuts: **Ctrl+N**, **Ctrl+S**, **Ctrl+W**.
+  * **Edit:** *Undo* (one level; Undo again redoes), *Cut*, *Copy*, *Paste*, *Delete*, *Select All*, *Time/Date* (inserts the clock).
+    **Ctrl+Z / X / C / V / A** work too. Notepad types at the **end** of the text and has no cursor to move, so a selection means *all
+    of it*: Select All highlights the text, Cut/Copy/Delete act on it, typing over it replaces it, Backspace deletes it, and Paste
+    appends the clipboard (or replaces everything when all is selected). The clipboard is shared with programs (`sys.clipboard_*`).
+  * **Help:** *Keys* (the shortcuts) and *About Notepad*.
+* **New documents are named `DOC.TXT`**, then `DOC (1).TXT`, `DOC (2).TXT`, ... (names may contain spaces inside and parentheses;
+  in MiniShell put such a name in double quotes: `cat "DOC (1).TXT"`).
+* **Save As:** a small dialog asks for the file name (1-31 letters, digits, `.`, `_`, `-`, `,`, space and parentheses; no leading or trailing
+  space). Enter or *Save* saves a copy under the
   new name and leaves the original alone; *Cancel* or **Esc** changes nothing. A name that another document already has is refused.
 * **Limits:** a document is up to 4 KB of text; how many you can keep is only limited by the disk. If the disk is full, saving says
   so instead of overwriting anything.

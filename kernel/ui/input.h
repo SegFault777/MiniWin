@@ -20,6 +20,7 @@ static u32 last_files_click_tick = 0;
 static int awaiting_second_click_file_slot = -1;   /* which file icon (if any) saw a first click */
 static u32 last_file_icon_click_tick = 0;
 static u32 tick = 0;
+static int np_mb_m, np_mb_i;                 /* the Notepad menu item just chosen (ui/menubar.h's mb_click fills them) */
 static const u32 double_click_window = 60000; /* tuned for delay(2000) per frame;
                                              * adjust proportionally if delay() changes */
 
@@ -203,6 +204,7 @@ static void handle_mouse(void) {
                 else if (taskbar_restore_id == WIN_ID_WEB) status = t(STR_WEB_RESTORED);
                 else if (taskbar_restore_id == WIN_ID_TERMINAL) status = t(STR_TERMINAL_RESTORED);
                 else if (taskbar_restore_id == WIN_ID_FILES) status = t(STR_FILES_RESTORED);
+                else if (taskbar_restore_id == WIN_ID_PROG) status = "PROGRAM RESTORED";
                 else status = t(STR_NOTEPAD_RESTORED);
             } else if (taskbar_close_id >= 0) {
                 if (taskbar_close_id == WIN_ID_SETTING) {
@@ -228,6 +230,8 @@ static void handle_mouse(void) {
                     files_win.open = 0;           /* a file list holds nothing to lose */
                     files_win.minimized = 0;
                     win_z_remove(WIN_ID_FILES);
+                } else if (taskbar_close_id == WIN_ID_PROG) {
+                    pw_close();                   /* a program in a window has no unsaved state the OS knows of: it is simply stopped */
                 } else {
                     /* Minimized taskbar close also asks first, for
                      * consistency with the window's own X button. */
@@ -352,6 +356,22 @@ static void handle_mouse(void) {
                     } else {
                         web_urlbar_focused = 0;
                     }
+                } else if (hit_id == WIN_ID_PROG) {
+                    win_z_raise(WIN_ID_PROG);
+                    if (pw_min_hit(mx, my)) {
+                        pressed_btn_kind = BTN_MIN;
+                        pressed_btn_win = WIN_ID_PROG;
+                    } else if (pw_max_hit(mx, my)) {
+                        pressed_btn_kind = BTN_MAX;
+                        pressed_btn_win = WIN_ID_PROG;
+                    } else if (pw_close_hit(mx, my)) {
+                        pressed_btn_kind = BTN_CLOSE;
+                        pressed_btn_win = WIN_ID_PROG;
+                    } else if (pw_titlebar_drag_hit(mx, my) && !pw_win.maximized) {
+                        dragging_id = WIN_ID_PROG;
+                        drag_offset_x = mx - pw_win.x;
+                        drag_offset_y = my - pw_win.y;
+                    }                             /* a click in the client area: the program sees it through pw_step() */
                 } else if (hit_id == WIN_ID_TERMINAL) {
                     int mb_m, mb_i;
                     win_z_raise(WIN_ID_TERMINAL);
@@ -413,21 +433,6 @@ static void handle_mouse(void) {
                             pressed_btn_kind = BTN_CONFIRM_CLOSE;
                             pressed_btn_win = hit_id;
                         }
-                    } else if (active_np->file_menu_open) {
-                        if (file_menu_item_hit(mx, my, 0)) {
-                            saveas_begin();
-                            active_np->file_menu_open = 0;
-                        } else if (file_menu_item_hit(mx, my, 1)) {
-                            int saved_slot = save_current_document();
-                            status = saved_slot >= 0 ? format_saved_status(saved_slot) : save_error_status(saved_slot);
-                            active_np->file_menu_open = 0;
-                        } else if (file_menu_item_hit(mx, my, 2)) {
-                            active_np->confirm_mode = CONFIRM_NEW;
-                            beep_warning();
-                            active_np->file_menu_open = 0;
-                        } else {
-                            active_np->file_menu_open = 0; /* click outside just dismisses it */
-                        }
                     } else if (in_rect(mx, my, btn_min_x(), btn_y(), BTN_W, BTN_H)) {
                         pressed_btn_kind = BTN_MIN;
                         pressed_btn_win = hit_id;
@@ -437,8 +442,8 @@ static void handle_mouse(void) {
                     } else if (in_rect(mx, my, btn_close_x(), btn_y(), BTN_W, BTN_H)) {
                         pressed_btn_kind = BTN_CLOSE;
                         pressed_btn_win = hit_id;
-                    } else if (file_label_hit(mx, my)) {
-                        active_np->file_menu_open = 1;
+                    } else if (np_mb_m = -1, np_mb_i = -1, mb_click(hit_id, active_np->win.x, active_np->win.y, active_np->win.w, np_menus, NP_MENU_N, mx, my, &np_mb_m, &np_mb_i)) {
+                        if (np_mb_i >= 0) np_menu_action(np_mb_m, np_mb_i);
                     } else if (titlebar_drag_hit(mx, my) && !active_np->win.maximized) {
                         /* start dragging: remember the grab offset so
                          * the window doesn't jump when the drag begins */
@@ -521,7 +526,7 @@ static void handle_mouse(void) {
                             (tick - last_file_icon_click_tick) < double_click_window) {
                             awaiting_second_click_file_slot = -1;
                             if (kind == DESK_KIND_DOC) open_document_slot(slot);
-                            else { mwp_run(slot); render_frame(-1, -1, 0); }
+                            else { const char *why = pw_launch(slot, prog_name_of(slot)); if (why) status = why; }
                         } else {
                             awaiting_second_click_file_slot = key;
                             last_file_icon_click_tick = tick;
@@ -555,6 +560,10 @@ static void handle_mouse(void) {
                 if (kind == BTN_MIN) still_over = files_min_hit(mx, my);
                 else if (kind == BTN_MAX) still_over = files_max_hit(mx, my);
                 else if (kind == BTN_CLOSE) still_over = files_close_hit(mx, my);
+            } else if (win == WIN_ID_PROG) {
+                if (kind == BTN_MIN) still_over = pw_min_hit(mx, my);
+                else if (kind == BTN_MAX) still_over = pw_max_hit(mx, my);
+                else if (kind == BTN_CLOSE) still_over = pw_close_hit(mx, my);
             } else if (win == WIN_ID_TERMINAL) {
                 if (kind == BTN_MIN) still_over = term_min_hit(mx, my);
                 else if (kind == BTN_MAX) still_over = term_max_hit(mx, my);
@@ -621,6 +630,16 @@ static void handle_mouse(void) {
                     } else if (kind == BTN_CLOSE) {
                         files_win.open = 0;
                         win_z_remove(WIN_ID_FILES);
+                    }
+                } else if (win == WIN_ID_PROG) {
+                    if (kind == BTN_MIN) {
+                        win_minimize(WIN_ID_PROG);
+                        status = "PROGRAM MINIMIZED";
+                    } else if (kind == BTN_MAX) {
+                        if (pw_win.maximized) { unmaximize_window(&pw_win); status = "PROGRAM RESTORED"; }
+                        else { maximize_window(&pw_win); status = "PROGRAM MAXIMIZED"; }
+                    } else if (kind == BTN_CLOSE) {
+                        pw_close();               /* stops the program wherever it was waiting */
                     }
                 } else if (win == WIN_ID_TERMINAL) {
                     if (kind == BTN_MIN) {
@@ -707,13 +726,19 @@ static void handle_keyboard(void) {
         k = KEY_NONE;
     }
 
+    /* A program running in a window gets the keys while its window is in front (it reads them through sys.key_poll) */
+    if (focused_id == WIN_ID_PROG) {
+        pw_push_key(k);
+        k = KEY_NONE;
+    }
+
     /* Terminal scrollback: Up/Down move the view three rows back/forward (consumed here, like the web page above) */
     if (focused_id == WIN_ID_TERMINAL && (k == KEY_UP || k == KEY_DOWN)) {
         term_scroll_by(k == KEY_UP ? 3 : -3);
         k = KEY_NONE;
     }
 
-    if (focused_id >= 0 && focused_id != WIN_ID_SETTING && focused_id != WIN_ID_WEB && focused_id != WIN_ID_TERMINAL && focused_id != WIN_ID_FILES) {
+    if (focused_id >= 0 && focused_id != WIN_ID_SETTING && focused_id != WIN_ID_WEB && focused_id != WIN_ID_TERMINAL && focused_id != WIN_ID_FILES && focused_id != WIN_ID_PROG) {
         active_np = &notepads[focused_id];
 
     if (active_np->confirm_mode != CONFIRM_NONE) {
@@ -730,25 +755,31 @@ static void handle_keyboard(void) {
                 active_np->saveas_name[active_np->saveas_len++] = c;
                 active_np->saveas_name[active_np->saveas_len] = 0;
             }
+        } else if (active_np->confirm_mode == CONFIRM_INFO) {
+            if (k == '\n' || k == 27 || k == ' ' || k == 'y' || k == 'Y' || k == 'n' || k == 'N') confirm_yes_action();   /* any of these closes the Help dialog */
         } else if (k == 'y' || k == 'Y') {
             confirm_yes_action();
         } else if (k == 'n' || k == 'N') {
             confirm_no_action();
         }
-    } else if (k == KEY_RALT && active_np->win.open && !active_np->win.minimized && !active_np->file_menu_open) {
+    } else if (k == KEY_RALT && active_np->win.open && !active_np->win.minimized && mb_owner != active_np->id) {
         /* Right Alt cycles to the next ENABLED input method (see
          * SETTING.MWP > SYSTEM > IME) -- matches the 한/영 key
          * position on real Korean keyboards. F7 used to do this too,
          * but that's gone now that IME selection lives in Settings. */
         ime_cycle_next();
         status = (current_ime == IME_KOREAN) ? t(STR_HANGUL_MODE_ON) : t(STR_ENGLISH_MODE_ON);
-    } else if (k > 0 && active_np->win.open && !active_np->win.minimized && !active_np->file_menu_open) {
+    } else if (k > 0 && active_np->win.open && !active_np->win.minimized && mb_owner != active_np->id) {
         char c = (char)k;
+        if (!keyboard_ctrl_held() && (c == '\n' || c == '\b' || (c >= 32 && c < 127) || current_ime == IME_KOREAN) && np_before_typing(c)) c = 0;   /* typing replaces a selection; Backspace over one just deletes it */
+        if (c == 0) { /* handled */ } else
         if (keyboard_ctrl_held()) {
             /* Ctrl+S / Ctrl+N / Ctrl+W accelerators, mirroring the
              * File menu and the title bar's close button */
             if (ko_ime_is_composing()) ko_ime_commit(active_np->text_buf, &active_np->text_len, sizeof(active_np->text_buf));
-            if (c == 's' || c == 'S') {
+            if (np_ctrl_key(c)) {
+                /* Ctrl+Z/X/C/V/A: Edit menu accelerators (apps/notepad/menus.h) */
+            } else if (c == 's' || c == 'S') {
                 int saved_slot = save_current_document();
                 status = saved_slot >= 0 ? format_saved_status(saved_slot) : save_error_status(saved_slot);
             } else if (c == 'n' || c == 'N') {

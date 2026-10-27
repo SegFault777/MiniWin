@@ -26,6 +26,11 @@ SECTIONS
         *(.rodata*)
     }
 
+    /* paging.h makes everything below this address (the kernel's code and constants) READ-ONLY, so a stray write into them is a page
+     * fault instead of silent damage. Page granularity: .data must start on a fresh page, hence the alignment. */
+    . = ALIGN(4096);
+    _ro_end = .;
+
     .data : {
         *(.data*)
     }

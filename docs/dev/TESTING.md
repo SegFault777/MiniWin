@@ -14,6 +14,7 @@ headers with `gcc` and need no emulator; the **QEMU** suites boot the real image
 | x509 | `tools/test/run_host_x509.sh` | certificate extensions: 19 OpenSSL-generated variants (critical/non-critical, keyUsage, CA flags) |
 | storage | `tools/test/run_host_storage.sh` | storage ids, IDENTIFY, MBR/EBR/GPT parsing, `st_resolve` refusals, and **the installer**: whole disk, partition, existing boot code, logical, GPT, write failures (during the copy, during the filesystem format, at the boot sector), silently lost writes, read failures, self-install; the new root volume must open and check clean. Fake four-position IDE controller; ASan + UBSan |
 | mwfs | `tools/test/run_host_mwfs.sh` | the file system (`mwfs.h`, `vfs.h`) on a RAM disk: files from 0 bytes past the double-indirect boundary, nested directories, a full volume, path normalisation, mounts and cross-volume copy/move, a 4000-step randomized run checked against a model, a **crash sweep** (every operation cut off after every possible number of sector writes: old-or-new, nothing referenced-but-unmarked, clean after `check fix`) and an image built by `tools/mwfs.py`. ASan + UBSan |
+| mwp | `tools/test/run_host_mwp.sh` | the `.mwp` trailer parser (`mwp_trailer.h`) on files made by `tools/mwp_pack.py` and on 20,000 damaged copies, each in an exact-size heap block so one byte of overread is an ASan error; and the SDK's `mw_libc.h` (strings, `mw_snprintf`, `mw_isqrt`, `mw_muldiv` against 64-bit arithmetic, sine, sort). ASan + UBSan |
 | mm | `tools/test/run_host_mm.sh` | the memory manager (`mm.h`) on an 8 MB array: page runs and exhaustion, refused bad frees, heap alignment, split/merge, chunk growth and release, `krealloc`, double free, a smashed header found by `mm_check`, and a 60,000-step random run where every live block carries a pattern checked when it is freed. ASan + UBSan |
 
 Counts at 1.1-alpha-10: web 134, engine fuzz 300 iterations, crypto 952, critical 204 (the rest of the old 416 tested the retired slot journals; their job is `mwfs` now), x509 22, storage 166, mwfs 6224, mm 29647, font + cursor 15 (`run_host_font.sh`).
@@ -76,3 +77,9 @@ because QEMU's EHCI models accept full-speed devices on their own ports.
 Real hardware (everything is QEMU and fake controllers), real-world TLS chains from public sites (only the embedded roots
 were checked for compatibility), a drive that reorders or half-writes a sector, and the BIOS of a real PC booting an
 installed disk.
+
+## Paging in QEMU (`tools/test/qemu_paging.sh`)
+
+Boots the image, starts `CRASHTST.MWP` (`sdk/examples/crash.c`) in a window and provokes, one fresh boot each, a write to address 0, a read
+from 0, a write into the kernel's code, a runaway recursion, a divide by zero and an invalid instruction. For each it requires the serial
+log to say `PROGRAM STOPPED: <that fault>` and QEMU's `-d cpu_reset` log to show no reset (no triple fault). About 7 minutes.

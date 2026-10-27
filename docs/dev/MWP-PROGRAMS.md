@@ -1,7 +1,7 @@
 # Programs (`.MWP`)
 
 A **`.MWP`** ("MiniWin Program") is a small flat binary that the kernel copies to a fixed address and jumps into. This page documents
-the interface **as it is today** (1.1-alpha-10, ABI version 2). The practical guide is [sdk/README.md](../../sdk/README.md); the table is
+the interface **as it is today** (1.1-alpha-11, ABI version 3). The practical guide is [sdk/README.md](../../sdk/README.md); the table is
 defined once, in [sdk/include/mwp_abi.h](../../sdk/include/mwp_abi.h), and read by both the kernel and programs. Version 1 (the table
 below, from alpha-3) is unchanged; version 2 appends memory, file, time, mouse, icon and widget functions.
 
@@ -36,7 +36,35 @@ table of function pointers at the fixed address **`0x8F0000`** (`MWP_SYSCALL_TAB
 | `key_poll()` | one pending key as an ASCII byte, `0` if none; never blocks |
 | `screen_w`, `screen_h` | screen size (640 x 480) |
 
-Colours are 32-bit `0x00RRGGBB`. The table is read-only for programs and its order is the ABI: **never reorder it**, only append.
+Colours are 32-bit `0x00RRGGBB`. The table is read-only for programs and its order is the ABI: **never reorder it**, only append. The
+members above are version 1; version 2 (alpha-10) and version 3 (alpha-11) append memory, files, time, mouse, icons, widgets, the
+clipboard, `args`, `set_size`, `set_icon`, `theme_color`, `beep`, `run_flags` and `set_title` -- see `sdk/include/mwp_abi.h` and the table in
+[sdk/README.md](../../sdk/README.md).
+
+## The metadata trailer (alpha-11)
+
+A `.mwp` is a raw binary with no header, so an optional **trailer** goes at the END of the file (`tools/mwp_pack.py`, run by
+`tools/build_mwp.sh`): the program's own **icon** (16x16 and 32x32, from a PNG), a **title**, and the oldest **ABI version** it needs.
+An old kernel never looks at the end of the file; a new one finds it from the last 32 bytes (magic `MWPX`):
+
+```
+[ program bytes ... ][ title\0 ][ icon16 RGBA ][ icon32 RGBA ][ 32-byte trailer ]
+trailer: "MWPX", u16 version=1, u16 flags (1 icon16, 2 icon32, 4 title), u32 payload_len, u32 icon16_off, u32 icon32_off, u32 title_off, u32 min_abi, u32 0
+```
+
+The loader copies only what the kernel needs and refuses a program whose `min_abi` is newer than its own table. Every offset is validated
+against the file's length (`kernel/mwp_trailer.h`, tested on damaged files by `tools/test/run_host_mwp.sh`), so a hostile trailer cannot make
+the kernel read outside the file. The icons show on the desktop, in the title bar and task bar of the program's window, and in MiniFiles'
+`/progs` list (`kernel/mwp_meta.h`). `build_mwp.sh` takes `NAME.png` beside `NAME.c` as the icon and the comments `/* @mwp title: Name */` and
+`/* @mwp abi: 3 */` for the rest; or pass `--icon`, `--title`, `--abi`. A program can also set its window icon at run time (`sys.set_icon`).
+A program file may now be up to 32 KB (`PROG_MAX_BYTES`) including the trailer.
+
+## Running in a window (alpha-11)
+
+`run NAME [args]`, a double-click and MiniFiles start a program **in a window**; `run -f NAME` gives it the whole screen. See the top comment of
+`kernel/apps/progwin.h`: the program is a coroutine (`kernel/coro.h`) on its own guarded stack that hands the CPU back at `present`, `key_poll`
+and `sleep_ms`; it draws into a private surface; one program window at a time. With paging on, a CPU exception inside it (null pointer, a
+write into the kernel's code, stack overflow, divide by zero, bad instruction) stops that program only -- `sdk/examples/crash.c` provokes each.
 
 ## Build and install a program
 
@@ -46,13 +74,13 @@ python3 tools/install_mwp.py build/os-image.img 0 GREETER.MWP build/greeter.mwp 
 ```
 
 `tools/install_all.sh` does this for the sample program (`programs/greeter.c`, as `/progs/GREETER.MWP`). The program then shows up as a desktop
-shortcut, in MiniFiles and in MiniShell's `apps`, and starts with a double-click or `run greeter`.
+shortcut, in MiniFiles and in MiniShell's `apps`, and starts with a double-click or `run greeter` -- in a **window** (since alpha-11; `run -f greeter` for the whole screen). How that works, and its limits: `kernel/apps/progwin.h`, `kernel/coro.h`.
 
 ## Writing one
 
-Start from `programs/greeter.c`: include `programs/mwp_api.h`, get the table pointer, draw, call `present()`, poll keys. Keep to what
-a freestanding program can do: no libc (no `printf`, no `malloc`), no global constructors, no floating-point library calls; stack
-space is the kernel's stack. Linker script: `kernel/mwp_link.ld` (the load address is kept in three places that must agree --
+Start from the SDK ([sdk/README.md](../../sdk/README.md): `miniwin.h`, a small C library, drawing helpers and a UI toolkit, five examples including a
+calculator), or from `programs/greeter.c`. Keep to what a freestanding program can do: no libc (the SDK's `mw_libc.h` has the common pieces,
+including `mw_snprintf`), no global constructors, no floating point and no 64-bit division (no libgcc); the stack is 128 KB when it runs in a window. Linker script: `kernel/mwp_link.ld` (the load address is kept in three places that must agree --
 `memmap.h`, the linker script and `mwp_api.h`; `mwp.h` asserts the first).
 
 ## What is coming

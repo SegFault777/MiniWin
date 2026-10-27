@@ -36,7 +36,7 @@ An existing file at the destination of `cp` or `mv` is replaced (the replacement
 | `rd <n>` or `rd <file>` | show document number *n* (see `peek`), or any file by path |
 | `del <n>` | delete document number *n*; `del <path>` is the same as `rm` |
 | `apps` | list the installed programs |
-| `run <name>` | load and run an installed program by name (for example `run greeter`) |
+| `run <name>` | start an installed program **in a window** (for example `run hello`); `run -f <name>` gives it the whole screen. Only one program window at a time; close it with its X button or let the program end (ESC in the examples) |
 
 ## System
 

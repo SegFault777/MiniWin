@@ -122,7 +122,13 @@ static inline void vga_putpixel(int x, int y, u32 color) {
  * color value now (built via the RGB() macro below), not a palette
  * index into a 256-color lookup table.
  * ------------------------------------------------------------------- */
-#define backbuf ((u32 *)VGA_BACKBUF_PHYS_ADDR)
+/* The pointer the drawing code writes through. It normally holds the real backbuffer; while a program runs in a window
+ * (apps/progwin.h) it is pointed at that program's private 640x480 surface instead, so every drawing call the program makes --
+ * the kernel's own bb_* functions behind the syscall table -- lands in the surface with no change to any of them. vga_present()
+ * always copies from the REAL backbuffer (MW_REAL_BACKBUF), never from whatever this currently points at. */
+#define MW_REAL_BACKBUF ((u32 *)VGA_BACKBUF_PHYS_ADDR)
+static u32 *mw_bb_ptr = (u32 *)VGA_BACKBUF_PHYS_ADDR;
+#define backbuf (mw_bb_ptr)
 
 /* Packs 8-bit red/green/blue components into one direct-color pixel
  * value, honoring whatever field positions vga_init_display() read
@@ -171,7 +177,7 @@ static inline void vga_present(void) {
      * any, are simply left untouched, same as before). */
     u32 pixels_per_row = vga_pitch / 4;
     for (int y = 0; y < VGA_HEIGHT; y++) {
-        const u32 *src = &backbuf[(u32)y * VGA_WIDTH];
+        const u32 *src = &MW_REAL_BACKBUF[(u32)y * VGA_WIDTH];
         u32 *dst = (u32 *)(VGA_MEMORY + (u32)y * vga_pitch);
         for (u32 i = 0; i < pixels_per_row && i < (u32)VGA_WIDTH; i++) dst[i] = src[i];
     }

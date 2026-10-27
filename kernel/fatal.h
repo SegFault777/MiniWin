@@ -61,7 +61,13 @@ static const char *const cpu_exc_names[20] = {
 
 /* The assembly stubs in kentry.asm push the vector and an error code (0 where the CPU gives none), save the registers, and
  * call this with a pointer to the saved frame: edi esi ebp esp ebx edx ecx eax, vector, error, eip, cs, eflags. */
+/* Set by apps/progwin.h: called first for every exception. If a program running in a window caused it, the hook stops THAT program and
+ * switches back to the desktop -- it never returns in that case. It returns 0 when the fault was the kernel's own. */
+static int (*cpu_fault_hook)(const u32 *frame) = 0;
+
 __attribute__((noreturn, used)) void cpu_fault(const u32 *f) {   /* not static: kentry.asm calls it */
+    if (cpu_fault_hook) cpu_fault_hook(f);
+    u32 cr2; __asm__ volatile ("movl %%cr2, %0" : "=r"(cr2));
     char l[FATAL_MAX_LINES][64];
     const char *p[FATAL_MAX_LINES];
     u32 vec = f[8];
@@ -81,6 +87,8 @@ __attribute__((noreturn, used)) void cpu_fault(const u32 *f) {   /* not static: 
         char *dst = l[5 + (i >> 1)];
         fatal_cat(dst, 64, rn[i]); fatal_hex(h, f[ri[i]], 8); fatal_cat(dst, 64, h); fatal_cat(dst, 64, "  ");
     }
+    if (vec == 14) { fatal_cat(l[8], 64, "ADDRESS ACCESSED (CR2) "); fatal_hex(h, cr2, 8); fatal_cat(l[8], 64, h); }
+    if (vec == 8) fatal_cat(l[8], 64, "Double fault: a stack overflow is the usual cause");
     fatal_cat(l[10], 64, "The kernel hit an unexpected CPU exception. Restart");
     fatal_cat(l[11], 64, "the machine. If it happens again, report the error");
     fatal_cat(l[12], 64, "name and EIP above (docs/dev/BOOT-PROCESS.md).");

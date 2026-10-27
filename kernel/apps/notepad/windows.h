@@ -40,6 +40,12 @@ typedef struct {
     int  saveas_len;
     int  scroll;                     /* first visible wrapped row of the text */
     u32  scroll_len;                 /* text_len when the view last followed the typing (see draw_window) */
+    int  sel_all;                    /* the whole text is selected (Edit > Select All): Notepad edits at the END of the text, so a selection is all or nothing */
+    int  typing;                     /* the last thing done was typing (so the next keystroke needs no new undo snapshot) */
+    int  undo_valid;
+    u32  undo_len;
+    char undo_buf[FS_MAX_FILE_BYTES];   /* the text as it was before the last edit; Edit > Undo swaps it with the current text, so Undo twice is Redo */
+    int  info_kind;                  /* CONFIRM_INFO: 1 = Keys, 2 = About */
 } notepad_t;
 
 static notepad_t notepads[NOTEPAD_MAX];
@@ -60,13 +66,15 @@ static notepad_t *active_np = &notepads[0];
 #define WIN_ID_WEB      (NOTEPAD_MAX + 1)
 #define WIN_ID_TERMINAL (NOTEPAD_MAX + 2)
 #define WIN_ID_FILES    (NOTEPAD_MAX + 3)
-#define WIN_ID_COUNT    (NOTEPAD_MAX + 4)
+#define WIN_ID_PROG     (NOTEPAD_MAX + 4)     /* the program started by `run` (apps/progwin.h): ONE at a time, every .MWP is linked for the same load address */
+#define WIN_ID_COUNT    (NOTEPAD_MAX + 5)
 
 static int win_is_open(int id) {
     if (id == WIN_ID_SETTING) return setting.open;
     if (id == WIN_ID_WEB) return web_win.open;
     if (id == WIN_ID_TERMINAL) return term_win.open;
     if (id == WIN_ID_FILES) return files_win.open;
+    if (id == WIN_ID_PROG) return pw_win.open;
     return notepads[id].win.open;
 }
 static int win_is_minimized(int id) {
@@ -74,6 +82,7 @@ static int win_is_minimized(int id) {
     if (id == WIN_ID_WEB) return web_win.minimized;
     if (id == WIN_ID_TERMINAL) return term_win.minimized;
     if (id == WIN_ID_FILES) return files_win.minimized;
+    if (id == WIN_ID_PROG) return pw_win.minimized;
     return notepads[id].win.minimized;
 }
 static window_t *win_ptr(int id) {
@@ -81,6 +90,7 @@ static window_t *win_ptr(int id) {
     if (id == WIN_ID_WEB) return &web_win;
     if (id == WIN_ID_TERMINAL) return &term_win;
     if (id == WIN_ID_FILES) return &files_win;
+    if (id == WIN_ID_PROG) return &pw_win;
     return &notepads[id].win;
 }
 

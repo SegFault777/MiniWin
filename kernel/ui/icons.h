@@ -63,7 +63,7 @@
 #define ICONC_PROG    6          /* the program shortcut glyph (the pack's "Program") */
 #define ICONC_COUNT   7
 
-static const char *const icon_cache_names[ICONC_COUNT] = { "NOTEPAD", "SETTING", "WEB", "DOCX", "TERMINAL", "FILEMANAGER", "PROGRAM" };
+static const char *const icon_cache_names[ICONC_COUNT] = { "NOTEPAD", "SETTING", "WEB", "DOC", "TERMINAL", "FILEMANAGER", "PROGRAM" };
 /* 28KB: lives in memmap.h's MISC area, not .bss (always filled by icon_cache_init() before it is read) */
 #define icon_cache ((u32 (*)[32 * 32])MW_ICON_CACHE_ADDR)
 static u8  icon_cache_ok[ICONC_COUNT];
@@ -87,12 +87,8 @@ static void icon_cache_init(void) {
  * the screen. Alpha 0 skips the pixel, 255 overwrites it, anything in
  * between mixes with whatever's already there (the icons have soft
  * antialiased edges, so this matters). */
-static void blit_icon32(int x, int y, int idx) {
-    if (idx < 0 || idx >= ICONC_COUNT || !icon_cache_ok[idx]) {
-        ui_panel(x, y, 32, 32, 0);
-        return;
-    }
-    const u32 *src = icon_cache[idx];
+/* A 32x32 icon from any 0xAARRGGBB buffer (a program's own icon, mwp_meta.h) over whatever is behind it. */
+static void blit_rgba32(int x, int y, const u32 *src) {
     for (int j = 0; j < 32; j++) {
         int py = y + j;
         if (py < 0 || py >= VGA_HEIGHT) continue;
@@ -111,6 +107,13 @@ static void blit_icon32(int x, int y, int idx) {
             *dst = (r << 16) | (g << 8) | b;
         }
     }
+}
+static void blit_icon32(int x, int y, int idx) {
+    if (idx < 0 || idx >= ICONC_COUNT || !icon_cache_ok[idx]) {
+        ui_panel(x, y, 32, 32, 0);
+        return;
+    }
+    blit_rgba32(x, y, icon_cache[idx]);
 }
 
 /* One desktop icon: bitmap glyph centered in its slot, two label lines

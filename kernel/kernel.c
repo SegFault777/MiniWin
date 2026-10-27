@@ -53,7 +53,11 @@
 #include "net_stack.h"
 #include "mwp.h"
 
+#include "clipboard.h"       /* the OS clipboard (Notepad's Edit menu, programs' sys.clipboard_*) */
 #include "mm.h"              /* page allocator + heap (kmalloc/kfree); mm_init_boot() runs from boot.h */
+
+#include "paging.h"          /* page tables, guard pages, the double-fault task (needs mm.h, fatal.h's IDT, memmap.h) */
+#include "mwp_meta.h"        /* the icon/title packed into a program file (needs fs.h + mm.h) */
 
 /* ---- design: color roles + metrics, and every reusable piece of chrome ---- */
 #include "ui/theme.h"      /* pick a look with  THEME=name ./build.sh  (kernel/ui/themes/<name>.h) */
@@ -78,6 +82,7 @@
 #include "apps/notepad/windows.h"
 #include "apps/notepad/file_menu.h"
 #include "apps/notepad/save.h"
+#include "apps/notepad/menus.h"   /* Notepad's File / Edit / Help menus (data + what each item does) */
 #include "ui/taskbar.h"
 #include "ui/startmenu.h"
 #include "apps/notepad/draw.h"
@@ -95,6 +100,8 @@
 #include "ui/desktop_files.h"
 #include "ui/resize.h"
 #include "ui/cursor.h"
+#include "coro.h"            /* mw_coro_switch: the stack switch under programs in windows */
+#include "apps/progwin.h"    /* `run` in a window (needs windows.h's ids and the widgets; mwp_api2.h below hooks into it) */
 #include "ui/compose.h"
 #include "mwp_api2.h"       /* the program syscall table's version-2 functions (needs mm.h, vfs.h, icons, widgets, MiniFiles) */
 #include "sys/power.h"
@@ -129,6 +136,8 @@ void kmain(void) {
          * HTTP side) until the next click on a site row calls
          * web_go() again. */
         web_poll();
+        { const char *pn = pw_step(mx, my, mouse_left, mouse_right);    /* the program in the window, if any, runs until it yields (apps/progwin.h) */
+          if (pn) status = pn; }
 #ifdef MW_AUTOTEST_URL
         mw_autotest_step();
 #endif

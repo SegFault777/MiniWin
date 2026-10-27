@@ -114,6 +114,22 @@ static window_t files_win = {
     .restore_w = FILES_DEFAULT_W, .restore_h = FILES_DEFAULT_H,
 };
 
+/* The window of the program `run` started (apps/progwin.h owns everything else about it). Position is where the first one opens;
+ * the size here is the WINDOW's -- its client area (what the program sees as sys.screen_w/h) is 4 pixels less across and
+ * TITLEBAR_H + 4 less down. */
+static window_t pw_win = {
+    .open = 0, .minimized = 0, .maximized = 0,
+    .x = 90, .y = 20, .w = 444, .h = 395,
+    .restore_x = 90, .restore_y = 20, .restore_w = 444, .restore_h = 395
+};
+
+/* Forward declarations: MiniShell and MiniFiles (included before apps/progwin.h) start programs in the window. */
+static const char *pw_launch(int slot, const char *name);     /* 0 = started, else a sentence saying why not */
+static const char *pw_launch_args(int slot, const char *name, const char *args);
+static const char *prog_name_of(int slot);
+static int pw_icon_id(void);                                   /* ui/icon16.h id of the program window's icon (apps/progwin.h) */
+static int pw_running(void);
+
 /* ---- title-bar button geometry, shared by every window ----
  * The three buttons (_ [] X) hug the window's top-right corner. `inset_x` is the gap between the window's right
  * edge and the close button, `inset_y` the gap below the top edge: 2 and 1 for Notepad / Web / Terminal; the

@@ -15,18 +15,15 @@
  * Needs (included before this): mm.h, vfs.h, rtc.h, delay.h, sysinfo.h, serial.h, ui/icon16.h, ui/widgets.h, mouse.h, font_ko.h,
  * apps/minifiles.h (fx_resync_desktop: a file written into /docs or /progs must show up on the desktop). */
 
-#define MWP_ALLOC_MAX 64
-static void *mwp_allocs[MWP_ALLOC_MAX];
-static u32   mwp_alloc_bytes = 0;                     /* bytes handed out in this run, for the leak line in the log */
 #define MWP_ALLOC_CAP (4u * 1024u * 1024u)            /* one run may hold at most 4 MB */
 
 static void *mwp_sys_alloc(u32 n) {
-    if (n == 0 || n > MWP_ALLOC_CAP || mwp_alloc_bytes + n > MWP_ALLOC_CAP) return 0;
+    if (n == 0 || n > MWP_ALLOC_CAP || mwp_mem->bytes + n > MWP_ALLOC_CAP) return 0;
     for (int i = 0; i < MWP_ALLOC_MAX; i++) {
-        if (mwp_allocs[i]) continue;
+        if (mwp_mem->p[i]) continue;
         void *p = kzalloc(n);
         if (!p) return 0;
-        mwp_allocs[i] = p; mwp_alloc_bytes += mm_usable(p);
+        mwp_mem->p[i] = p; mwp_mem->bytes += mm_usable(p);
         return p;
     }
     return 0;
@@ -34,20 +31,21 @@ static void *mwp_sys_alloc(u32 n) {
 static int mwp_sys_free(void *p) {
     if (!p) return 0;
     for (int i = 0; i < MWP_ALLOC_MAX; i++) {
-        if (mwp_allocs[i] != p) continue;
+        if (mwp_mem->p[i] != p) continue;
         u32 u = mm_usable(p);
-        mwp_allocs[i] = 0; mwp_alloc_bytes = mwp_alloc_bytes >= u ? mwp_alloc_bytes - u : 0;
+        mwp_mem->p[i] = 0; mwp_mem->bytes = mwp_mem->bytes >= u ? mwp_mem->bytes - u : 0;
         return kfree(p);
     }
     return 0;                                         /* not ours: a program may not free the kernel's blocks */
 }
 static u32 mwp_sys_mem_free_kb(void) { mm_stats_t s; mm_stats(&s); return s.free_pages * 4u; }
-/* A program starts with nothing; when it returns, whatever it still holds goes back. */
-static void mwp_api2_start(void) { for (int i = 0; i < MWP_ALLOC_MAX; i++) mwp_allocs[i] = 0; mwp_alloc_bytes = 0; }
+/* A full-screen run starts with nothing; when it returns, whatever it still holds goes back. (A windowed run's table is freed by
+ * pw_close() in apps/progwin.h.) */
+static void mwp_api2_start(void) { for (int i = 0; i < MWP_ALLOC_MAX; i++) mwp_mem_legacy.p[i] = 0; mwp_mem_legacy.bytes = 0; }
 static void mwp_api2_release(void) {
     int leaked = 0;
-    for (int i = 0; i < MWP_ALLOC_MAX; i++) if (mwp_allocs[i]) { kfree(mwp_allocs[i]); mwp_allocs[i] = 0; leaked++; }
-    mwp_alloc_bytes = 0;
+    for (int i = 0; i < MWP_ALLOC_MAX; i++) if (mwp_mem_legacy.p[i]) { kfree(mwp_mem_legacy.p[i]); mwp_mem_legacy.p[i] = 0; leaked++; }
+    mwp_mem_legacy.bytes = 0;
     if (leaked) { char m[48]; u32 l = 0; m[0] = 0; append_str(m, &l, sizeof m, "[MWP] freed "); append_uint(m, &l, sizeof m, leaked); append_str(m, &l, sizeof m, " leaked block(s)"); serial_puts(m); serial_puts("\r\n"); }
 }
 
@@ -142,7 +140,15 @@ static u32 mwp_sys_ticks_ms(void) {
     mwp_ms_total += ms; mwp_tsc_prev += ms * mwp_cycles_per_ms;  /* keep the remainder for the next call */
     return mwp_ms_total;
 }
-static void mwp_sys_sleep_ms(u32 ms) { if (ms > 60000u) ms = 60000u; delay_ms(ms); }
+static void mwp_sys_sleep_ms(u32 ms) {
+    if (ms > 60000u) ms = 60000u;
+    if (pw_cur) {                                       /* in a window: let the desktop run until the time is up */
+        u32 until = mwp_sys_ticks_ms() + ms;
+        do pw_yield(); while ((int)(until - mwp_sys_ticks_ms()) > 0 && mwp_cycles_per_ms);
+        return;
+    }
+    delay_ms(ms);
+}
 static void mwp_sys_time_now(mw_time_t *t) {
     if (!t) return;
     rtc_time_t r; rtc_read(&r);
@@ -166,6 +172,13 @@ static void mwp_mouse_pump(void) {
     mwp_mb = b;
 }
 static int mwp_sys_mouse_poll(int *x, int *y, int *buttons) {
+    if (pw_cur) {                                       /* in a window: the kernel's pointer, already in client coordinates */
+        if (x) *x = pw.mx;
+        if (y) *y = pw.my;
+        if (buttons) *buttons = pw.mb;
+        int c = pw.mchg; pw.mchg = 0;
+        return c;
+    }
     mwp_mouse_pump();
     if (x) *x = mwp_mx;
     if (y) *y = mwp_my;
@@ -173,7 +186,21 @@ static int mwp_sys_mouse_poll(int *x, int *y, int *buttons) {
     int c = mwp_mchanged; mwp_mchanged = 0;
     return c;
 }
-static int mwp_sys_key_poll(void) { mwp_mouse_pump(); return keyboard_poll_key(); }
+static int mwp_sys_key_poll(void) {
+    if (pw_cur) {                                       /* in a window: keys the desktop routed here (only while it has focus) */
+        int k = pw_pop_key();
+        if (k) { pw.spin = 0; return k; }
+        if (++pw.spin >= 4) { pw_yield(); k = pw_pop_key(); }   /* a polling loop gives the desktop its turn */
+        return k;
+    }
+    mwp_mouse_pump(); return keyboard_poll_key();
+}
+static void mwp_sys_present(void) { if (pw_cur) pw_yield(); else vga_present(); }
+static void mwp_sys_set_title(const char *s) {
+    if (!pw_cur || !s) return;
+    int n = 0; while (s[n] && n < (int)sizeof(pw.name) - 1) { pw.name[n] = s[n]; n++; }
+    pw.name[n] = 0;
+}
 static void mwp_sys_icon16(int x, int y, int icon) { ic16_blit(x, y, icon); }
 static void mwp_sys_icon12(int x, int y, int icon) { ic16_blit12(x, y, icon); }
 static int  mwp_sys_text_width(const char *s) { return s ? ko_string_width(s) : 0; }
@@ -189,6 +216,47 @@ static void mwp_sys_log(const char *s) { if (s) { serial_puts(s); serial_puts("\
 static u32 mwp_rng = 0x2545F491u;
 static u32 mwp_sys_rand32(void) { mwp_rng ^= sysinfo_tsc32(); mwp_rng = mwp_rng * 1664525u + 1013904223u; return mwp_rng ^ (mwp_rng >> 15); }
 
+/* ---------------------------------------------------------------- version 3: clipboard, window, theme, sound */
+static int mwp_sys_clip_get(void *buf, u32 max) { if (!buf && max) return 0; return (int)clip_get(buf, max); }
+static int mwp_sys_clip_set(const void *data, u32 len) { return clip_set(data, len); }
+static void mwp_sys_set_size(int cw, int ch) {
+    if (!pw_cur) return;                                             /* a full-screen program already has the whole screen */
+    if (cw < 60) cw = 60;
+    if (ch < 40) ch = 40;
+    if (cw > VGA_WIDTH - 2) cw = VGA_WIDTH - 2;
+    if (ch > VGA_HEIGHT - TASKBAR_H - TITLEBAR_H - 3) ch = VGA_HEIGHT - TASKBAR_H - TITLEBAR_H - 3;
+    if (pw_win.maximized) return;
+    pw_win.w = cw + 2; pw_win.h = ch + TITLEBAR_H + 3;
+    if (pw_win.x + pw_win.w > VGA_WIDTH) pw_win.x = VGA_WIDTH - pw_win.w;           /* keep the whole window on the screen */
+    if (pw_win.y + pw_win.h > VGA_HEIGHT - TASKBAR_H) pw_win.y = VGA_HEIGHT - TASKBAR_H - pw_win.h;
+    if (pw_win.x < 0) pw_win.x = 0;
+    if (pw_win.y < 0) pw_win.y = 0;
+    pw_win.restore_w = pw_win.w; pw_win.restore_h = pw_win.h; pw_win.restore_x = pw_win.x; pw_win.restore_y = pw_win.y;
+}
+static void mwp_sys_set_icon(const u32 *argb16) {
+    if (!pw_cur || !argb16) return;
+    for (int i = 0; i < 256; i++) pw.icon16[i] = argb16[i];
+    pw.has_icon = 1;
+}
+static u32 mwp_sys_theme_color(int id) {
+    switch (id) {
+        case MW_TH_FACE: return TH_FACE;             case MW_TH_TEXT: return TH_TEXT;
+        case MW_TH_ACCENT: return TH_ACCENT;         case MW_TH_ACCENT_TEXT: return TH_ACCENT_TEXT;
+        case MW_TH_FIELD: return TH_FIELD;           case MW_TH_FIELD_TEXT: return TH_FIELD_TEXT;
+        case MW_TH_LIGHT: return TH_LIGHT;           case MW_TH_SHADOW: return TH_SHADOW;
+        case MW_TH_OUTLINE: return TH_OUTLINE;       case MW_TH_DESKTOP: return TH_DESKTOP;
+        case MW_TH_WARNING: return TH_WARNING;
+    }
+    return TH_FACE;
+}
+static void mwp_sys_beep(u32 hz, u32 ms) {
+    if (hz < 20 || hz > 20000) return;
+    if (ms > 2000) ms = 2000;
+    speaker_set_frequency(hz); speaker_on();
+    mwp_sys_sleep_ms(ms);                                            /* cooperative in a window; pw_close() silences the speaker if the window is closed meanwhile */
+    speaker_off();
+}
+
 typedef char mw_assert_mwi_icons[(MWI_DOC == IC_DOC && MWI_FOLDER == IC_FOLDER && MWI_FOLDER_OPEN == IC_FOLDER_OPEN && MWI_PC == IC_PC && MWI_HTML == IC_HTML &&
                                   MWI_FILES == IC_FILES && MWI_WARNING == IC_WARNING && MWI_UP == IC_UP && MWI_TERMINAL == IC_TERM && MWI_PROGRAM == IC_PROG) ? 1 : -1];
 
@@ -200,11 +268,14 @@ static void mwp_api2_init(void) {
     t->file_size = mwp_sys_file_size; t->file_read = mwp_sys_file_read; t->file_write = mwp_sys_file_write;
     t->file_delete = mwp_sys_file_delete; t->dir_make = mwp_sys_dir_make; t->dir_list = mwp_sys_dir_list; t->err_text = mwp_sys_err_text;
     t->ticks_ms = mwp_sys_ticks_ms; t->sleep_ms = mwp_sys_sleep_ms; t->time_now = mwp_sys_time_now;
-    t->mouse_poll = mwp_sys_mouse_poll; t->key_poll = mwp_sys_key_poll;     /* key_poll replaces version 1's raw keyboard_poll_key, same meaning */
+    t->mouse_poll = mwp_sys_mouse_poll; t->key_poll = mwp_sys_key_poll; t->present = mwp_sys_present; t->set_title = mwp_sys_set_title; t->run_flags = 0;     /* key_poll replaces version 1's raw keyboard_poll_key, same meaning */
     t->draw_icon16 = mwp_sys_icon16; t->draw_icon12 = mwp_sys_icon12; t->text_width = mwp_sys_text_width;
     t->bevel = mwp_sys_bevel; t->button = mwp_sys_button; t->window_frame = mwp_sys_window_frame;
     t->log = mwp_sys_log; t->rand32 = mwp_sys_rand32;
+    t->args = ""; t->clipboard_get = mwp_sys_clip_get; t->clipboard_set = mwp_sys_clip_set;
+    t->set_size = mwp_sys_set_size; t->set_icon = mwp_sys_set_icon; t->theme_color = mwp_sys_theme_color; t->beep = mwp_sys_beep;
     mwp_on_start = mwp_api2_start; mwp_on_exit = mwp_api2_release;
+    cpu_fault_hook = pw_fault;            /* a CPU exception inside a program in a window stops that program only (apps/progwin.h) */
     mwp_mx = VGA_WIDTH / 2; mwp_my = VGA_HEIGHT / 2;
 }
 

@@ -11,6 +11,8 @@
  * (mwp_abi.h), reached through `sys`: sys.fill_rect(...), sys.file_read(...), sys.mem_alloc(...). This header adds the table's
  * address, colours, and a few inline helpers built from those calls.
  *
+ * Where it runs: `run NAME.MWP` starts it in a WINDOW (since 1.1-alpha-11); `run -f NAME.MWP` gives it the whole screen. Either way
+ * sys.screen_w / sys.screen_h are the size of the area it may draw in -- read them every frame, a window can be resized.
  * Three rules that come from how a program is loaded (the loader copies the file to 0x8F1000 and jumps in; it does not zero
  * anything or set up a heap):
  *   1. No uninitialised globals: there is no .bss. Keep state in locals, or in memory from sys.mem_alloc (zero-filled).
@@ -18,6 +20,8 @@
  *   3. Return from mwp_entry() when done -- the kernel takes the screen back and frees any memory you forgot to free.
  */
 #include "mwp_abi.h"
+
+#define MW_SDK_VERSION 2       /* the SDK itself (this header, mw_libc.h, mw_gfx.h, mw_ui.h, the build tools); sdk/VERSION. Not the ABI: that is sys.abi_version */
 
 #define sys (*(mwp_syscalls_t *)MWP_SYSCALL_TABLE_ADDR)
 
@@ -49,9 +53,12 @@ static inline u32 mw_abi(void) { u32 v = sys.abi_version; return (v >= 1 && v < 
 /* 1 if the running kernel has at least version `v` of the table. Check before calling anything added after version 1. */
 static inline int mw_has(u32 v) { return mw_abi() >= v; }
 
-static inline int mw_str_len(const char *s) { int n = 0; while (s[n]) n++; return n; }
+/* 1 if the program is running in a window (ABI 3+; older kernels always ran programs full-screen) */
+static inline int mw_windowed(void) { return mw_abi() >= 3 && (sys.run_flags & MW_RUN_WINDOWED) != 0; }
+
+static inline int mw_str_len(const char *s) { int n = 0; while (s[n]) n++; return n; }     /* (mw_strlen in mw_libc.h is the same) */
 static inline void mw_text(int x, int y, const char *s, u32 color) { sys.draw_string_ko(x, y, s, color); }
-static inline void mw_fill_screen(u32 color) { sys.fill_rect(0, 0, (int)sys.screen_w, (int)sys.screen_h, color); }
+static inline void mw_fill_screen(u32 color) { sys.fill_rect(0, 0, (int)sys.screen_w, (int)sys.screen_h, color); }   /* the drawing area: the window's client, or the screen */
 static inline int mw_in_rect(int px, int py, int x, int y, int w, int h) { return px >= x && py >= y && px < x + w && py < y + h; }
 /* blocks (polling) until a key arrives; returns it */
 static inline int mw_wait_key(void) { int k; while ((k = sys.key_poll()) == 0) { } return k; }
@@ -66,5 +73,13 @@ static inline char *mw_itoa(int v, char *buf) {
 }
 /* appends src to dst at *len (dst must have room: no bounds check) */
 static inline void mw_append(char *dst, int *len, const char *src) { while (*src) dst[(*len)++] = *src++; dst[*len] = 0; }
+
+/* The rest of the SDK. Define MW_LITE before including this header to leave them out (and keep a tiny program tiny -- though the
+ * linker already drops what a program does not call). */
+#ifndef MW_LITE
+#include "mw_libc.h"
+#include "mw_gfx.h"
+#include "mw_ui.h"
+#endif
 
 #endif

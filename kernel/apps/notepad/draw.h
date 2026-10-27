@@ -25,15 +25,8 @@ static void draw_window(void) {
 
     draw_titlebar_buttons();
 
-    /* menu bar */
-    int menu_y = wy + TITLEBAR_H + 1;
-    bb_fillrect(wx + 1, menu_y, ww - 2, FONT_CELL + 3, TH_FACE);
-    /* highlight the File label while its dropdown is open, like a pressed menu button */
-    u32 file_fg = ui_item(wx + 3, menu_y, MENU_FILE_LABEL_W - 2, FONT_CELL + 3, active_np->file_menu_open);
-    ko_draw_mixed_string(wx + 5,  menu_y + 2, t(STR_FILE), file_fg);
-    ko_draw_mixed_string(wx + 5 + MENU_ITEM_SPACING,     menu_y + 2, t(STR_EDIT), TH_TEXT);
-    ko_draw_mixed_string(wx + 5 + MENU_ITEM_SPACING * 2, menu_y + 2, t(STR_HELP), TH_TEXT);
-    ui_hline(wx + 1, menu_y + FONT_CELL + 3, ww - 2, TH_SHADOW);
+    /* menu bar: File / Edit / Help (apps/notepad/menus.h; the open drop-down is drawn last, see render_frame) */
+    mb_draw_bar(active_np->id, wx, wy, ww, np_menus, NP_MENU_N);
 
     /* text edit area (white, sunken border) */
     int ex = edit_x(), ey = edit_y(), ew = edit_w(), eh = edit_h();
@@ -52,6 +45,8 @@ static void draw_window(void) {
     if (active_np->scroll > total_rows - vis_rows) active_np->scroll = total_rows > vis_rows ? total_rows - vis_rows : 0;
     if (active_np->scroll < 0) active_np->scroll = 0;
     int first = active_np->scroll, x0 = ex + 2;
+    int sel = active_np->sel_all;                                       /* Edit > Select All: every glyph is drawn highlighted */
+    u32 text_fg = sel ? TH_TEXT_INVERSE : TH_FIELD_TEXT;
     int rel = 0, row = 0;
     for (u32 i = 0; i < active_np->text_len; ) {
         int clen = ko_utf8_char_len((unsigned char)active_np->text_buf[i]);
@@ -59,7 +54,8 @@ static void draw_window(void) {
             if (rel > limit) { rel = 0; row++; }
             if (row >= first && row < first + vis_rows) {
                 int cp = ko_utf8_decode3(&active_np->text_buf[i]);
-                ko_font_draw_codepoint(x0 + rel, ey + 2 + (row - first) * (FONT_CELL + 1), cp, TH_FIELD_TEXT);
+                if (sel) bb_fillrect(x0 + rel, ey + 2 + (row - first) * (FONT_CELL + 1), FONT_CELL, FONT_CELL + 1, TH_ACCENT);
+                ko_font_draw_codepoint(x0 + rel, ey + 2 + (row - first) * (FONT_CELL + 1), cp, text_fg);
             }
             rel += FONT_CELL;
             i += 3;
@@ -70,7 +66,10 @@ static void draw_window(void) {
             rel = 0; row++;
             if (c == '\n') { i++; continue; }
         }
-        if (row >= first && row < first + vis_rows) font_draw_char(x0 + rel, ey + 2 + (row - first) * (FONT_CELL + 1), c, TH_FIELD_TEXT);
+        if (row >= first && row < first + vis_rows) {
+            if (sel) bb_fillrect(x0 + rel, ey + 2 + (row - first) * (FONT_CELL + 1), FONT_CELL, FONT_CELL + 1, TH_ACCENT);
+            font_draw_char(x0 + rel, ey + 2 + (row - first) * (FONT_CELL + 1), c, text_fg);
+        }
         rel += FONT_CELL;
         i++;
     }

@@ -39,10 +39,12 @@ static void render_frame(int mouse_x, int mouse_y, const char *status_msg) {
             draw_terminal_window();
         } else if (id == WIN_ID_FILES) {
             draw_files_window();
+        } else if (id == WIN_ID_PROG) {
+            draw_prog_window();
         } else {
             active_np = &notepads[id];
             draw_window();
-            if (active_np->file_menu_open) draw_file_menu(mouse_x, mouse_y);
+            mb_draw_drop(id, active_np->win.x, active_np->win.y, np_menus, NP_MENU_N);
             if (active_np->confirm_mode != CONFIRM_NONE) draw_confirm_dialog(mouse_x, mouse_y);
         }
     }

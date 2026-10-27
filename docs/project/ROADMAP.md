@@ -50,10 +50,12 @@ bars and dialogs, the memory manager, the SDK and MWP API version 2. What it did
 * All UI pieces (buttons, scroll bars, fields, menus, dialogs) as proper modules, and the headers of `kernel/` out of one crowded
   folder into subdirectories.
 
-**1.1-alpha-11** (planned by the author; the scope is settled when work starts): **ring 3** (user mode, paging, a per-program address
-space) and **programs that run in a window** instead of taking over the screen; and the web engine work -- HTML5 and CSS3 implemented
-completely, JavaScript in part. The MWP API's append-only layout (`sdk/include/mwp_abi.h`) and the memory manager are the base for
-the first part.
+**1.1-alpha-11** has **programs that run in a window**, **paging** with fault containment, Notepad's menus, program icons, API version 3 and SDK 2.0
+(see the [changelog](CHANGELOG.md)). Still planned, in the author's words: **ring 3** (user mode: user segments and a TSS with a kernel stack,
+user/supervisor bits on exactly the pages a program owns, `int 0x80` gates in front of the syscall table with pointer validation, one address
+space per program -- which also lifts "one program window at a time"); the **built-in apps as dynamically loaded programs** (needs the SDK to
+grow first: sockets, Hangul input, settings, a text-and-HTML view -- MiniFiles-style apps are the easiest to start with); and the web engine
+work, **HTML5 and CSS3 implemented completely, JavaScript in part**. `kernel/paging.h` and `kernel/apps/progwin.h` are the base for ring 3.
 
 Other ideas, no order: more virtual-machine / hardware compatibility (NICs: e1000e, vmxnet3, PCnet, virtio-net; storage: virtio-scsi,
 VMware Paravirtual SCSI, NVMe namespaces beyond the first); USB hubs and USB storage; GPT/UEFI boot; Korean labels in MiniFiles' list.

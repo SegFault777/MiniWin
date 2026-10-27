@@ -13,7 +13,7 @@ pkill -f 'webserver.py' 2>/dev/null; pkill -f 'qemu-system-i386' 2>/dev/null; sl
 (cd /tmp/www && setsid python3 "$OLDPWD/tools/test/webserver.py" --port 80 </dev/null >/tmp/http80.log 2>&1 &)
 sleep 1; rm -f /tmp/serial.log /tmp/mon.sock
 (setsid qemu-system-i386 -m 128 -drive file=$IMG/os-image.img,format=raw -netdev user,id=n0 -device ${NIC:-rtl8139},netdev=n0 \
-   -rtc base=2026-01-02T03:04:05,clock=vm -display none -serial file:/tmp/serial.log -no-reboot -monitor unix:/tmp/mon.sock,server,nowait </dev/null >/tmp/qemu.log 2>&1 &)
+   -rtc base=2026-01-02T03:04:05,clock=vm ${QEMU_EXTRA:-} -display none -serial file:/tmp/serial.log -no-reboot -monitor unix:/tmp/mon.sock,server,nowait </dev/null >/tmp/qemu.log 2>&1 &)
 for i in $(seq 1 50); do [ -S /tmp/mon.sock ] && break; sleep 0.2; done
 python3 tools/test/qemu_mon.py /tmp/mon.sock "$@"
 sed -n '/\[AUTOTEST\] go/,$p' /tmp/serial.log | grep -av "^\[NET\]\|\[PCI\]\|\[DHCP\]\|\[ARP\]\|\.\. tcp" | tail -${LINES_OUT:-40}

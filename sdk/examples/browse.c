@@ -23,12 +23,18 @@ void mwp_entry(void) {
     if (!l.e || !path) return;
     path[0] = '/'; path[1] = 0;
     int sel = 0, top = 0, dirty = 1;
-    const int W = 420, H = 260, X = ((int)sys.screen_w - W) / 2, Y = ((int)sys.screen_h - H) / 2, ROWS = 12;
+    int win = mw_has(3) && mw_windowed();
     for (;;) {
+        int W = win ? (int)sys.screen_w : 420, H = win ? (int)sys.screen_h : 260, X = win ? 0 : ((int)sys.screen_w - W) / 2, Y = win ? -17 : ((int)sys.screen_h - H) / 2;
+        int ROWS = (H - 62) / 16;          /* as many rows as the area has room for (re-computed: the window can be resized) */
+        if (ROWS < 1) ROWS = 1;
         if (dirty) { l.n = 0; sys.dir_list(path, collect, &l); sel = 0; top = 0; dirty = 0; }
-        mw_fill_screen(MW_DESKTOP);
-        sys.window_frame(X, Y, W, H, "BROWSE.MWP", MWI_FILES);
-        sys.fill_rect(X + 1, Y + 17, W - 2, H - 18, MW_FACE);
+        if (win) mw_fill_screen(MW_FACE);
+        else {
+            mw_fill_screen(MW_DESKTOP);
+            sys.window_frame(X, Y, W, H, "BROWSE.MWP", MWI_FILES);
+            sys.fill_rect(X + 1, Y + 17, W - 2, H - 18, MW_FACE);
+        }
         sys.bevel(X + 6, Y + 22, W - 12, 18, 1);
         mw_text(X + 10, Y + 25, path, MW_BLACK);
         sys.bevel(X + 6, Y + 44, W - 12, H - 52, 1);

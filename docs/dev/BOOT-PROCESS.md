@@ -113,6 +113,17 @@ jumps to it with `DL` and `DS:SI` set as the classic convention says. It prints 
 `cannot read the partition` or `partition is not bootable` and halts otherwise. `build.sh` assembles it and
 `tools/gen_chain_mbr.py` turns it into `kernel/chain_mbr.h` (committed, regenerated on every build, so it cannot drift).
 
+## Paging (1.1-alpha-11)
+
+After the memory manager starts, `paging_init()` (`kernel/paging.h`) switches the CPU to paged addressing with an **identity map**, so no
+address the kernel uses changes. RAM below 1 GB is mapped with 4 KB pages (one table per 4 MB, about 128 KB for 128 MB), everything else up
+to 4 GB (RAM above 1 GB, the frame buffer, device registers) with 4 MB pages. Protections: page 0 is not present (null pointers fault),
+the kernel's code and constants (`0x10000` up to `_ro_end`, set in `kernel/link.ld`) are read-only (CR0.WP), and a guard page sits under
+the kernel stack and under each program window's stack. Double faults go through a **task gate** to a TSS with its own stack (a stack
+overflow cannot report itself on the stack that overflowed). The error screen shows the faulting address (CR2) for a page fault. Without PSE
+(no 4 MB pages) paging is left off and the kernel runs as before. Everything is still supervisor-only and ring 0; user mode is next.
+`mem` shows `Paging: on, N RO, N guards`.
+
 ## Memory the kernel lives in
 
 Kernel image + `.bss` + stack must fit **below `0x9FC00`** (the end of conventional memory) starting at `0x10000`:

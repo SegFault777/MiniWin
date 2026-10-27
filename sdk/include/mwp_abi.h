@@ -13,13 +13,15 @@
  * that wants a newer function checks `sys.abi_version` first (miniwin.h: mw_require(2)). Version history:
  *   1  (alpha-3)   drawing, present, key_poll, screen size
  *   2  (alpha-10)  memory (heap), files and folders, time, mouse, icons, widgets, text width, serial log
+ *   3  (alpha-11)  run_flags (is the program in a window?), set_title; a program started by `run` now lives in a WINDOW and
+ *                  sys.screen_w/screen_h are the size of its client area (they can change between frames: read them every frame)
  * Every function runs in ring 0 on the kernel's stack; there is no memory protection (see kernel/mwp.h). */
 
 typedef unsigned char  u8;
 typedef unsigned short u16;
 typedef unsigned int   u32;
 
-#define MWP_ABI_VERSION 2
+#define MWP_ABI_VERSION 3
 
 typedef struct { u16 year; u8 month, day, hour, minute, second, weekday; } mw_time_t;        /* weekday: 0 = Sunday */
 /* One entry of dir_list: return non-zero to go on, 0 to stop. `size` is 0 for folders. */
@@ -76,7 +78,24 @@ typedef struct {
     void  (*window_frame)(int x, int y, int w, int h, const char *title, int icon);   /* shadow, body, title bar with icon (icon < 0: none) */
     void  (*log)(const char *s);                                                /* a line to the serial port (the host's debug log) */
     u32   (*rand32)(void);
+
+    /* ---- version 3 ---- */
+    u32   run_flags;                                                            /* MW_RUN_* bits, see below */
+    void  (*set_title)(const char *title);                                      /* the window's title bar text (windowed programs; ignored full-screen) */
+    const char *args;                                                           /* what followed the program name in `run NAME args...` ("" if nothing) */
+    int   (*clipboard_get)(void *buf, u32 max);                                 /* copies up to max bytes; returns the clipboard's FULL length (more than max = cut short) */
+    int   (*clipboard_set)(const void *data, u32 len);                          /* 1 = ok, 0 = too big (4096 bytes at most). Shared with Notepad's Edit menu */
+    void  (*set_size)(int client_w, int client_h);                              /* windowed: resize the window so the drawing area is this size (clamped to the screen) */
+    void  (*set_icon)(const u32 *argb16);                                       /* windowed: the window's icon, 16x16 pixels 0xAARRGGBB (copied); an icon packed into the file is used until then */
+    u32   (*theme_color)(int id);                                               /* MW_TH_*: the current theme's colour, so a program follows the dark theme too */
+    void  (*beep)(u32 hz, u32 ms);                                              /* the PC speaker (ms capped at 2000) */
 } mwp_syscalls_t;
+
+/* theme_color ids */
+enum { MW_TH_FACE, MW_TH_TEXT, MW_TH_ACCENT, MW_TH_ACCENT_TEXT, MW_TH_FIELD, MW_TH_FIELD_TEXT, MW_TH_LIGHT, MW_TH_SHADOW, MW_TH_OUTLINE, MW_TH_DESKTOP, MW_TH_WARNING };
+
+#define MW_RUN_WINDOWED 1u        /* the program runs in a window: present/key_poll/sleep_ms hand the CPU back to the desktop, and the
+                                   * drawing area is screen_w x screen_h, not the whole screen */
 
 #define MWP_SYSCALL_TABLE_ADDR 0x8F0000u      /* must equal kernel/memmap.h's MW_MWP_SYSCALL_ADDR (the kernel asserts it) */
 

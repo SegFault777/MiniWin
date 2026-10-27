@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-/* hello.c -- the smallest useful MiniWin program: a window frame with an icon, the clock, free memory, and a heap block.
+/* hello.c -- the smallest useful MiniWin program: the clock, free memory, icons and a heap block. It runs in a window when started with
+ * `run HELLO.MWP` (then it draws only the inside) and draws its own frame when started full-screen with `run -f HELLO.MWP`.
  *   sdk/build.sh sdk/examples/hello.c        sdk/install.sh sdk/examples/hello.c HELLO.MWP */
 #include "miniwin.h"
 
@@ -10,11 +11,15 @@ void mwp_entry(void) {
         sys.present(); mw_wait_key(); return;
     }
     char *buf = sys.mem_alloc(64);                      /* zero-filled; freed for us when we return even if we forget */
-    int x = ((int)sys.screen_w - 300) / 2, y = ((int)sys.screen_h - 150) / 2;
+    int win = mw_has(3) && mw_windowed();               /* in a window the title bar is the OS's: draw only the inside */
     for (;;) {
-        mw_fill_screen(MW_DESKTOP);
-        sys.window_frame(x, y, 300, 150, "HELLO.MWP", MWI_PROGRAM);
-        sys.fill_rect(x + 1, y + 17, 298, 132, MW_FACE);
+        int x = ((int)sys.screen_w - 300) / 2, y = ((int)sys.screen_h - 150) / 2;   /* read every frame: a window can be resized */
+        if (win) { mw_fill_screen(MW_FACE); y -= 8; }
+        else {
+            mw_fill_screen(MW_DESKTOP);
+            sys.window_frame(x, y, 300, 150, "HELLO.MWP", MWI_PROGRAM);
+            sys.fill_rect(x + 1, y + 17, 298, 132, MW_FACE);
+        }
         mw_text(x + 12, y + 28, "Hello from MiniWin!", MW_BLACK);
 
         mw_time_t t; sys.time_now(&t);

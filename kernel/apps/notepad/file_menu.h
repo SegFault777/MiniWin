@@ -24,6 +24,7 @@ static int start_menu_open = 0;
 #define CONFIRM_NEW   1  /* "Save changes before New?" */
 #define CONFIRM_CLOSE 2  /* "Save changes before closing?" */
 #define CONFIRM_SAVEAS 3 /* the Save As dialog: a file-name field with Save / Cancel */
+#define CONFIRM_INFO   4 /* Help > Keys / About: a few lines of text and one OK button (active_np->info_kind says which) */
 
 /* Desktop file icons: which of the FS_MAX_FILES slots currently hold a
  * saved file (either saved earlier this session, or found already present
@@ -82,13 +83,15 @@ static int file_menu_item_hit(int px, int py, int idx) {
  * the warning icon next to the first line of text. */
 #define CONFIRM_W 210
 #define CONFIRM_H 90
+#define CONFIRM_INFO_H 112     /* the Help dialogs have more lines than the question does */
 #define CONFIRM_BTN_W 46
 #define CONFIRM_BTN_H 17
 
 static inline int confirm_x(void) { return active_np->win.x + (active_np->win.w - CONFIRM_W) / 2; }
-static inline int confirm_y(void) { return active_np->win.y + (active_np->win.h - CONFIRM_H) / 2; }
-static inline int confirm_btn_y(void) { return confirm_y() + CONFIRM_H - CONFIRM_BTN_H - 11; }
-static inline int confirm_yes_x(void) { return confirm_x() + 22; }
+static inline int confirm_h(void) { return active_np->confirm_mode == CONFIRM_INFO ? CONFIRM_INFO_H : CONFIRM_H; }
+static inline int confirm_y(void) { return active_np->win.y + (active_np->win.h - confirm_h()) / 2; }
+static inline int confirm_btn_y(void) { return confirm_y() + confirm_h() - CONFIRM_BTN_H - 11; }
+static inline int confirm_yes_x(void) { return active_np->confirm_mode == CONFIRM_INFO ? confirm_x() + (CONFIRM_W - CONFIRM_BTN_W) / 2 : confirm_x() + 22; }
 static inline int confirm_no_x(void)  { return confirm_x() + CONFIRM_W - 22 - CONFIRM_BTN_W; }
 static inline int confirm_close_x(void) { return confirm_x() + CONFIRM_W - 3 - BTN_W; }
 static inline int confirm_close_y(void) { return confirm_y() + 1; }
@@ -97,6 +100,7 @@ static int confirm_yes_hit(int px, int py) {
     return in_rect(px, py, confirm_yes_x(), confirm_btn_y(), CONFIRM_BTN_W, CONFIRM_BTN_H);
 }
 static int confirm_no_hit(int px, int py) {
+    if (active_np->confirm_mode == CONFIRM_INFO) return 0;          /* the Help dialogs have only OK (drawn where Yes is) */
     return in_rect(px, py, confirm_no_x(), confirm_btn_y(), CONFIRM_BTN_W, CONFIRM_BTN_H);
 }
 /* The title bar's X -- same as clicking neither Yes nor No: bails out

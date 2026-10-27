@@ -69,7 +69,8 @@ static void kernel_boot(void) {
                                     "", "Give the machine more memory (64 MB is enough)." };
         fatal_screen(msg, 7);
     }
-    mm_init_boot();     /* everything above the last fixed region (0x900000 up) becomes pages + a heap; a failure only means kmalloc() returns 0 */
+    mm_init_boot();
+    paging_init();      /* identity map with a null page, a read-only kernel image and guard pages; 0 = left off (the kernel runs as before) */     /* everything above the last fixed region (0x900000 up) becomes pages + a heap; a failure only means kmalloc() returns 0 */
     if (!vga_color_layout_is_standard()) {
         /* Every real 32bpp direct-color VBE implementation this kernel
          * has ever encountered uses the same red=16/green=8/blue=0 bit

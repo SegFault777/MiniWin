@@ -12,7 +12,7 @@ and as many documents and programs as the disk has room for (the four-document l
 * Notepad saves into `/docs`; the documents (up to 64 of them are shown) appear as desktop icons and in MiniFiles. A document can
   be up to 4 KB, a program up to 24 KB.
 * Programs are put into a disk image *before* it is started, with the tools in `tools/` (see [MWP-PROGRAMS.md](../dev/MWP-PROGRAMS.md)),
-  or copied into `/progs` with `cp`; they appear as desktop icons, in MiniFiles and in `apps`, and run with a double-click or `run <name>`.
+  or copied into `/progs` with `cp`; they appear as desktop icons, in MiniFiles and in `apps`, and run -- in a window -- with a double-click or `run <name>`.
 * **Names:** up to 31 characters from `A-Z a-z 0-9 . _ - ,`, not starting with a dot; capital letters do not matter when you type a name.
 * **Power cuts:** a save writes the new version completely before the name is switched over, so a cut leaves the old file or the new
   one, never a mixture; at worst some unreachable leftovers stay behind, and `part check <id> fix` gives them back.

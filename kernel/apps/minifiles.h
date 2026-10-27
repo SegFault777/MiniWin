@@ -35,7 +35,7 @@
 #define FX_HDR_H       16          /* pane headers and the column header row */
 #define FX_TOOL_H      20
 #define FX_SAVED_MAX   24          /* opened folders remembered across a tree rebuild */
-#define SB_OWNER_FILES_TREE 8      /* the tree's scroll bar (the list's is registered under WIN_ID_FILES) */
+#define SB_OWNER_FILES_TREE 15     /* the tree's scroll bar (the list's is registered under WIN_ID_FILES); window ids use 0..WIN_ID_COUNT-1 */
 
 #define FK_DIR   0                 /* order matters: folders sort before files */
 #define FK_FILE  1
@@ -327,7 +327,8 @@ static void fx_sort_rows(void) {
     }
 }
 
-typedef struct { int in_mnt; int vol; } fx_ls_ctx_t;
+static int fx_cwd_is(const char *p);
+typedef struct { int in_mnt; int vol; int progs; } fx_ls_ctx_t;
 static int fx_ls_cb(const mwfs_dirent_t *e, void *c) {
     fx_ls_ctx_t *x = (fx_ls_ctx_t *)c;
     if (files_row_count >= FX_ROWS_MAX) { fx_truncated = 1; return 0; }
@@ -339,6 +340,10 @@ static int fx_ls_cb(const mwfs_dirent_t *e, void *c) {
     mwfs_ino_t t;
     if (v && mwfs_ino_get(v, e->ino, &t)) { r->stamp = t.gen; if (r->kind == FK_FILE) r->size = t.size; }
     r->icon = (u8)(x->in_mnt ? fx_drive_icon(e->name) : (r->kind == FK_DIR ? IC_FOLDER : fx_file_icon(e->name)));
+    if (!x->in_mnt && r->kind == FK_FILE && x->progs && fx_ext_is(e->name, "MWP")) {      /* in /progs a program shows the icon packed into its file, if it has one */
+        int ps = prog_find_by_name(e->name);
+        if (ps >= 0 && mwp_icon16_of(ps)) r->icon = (u8)(IC_CUSTOM_BASE + ps);
+    }
     if (r->kind == FK_DIR) fx_ndirs++; else { fx_nfiles++; fx_bytes += r->size; }
     return 1;
 }
@@ -346,7 +351,7 @@ static void fx_load_dir(void) {
     files_row_count = 0; fx_truncated = 0; fx_ndirs = fx_nfiles = fx_bytes = 0; fx_armed = -1;
     vfs_node_t d;
     if (vfs_stat(fx_cwd, &d) == MWFS_OK && d.type == MWFS_T_DIR) {
-        fx_ls_ctx_t c; c.in_mnt = d.is_mnt_dir; c.vol = d.vol;
+        fx_ls_ctx_t c; c.in_mnt = d.is_mnt_dir; c.vol = d.vol; c.progs = fx_cwd_is("/progs");
         vfs_ls_each(&d, fx_ls_cb, &c);
     }
     fx_sort_rows();
@@ -521,8 +526,8 @@ static void fx_open_row(int ri) {
         int slot = fx_cwd_is("/progs") ? prog_find_by_name(r->name) : -1;
         if (slot < 0) { files_set_msg("Programs run from /progs."); return; }
         if (!prog_verify_slot(slot)) { files_set_msg("That program is damaged."); return; }
-        if (!mwp_run(slot)) { files_set_msg("Failed to load or run."); return; }
-        render_frame(-1, -1, 0);                                 /* the program drew over everything: repaint */
+        const char *why = pw_launch(slot, r->name);               /* in a window, like `run` */
+        files_set_msg(why ? why : "Started in a window.");
         return;
     }
     int slot = fx_cwd_is("/docs") ? fs_find_by_name(r->name) : -1;

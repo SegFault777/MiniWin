@@ -12,7 +12,7 @@ mode by hand, a from-scratch VGA/mouse/keyboard stack with its own disk
 drivers (IDE, SATA/AHCI, SCSI, NVMe), and a windowing system with no libc, no
 bootloader framework, and no borrowed kernel code.
 
-**Current version: 1.1-alpha-10** ([changelog](docs/project/CHANGELOG.md)). Developed and
+**Current version: 1.1-alpha-11** ([changelog](docs/project/CHANGELOG.md)). Developed and
 tested on QEMU; for VMware / VirtualBox see
 [docs/user/VIRTUAL-MACHINES.md](docs/user/VIRTUAL-MACHINES.md).
 
@@ -172,7 +172,8 @@ Needs `nasm`, a 32-bit-capable `gcc` (`gcc-multilib` on Debian/Ubuntu if
 you're on a 64-bit host), and `ld`.
 
 ```bash
-./build.sh && tools/install_all.sh   # the second step puts GREETER.MWP and the icons back
+./build.sh && tools/install_all.sh   # the second step puts the icons and the demo programs back
+./build.sh && tools/install_all.sh --no-demos   # the same, without GREETER and the SDK examples (an empty /progs)
 THEME=dark ./build.sh && tools/install_all.sh   # the same OS in another look (kernel/ui/themes/<name>.h)
 ```
 

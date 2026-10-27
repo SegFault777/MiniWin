@@ -7,14 +7,16 @@
 void mwp_entry(void) {
     if (!mw_has(2)) return;
     static const u32 pal[8] = { MW_BLACK, MW_RED, MW_GREEN, MW_BLUE, MW_YELLOW, MW_WHITE, MW_SHADOW, MW_ACCENT };
-    const int CW = 400, CH = 280, CX = ((int)sys.screen_w - CW) / 2, CY = 50;
-    u8 *px = sys.mem_alloc((u32)(CW * CH));              /* one colour index per canvas pixel: 112 KB from the kernel heap */
+    int win = mw_has(3) && mw_windowed();
+    int CW = 400, CH = 280, CX = ((int)sys.screen_w - CW) / 2, CY = win ? 8 : 50;
+    if (win) { CW = (int)sys.screen_w - 16; CH = (int)sys.screen_h - 48; CX = 8; if (CW > 400) CW = 400; if (CH > 280) CH = 280; if (CW < 40) CW = 40; if (CH < 40) CH = 40; }   /* the canvas fits the window it opened in */
+    u8 *px = sys.mem_alloc((u32)(400 * 280));              /* one colour index per canvas pixel: 112 KB from the kernel heap */
     if (!px) return;
     int color = 0, mx = 0, my = 0, mb = 0;
     char status[48]; status[0] = 0;
     mw_fill_screen(MW_FACE);
     for (int i = 0; i < CW * CH; i++) px[i] = 5;          /* index 5 = white */
-    sys.window_frame(CX - 8, CY - 24, CW + 16, CH + 60, "PAINT.MWP", MWI_NOTEPAD);
+    if (!win) sys.window_frame(CX - 8, CY - 24, CW + 16, CH + 60, "PAINT.MWP", MWI_NOTEPAD);
     sys.fill_rect(CX, CY, CW, CH, MW_WHITE);              /* after the frame: the frame paints its whole body grey */
     for (;;) {
         sys.mouse_poll(&mx, &my, &mb);

@@ -157,6 +157,7 @@ static void saveas_do(void) {
 }
 
 static void confirm_yes_action(void) {
+    if (active_np->confirm_mode == CONFIRM_INFO) { active_np->confirm_mode = CONFIRM_NONE; return; }      /* OK */
     if (active_np->confirm_mode == CONFIRM_SAVEAS) { saveas_do(); return; }
     int saved_slot = save_current_document();
     if (saved_slot == SAVE_ERR_WRITE) {
