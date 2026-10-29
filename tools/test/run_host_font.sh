@@ -10,3 +10,5 @@ python3 ../gen_cursors.py --check              # the cursor shapes are generated
 python3 ../gen_hangul_font.py --dump-raw /tmp/ko_raw.bin
 gcc -O1 -g -Wall -Wextra -Wno-unused-function -Wno-int-to-pointer-cast -fsanitize=address,undefined -fno-sanitize-recover=undefined -o /tmp/host_lz_test host_lz_test.c
 /tmp/host_lz_test /tmp/ko_raw.bin
+gcc -O1 -g -Wall -Wextra -Wno-unused-function -Wno-unused-variable -fsanitize=address,undefined -fno-sanitize-recover=undefined -o /tmp/host_kern_test host_kern_test.c
+/tmp/host_kern_test                           # kerning (kernel/font.h): the properties of every ASCII letter pair

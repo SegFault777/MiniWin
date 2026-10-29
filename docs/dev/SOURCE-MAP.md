@@ -104,7 +104,7 @@ For how the pieces fit together see [ARCHITECTURE.md](ARCHITECTURE.md); for the 
 | `kernel/apps/notepad/save.h` | Save / save-as / new logic shared by the menu, Ctrl+S and the confirm dialog. |
 | `kernel/apps/notepad/windows.h` | The NOTEPAD_MAX Notepad windows: state, creation, focus, per-window text buffers. |
 | `kernel/apps/progwin.h` | A .MWP running IN A WINDOW (1.1-alpha-11). |
-| `kernel/apps/setting.h` | SETTING.MWP: language / IME / time zone window. |
+| `kernel/apps/setting.h` | SETTING.MWP: language / IME / time zone / display / mouse / sound / text / about / power. |
 | `kernel/apps/shell_fs.h` | MiniShell's file commands: pwd cd ls mkdir touch cat cp mv rm -- Unix names first, with the Windows ones (dir md type copy move del) and MiniWin's own (where go look dig new dup) as... |
 | `kernel/apps/shell_part.h` | MiniShell's `part` command: look at, format, mount, check and (on MBR disks) edit the partitions of the storage devices this kernel drives, and the `usb` listing. |
 | `kernel/apps/terminal.h` | MINISHELL.MWP: the command-line app and its commands. |
@@ -182,6 +182,7 @@ For how the pieces fit together see [ARCHITECTURE.md](ARCHITECTURE.md); for the 
 | `tools/test/host_crypto_test.c` | Compiles MiniWin's REAL crypto headers on the build host (they are freestanding C, so they build fine against a hosted libc) and checks them against vectors from gen_crypto_vectors.py. |
 | `tools/test/host_dom_dump.c` | Dumps the DOM kernel/dom.h builds for an HTML file: a quick way to eyeball the tree builder. |
 | `tools/test/host_engine_test.c` | Deterministic tests for the HTML5 engine (kernel/dom.h, css.h, layout.h, render.h). |
+| `tools/test/host_kern_test.c` | Kerning (kernel/font.h, 1.1-alpha-12): properties that must hold for EVERY pair of printable ASCII letters, checked against the real kernel code (font.h is included as it is; only the... |
 | `tools/test/host_lz_test.c` | Host test for kernel/lz.h (the LZ4 block decoder) and the compressed Korean font table in kernel/font_ko_data.h. |
 | `tools/test/host_mm_test.c` | Kernel/mm.h on an ordinary array: the page allocator (contiguous runs, exhaustion, refused bad frees), the heap (alignment, split/merge, chunk growth and release, krealloc, double free,... |
 | `tools/test/host_mwfs_test.c` | Kernel/mwfs.h on a RAM disk: mkfs/open, files from 0 bytes to past the double-indirect boundary, directories of any depth, replace/rename/unlink, a full volume, a randomized run checked... |
@@ -214,4 +215,5 @@ For how the pieces fit together see [ARCHITECTURE.md](ARCHITECTURE.md); for the 
 | `tools/test/ui_diff.py` | Compares a directory of fresh screenshots (PPM) against the golden PNGs, pixel for pixel. |
 | `tools/test/ui_golden.sh` | Boots the OS in QEMU, drives the desktop through a fixed tour (open every app, type, open menus, press a button without releasing) and compares every screenshot with... |
 | `tools/test/ui_golden_files.sh` | Screen tour of MINIFILES.MWP (1.1-alpha-1), compared pixel for pixel with tools/test/golden_files/*.png. |
+| `tools/test/ui_golden_setting.sh` | Screen tour of SETTING.MWP (1.1-alpha-12), compared pixel for pixel with tools/test/golden_setting/*.png. |
 | `tools/test/webserver.py` | A small web server for the MiniWeb end-to-end tests: it serves exactly the awkward things a real site does and a plain `http.server` never will. |

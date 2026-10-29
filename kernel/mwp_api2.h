@@ -244,12 +244,13 @@ static u32 mwp_sys_theme_color(int id) {
         case MW_TH_ACCENT: return TH_ACCENT;         case MW_TH_ACCENT_TEXT: return TH_ACCENT_TEXT;
         case MW_TH_FIELD: return TH_FIELD;           case MW_TH_FIELD_TEXT: return TH_FIELD_TEXT;
         case MW_TH_LIGHT: return TH_LIGHT;           case MW_TH_SHADOW: return TH_SHADOW;
-        case MW_TH_OUTLINE: return TH_OUTLINE;       case MW_TH_DESKTOP: return TH_DESKTOP;
+        case MW_TH_OUTLINE: return TH_OUTLINE;       case MW_TH_DESKTOP: return desktop_bg;
         case MW_TH_WARNING: return TH_WARNING;
     }
     return TH_FACE;
 }
 static void mwp_sys_beep(u32 hz, u32 ms) {
+    if (!sound_enabled) return;
     if (hz < 20 || hz > 20000) return;
     if (ms > 2000) ms = 2000;
     speaker_set_frequency(hz); speaker_on();

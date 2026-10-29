@@ -64,8 +64,12 @@
 #include "ui/icon16.h"      /* shared 16x16 icons (needs fs.h's catalog + vga.h) */
 #include "ui/widgets.h"
 
-#define DESKTOP_COLOR_BG      TH_DESKTOP
-#define DESKTOP_COLOR_ICON_BG TH_DESKTOP
+/* The desktop colours are variables since alpha-12 (Settings > Display picks a preset; the theme only supplies the first value). The
+ * caption colour follows the background so the icon names stay readable on any preset. */
+static u32 desktop_bg = TH_DESKTOP;
+static u32 desktop_fg = TH_DESKTOP_TEXT;
+#define DESKTOP_COLOR_BG      (desktop_bg)
+#define DESKTOP_COLOR_ICON_BG (desktop_bg)
 
 /* ---- system ---- */
 #include "sys/util.h"

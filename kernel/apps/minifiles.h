@@ -50,7 +50,10 @@ static int  fx_tree_n = 0, fx_tree_sel = 0, fx_tscroll = 0;
 static fx_row_t files_rows[FX_ROWS_MAX];
 static int  files_row_count = 0, files_sel = -1, files_scroll = 0;
 static char fx_cwd[VFS_PATH_MAX] = "/";
-static int  fx_view_disks = 0;
+static int fx_cwd_is(const char *p);
+/* The old DISKS view is gone (1.1-alpha-12): the disks and their partitions are what /mnt shows now, so "Disks view" simply means
+ * "the current folder is /mnt". Mounted partitions inside it open as folders; the others are mounted from the tool bar. */
+#define fx_view_disks (fx_cwd_is("/mnt"))
 static int  fx_sort_key = 0, fx_sort_desc = 0;       /* 0 name, 1 size, 2 type, 3 modified */
 static int  fx_armed = -1;                           /* row whose Delete was clicked once */
 static int  fx_truncated = 0;                        /* the folder has more entries than FX_ROWS_MAX */
@@ -270,8 +273,8 @@ static inline int fx_body_y(void)      { return fx_tool_y() + FX_TOOL_H + 2; }
 static inline int files_status_y(void) { return files_win.y + files_win.h - 16; }
 static inline int fx_body_h(void)      { return files_status_y() - 3 - fx_body_y(); }
 static inline int fx_tree_x(void)      { return files_win.x + 4; }
-static inline int fx_tree_w(void)      { if (fx_view_disks) return 0; int w = files_win.w * 3 / 10; return w < 110 ? 110 : (w > 170 ? 170 : w); }
-static inline int fx_pane_x(void)      { return fx_view_disks ? files_win.x + 4 : fx_tree_x() + fx_tree_w() + 4; }
+static inline int fx_tree_w(void)      { int w = files_win.w * 3 / 10; return w < 110 ? 110 : (w > 170 ? 170 : w); }
+static inline int fx_pane_x(void)      { return fx_tree_x() + fx_tree_w() + 4; }
 static inline int fx_pane_w(void)      { return files_win.x + files_win.w - 4 - fx_pane_x(); }
 /* the tree's list area, and the list's */
 static inline int fx_tl_y(void) { return fx_body_y() + FX_HDR_H; }
@@ -282,7 +285,7 @@ static inline int files_list_w(void) { return fx_pane_w(); }
 static inline int files_list_h(void) { return fx_body_h() - 2 * FX_HDR_H; }
 static int fx_tree_vis(void)         { int n = (fx_tl_h() - 4) / FX_ROW_H; return n < 1 ? 1 : n; }
 static inline int files_visible_rows(void) { int n = (files_list_h() - 4) / FX_ROW_H; return n < 1 ? 1 : n; }
-static int files_in_tree(int px, int py) { return !fx_view_disks && in_rect(px, py, fx_tree_x(), fx_tl_y(), fx_tree_w(), fx_tl_h()); }
+static int files_in_tree(int px, int py) { return in_rect(px, py, fx_tree_x(), fx_tl_y(), fx_tree_w(), fx_tl_h()); }
 
 #define FX_SIZE_W 72
 #define FX_TYPE_W 76
@@ -347,7 +350,9 @@ static int fx_ls_cb(const mwfs_dirent_t *e, void *c) {
     if (r->kind == FK_DIR) fx_ndirs++; else { fx_nfiles++; fx_bytes += r->size; }
     return 1;
 }
+static void fx_load_disks(void);
 static void fx_load_dir(void) {
+    if (fx_view_disks) { fx_load_disks(); return; }
     files_row_count = 0; fx_truncated = 0; fx_ndirs = fx_nfiles = fx_bytes = 0; fx_armed = -1;
     vfs_node_t d;
     if (vfs_stat(fx_cwd, &d) == MWFS_OK && d.type == MWFS_T_DIR) {
@@ -369,7 +374,7 @@ static void fx_load_disks(void) {
         st_format_id(dtype, dnum, 0, id);
         int running_dev = (d == blk_boot_dev);
         fx_row_t *r = &files_rows[files_row_count++];
-        kstrcpy(r->name, id, FX_NAME); kstrcpy(r->note, running_dev ? "RUNNING" : "", sizeof r->note);
+        kstrcpy(r->name, id, FX_NAME); kstrcpy(r->note, running_dev ? "RUNNING" : (vfs_find_mount(id) ? "MOUNTED" : ""), sizeof r->note);
         r->size = st_devs[d].sectors; r->stamp = 0; r->kind = FK_DISK; r->icon = (u8)fx_drive_icon(id); r->bad = (u8)running_dev; r->dev = (u8)d;
         st_part_t parts[8];
         int n = st_list_partitions(d, parts, 8);
@@ -379,6 +384,7 @@ static void fx_load_disks(void) {
             if (parts[i].extended_container) { note = "EXTENDED"; bad = 1; }
             else if (parts[i].sectors < ST_INSTALL_SECTORS) { note = "TOO SMALL"; bad = 1; }
             else if (d == blk_boot_dev && st_overlap(parts[i].start, parts[i].sectors, blk_boot_base, ST_INSTALL_SECTORS)) { note = "RUNNING"; bad = 1; }
+            else if (vfs_find_mount(id)) note = "MOUNTED";
             fx_row_t *p = &files_rows[files_row_count++];
             kstrcpy(p->name, id, FX_NAME); kstrcpy(p->note, note, sizeof p->note);
             p->size = parts[i].sectors; p->stamp = 0; p->kind = FK_PART; p->icon = IC_DRIVE; p->bad = (u8)bad; p->dev = (u8)d;
@@ -432,7 +438,6 @@ done:
 /* Re-reads the tree (remembering which folders were open) and the list. Call after anything changed on disk. */
 static void fx_refresh_all(void) {
     fx_free_invalidate();
-    if (fx_view_disks) { fx_load_disks(); return; }
     int saved = 0;
     for (int i = 0; i < fx_tree_n && saved < FX_SAVED_MAX; i++) if (fx_tree[i].expanded) fx_node_path(i, fx_saved[saved++]);
     fx_tree_reset();
@@ -448,7 +453,6 @@ static void fx_goto(const char *path) {
     char abs[VFS_PATH_MAX];
     if (vfs_norm(path, abs, sizeof abs) != MWFS_OK || vfs_stat(abs, &n) != MWFS_OK || n.type != MWFS_T_DIR) { files_set_msg("No such folder."); return; }
     kstrcpy(fx_cwd, abs, sizeof fx_cwd);
-    fx_view_disks = 0;
     fx_tree_sel = fx_tree_walk(fx_cwd, 0);
     fx_tree_scroll_to(fx_tree_sel);
     files_sel = -1; files_scroll = 0; fx_edit = 0;
@@ -456,7 +460,7 @@ static void fx_goto(const char *path) {
     files_set_msg("");
 }
 static void fx_go_up(void) {
-    if (fx_view_disks || (fx_cwd[0] == '/' && fx_cwd[1] == 0)) return;
+    if (fx_cwd[0] == '/' && fx_cwd[1] == 0) return;
     char p[VFS_PATH_MAX]; kstrcpy(p, fx_cwd, sizeof p);
     int n = 0; while (p[n]) n++;
     while (n > 1 && p[n - 1] != '/') n--;
@@ -487,7 +491,7 @@ static int fx_select_name(const char *name) {
 
 static void files_open_window(void) {
     files_win.open = 1; files_win.minimized = 0;
-    if (!fx_started) { fx_started = 1; fx_tree_reset(); fx_expand(0); fx_cwd[0] = '/'; fx_cwd[1] = 0; fx_view_disks = 0; fx_clip[0] = 0; fx_edit = 0; }   /* the root starts open, as in Explorer */
+    if (!fx_started) { fx_started = 1; fx_tree_reset(); fx_expand(0); fx_cwd[0] = '/'; fx_cwd[1] = 0; fx_clip[0] = 0; fx_edit = 0; }   /* the root starts open, as in Explorer */
     fx_refresh_all();
     files_set_msg("");
     win_z_raise(WIN_ID_FILES);
@@ -503,22 +507,63 @@ static void fx_type_into_shell(const char *cmd, const char *arg) {
     term_input_focused = 1;
 }
 
-/* Open a folder / run a program / open a document / (Disks view) INSTALL */
+/* ---- /mnt actions (alpha-12): mount, unmount, install the selected disk or partition ---- */
+static int fx_row_is_disk(int ri) { return ri >= 0 && ri < files_row_count && (files_rows[ri].kind == FK_DISK || files_rows[ri].kind == FK_PART); }
+static int fx_row_mounted(int ri) { return fx_row_is_disk(ri) && vfs_find_mount(files_rows[ri].name) != 0; }
+
+/* Mounts row `ri` under /mnt/<id> the way `part mount <id>` does, but says what happened on the status line instead of in the shell.
+ * Returns 1 when it is mounted afterwards. (The rows are reloaded, so the row index is not valid after this: re-select by name.) */
+static int fx_mount_row(int ri) {
+    if (!fx_row_is_disk(ri)) { files_set_msg("Select a disk or a partition."); return 0; }
+    char id[FX_NAME]; kstrcpy(id, files_rows[ri].name, FX_NAME);
+    if (vfs_find_mount(id)) { files_set_msg("Already mounted."); return 1; }
+    if (files_rows[ri].note[0] == 'E') { files_set_msg("Pick a logical partition inside it."); return 0; }
+    st_target_t t;
+    int e = part_resolve(id, &t, 0);
+    if (e != ST_OK) { files_set_msg(st_error_text(e)); return 0; }
+    u32 vb, vn;
+    if (part_find_volume(&t, &vb, &vn) == 0) { files_set_msg("No MiniWin filesystem there (part format)."); return 0; }
+    e = vfs_mount_region(t.id, t.pos, vb, vn, 0);
+    if (e != MWFS_OK) { files_set_msg(mwfs_err_text(e)); return 0; }
+    fx_refresh_all(); fx_select_name(id);
+    files_set_msg("Mounted.");
+    return 1;
+}
+static void fx_unmount_row(int ri) {
+    if (!fx_row_is_disk(ri)) { files_set_msg("Select a disk or a partition."); return; }
+    char id[FX_NAME]; kstrcpy(id, files_rows[ri].name, FX_NAME);
+    if (!vfs_find_mount(id)) { files_set_msg("It is not mounted."); return; }
+    int e = vfs_unmount(id);
+    if (e != MWFS_OK) { files_set_msg(mwfs_err_text(e)); return; }
+    fx_refresh_all(); fx_select_name(id);
+    files_set_msg("Unmounted.");
+}
+/* The INSTALL button: types `os-inst <id> ` into MiniShell (the YES confirmation lives there, so nothing is erased from here). */
+static void fx_install_row(int ri) {
+    if (!fx_row_is_disk(ri)) { files_set_msg("Select a disk or a partition."); return; }
+    fx_row_t *r = &files_rows[ri];
+    if (r->bad) {                                               /* say WHY, in a sentence */
+        if (r->note[0] == 'R') files_set_msg("That is where MiniWin runs from.");
+        else if (r->note[0] == 'E') files_set_msg("Pick a logical partition inside it.");
+        else if (r->note[0] == 'T') files_set_msg("Too small: needs at least 1 MB.");
+        else files_set_msg("Cannot install there.");
+        return;
+    }
+    fx_type_into_shell("os-inst ", r->name);
+    files_set_msg("Press Enter in MiniShell.");
+}
+
+/* Open a folder / run a program / open a document / (in /mnt) open a disk's volume */
 static void fx_open_row(int ri) {
     if (ri < 0 || ri >= files_row_count) { files_set_msg("Select something first."); return; }
     fx_row_t *r = &files_rows[ri];
     char p[VFS_PATH_MAX];
     if (r->kind == FK_DIR) { fx_row_path(r, p); fx_goto(p); return; }
-    if (r->kind == FK_DISK || r->kind == FK_PART) {
-        if (r->bad) {                                           /* say WHY, in a sentence */
-            if (r->note[0] == 'R') files_set_msg("That is where MiniWin runs from.");
-            else if (r->note[0] == 'E') files_set_msg("Pick a logical partition inside it.");
-            else if (r->note[0] == 'T') files_set_msg("Too small: needs at least 1 MB.");
-            else files_set_msg("Cannot install there.");
-            return;
-        }
-        fx_type_into_shell("os-inst ", r->name);                /* typed, NOT run: the YES confirmation lives in MiniShell */
-        files_set_msg("Press Enter in MiniShell.");
+    if (r->kind == FK_DISK || r->kind == FK_PART) {              /* /mnt: open it like a folder, mounting it first if need be */
+        char id[FX_NAME]; kstrcpy(id, r->name, FX_NAME);
+        if (!vfs_find_mount(id) && !fx_mount_row(ri)) return;
+        u32 k = 0; append_str(p, &k, sizeof p, "/mnt/"); append_str(p, &k, sizeof p, id);
+        fx_goto(p);
         return;
     }
     if (r->bad) { files_set_msg("That file is damaged."); return; }
@@ -642,10 +687,8 @@ static void fx_paste_action(void) {
     fx_after_change(tmp.name);
     files_set_msg("Pasted.");
 }
-static void fx_set_view(int disks) {
-    fx_view_disks = disks; files_sel = -1; files_scroll = 0; fx_edit = 0;
-    fx_refresh_all();
-    files_set_msg("");
+static void fx_set_view(int disks) {                           /* View > Disks is just "go to /mnt"; View > Folders goes back to the root */
+    fx_goto(disks ? "/mnt" : "/");
 }
 static void fx_sort_by(int key) {
     if (fx_view_disks) return;
@@ -658,28 +701,34 @@ static void fx_sort_by(int key) {
 }
 
 /* ---------------------------------------------------------------- tool bar */
-enum { FB_UP, FB_NEW, FB_COPY, FB_CUT, FB_PASTE, FB_DELETE, FB_REFRESH, FB_VIEW, FB_INSTALL, FB_COUNT };
-static const u8 fb_icon[FB_COUNT] = { IC_UP, IC_FOLDER, 255, 255, 255, IC_TRASH, IC_REFRESH, IC_PC, 255 };
+enum { FB_UP, FB_NEW, FB_COPY, FB_CUT, FB_PASTE, FB_DELETE, FB_REFRESH, FB_VIEW, FB_MOUNT, FB_UNMOUNT, FB_INSTALL, FB_COUNT };
+static const u8 fb_icon[FB_COUNT] = { IC_UP, IC_FOLDER, 255, 255, 255, IC_TRASH, IC_REFRESH, IC_PC, 255, 255, 255 };
 static const mb_txt_t fb_text[FB_COUNT] = {
     { 0, 0 }, { 0, 0 }, { "Copy", "\xeb\xb3\xb5\xec\x82\xac" }, { "Cut", "\xec\x9e\x98\xeb\x9d\xbc\xeb\x82\xb4\xea\xb8\xb0" }, { "Paste", "\xeb\xb6\x99\xec\x97\xac\xeb\x84\xa3\xea\xb8\xb0" },
-    { 0, 0 }, { 0, 0 }, { 0, 0 }, { "Install", "\xec\x84\xa4\xec\xb9\x98" }
+    { 0, 0 }, { 0, 0 }, { 0, 0 }, { "Mount", "\xeb\xa7\x88\xec\x9a\xb4\xed\x8a\xb8" }, { "Unmount", "\xeb\xa7\x88\xec\x9a\xb4\xed\x8a\xb8\x20\xed\x95\xb4\xec\xa0\x9c" }, { "Install", "\xec\x84\xa4\xec\xb9\x98" }
 };
 static int fx_btn_w(int b) { return fb_icon[b] != 255 ? 26 : ko_string_width(mb_str(&fb_text[b])) + 10; }
-static int fx_btn_shown(int b) {
-    if (b == FB_INSTALL) return fx_view_disks;
-    if (fx_view_disks) return b == FB_REFRESH || b == FB_VIEW;
+/* Which buttons the current folder wants: /mnt trades the file operations for Mount / Unmount / Install. */
+static int fx_btn_wanted(int b) {
+    if (b == FB_MOUNT || b == FB_UNMOUNT || b == FB_INSTALL) return fx_view_disks;
+    if (fx_view_disks) return b == FB_UP || b == FB_REFRESH || b == FB_VIEW;
     return 1;
 }
 static int fx_btn_x(int b) {
     int x = files_win.x + 4;
-    for (int k = 0; k < b; k++) { if (!fx_btn_shown(k)) continue; x += fx_btn_w(k) + 2; if (k == FB_UP || k == FB_NEW || k == FB_PASTE || k == FB_REFRESH) x += 6; }
+    for (int k = 0; k < b; k++) { if (!fx_btn_wanted(k)) continue; x += fx_btn_w(k) + 2; if (k == FB_UP || k == FB_NEW || k == FB_PASTE || k == FB_REFRESH || k == FB_VIEW) x += 6; }
     return x;
 }
+/* A button that would stick out past the window's right edge is left out instead of being drawn into the desktop (every action is
+ * also in the menus, so nothing becomes unreachable). */
+static int fx_btn_shown(int b) { return fx_btn_wanted(b) && fx_btn_x(b) + fx_btn_w(b) <= files_win.x + files_win.w - 4; }
 static int fx_btn_enabled(int b) {
     if (b == FB_UP) return !(fx_cwd[0] == '/' && fx_cwd[1] == 0);
     if (b == FB_COPY || b == FB_CUT || b == FB_DELETE) return files_sel >= 0 && files_sel < files_row_count;
     if (b == FB_PASTE) return fx_clip[0] != 0;
-    if (b == FB_INSTALL) return files_sel >= 0 && files_sel < files_row_count && !files_rows[files_sel].bad;
+    if (b == FB_MOUNT) return fx_row_is_disk(files_sel) && !fx_row_mounted(files_sel) && files_rows[files_sel].note[0] != 'E';
+    if (b == FB_UNMOUNT) return fx_row_mounted(files_sel);
+    if (b == FB_INSTALL) return fx_row_is_disk(files_sel) && !files_rows[files_sel].bad;
     return 1;
 }
 static int fx_btn_hit(int px, int py) {
@@ -700,7 +749,9 @@ static void fx_btn_fire(int b) {
         case FB_DELETE: fx_delete_action(); break;
         case FB_REFRESH: fx_refresh_all(); files_set_msg("Refreshed."); break;
         case FB_VIEW: fx_set_view(!fx_view_disks); break;
-        case FB_INSTALL: fx_open_row(files_sel); break;
+        case FB_MOUNT: fx_mount_row(files_sel); break;
+        case FB_UNMOUNT: fx_unmount_row(files_sel); break;
+        case FB_INSTALL: fx_install_row(files_sel); break;
     }
 }
 
@@ -710,7 +761,7 @@ static const mb_menu_t files_menus[FILES_MENU_N] = {
     { { "File", "\xed\x8c\x8c\xec\x9d\xbc" }, 6, { { "Open", "\xec\x97\xb4\xea\xb8\xb0" }, { "New Folder", "\xec\x83\x88\x20\xed\x8f\xb4\xeb\x8d\x94" }, { "Rename", "\xec\x9d\xb4\xeb\xa6\x84\x20\xeb\xb0\x94\xea\xbe\xb8\xea\xb8\xb0" }, { "Delete", "\xec\x82\xad\xec\xa0\x9c" }, { "Refresh", "\xec\x83\x88\xeb\xa1\x9c\x20\xea\xb3\xa0\xec\xb9\xa8" }, { "Close window", "\xec\xb0\xbd\x20\xeb\x8b\xab\xea\xb8\xb0" } } },
     { { "Edit", "\xed\x8e\xb8\xec\xa7\x91" }, 3, { { "Copy", "\xeb\xb3\xb5\xec\x82\xac" }, { "Cut", "\xec\x9e\x98\xeb\x9d\xbc\xeb\x82\xb4\xea\xb8\xb0" }, { "Paste", "\xeb\xb6\x99\xec\x97\xac\xeb\x84\xa3\xea\xb8\xb0" } } },
     { { "View", "\xeb\xb3\xb4\xea\xb8\xb0" }, 6, { { "Folders", "\xed\x8f\xb4\xeb\x8d\x94" }, { "Disks", "\xeb\x94\x94\xec\x8a\xa4\xed\x81\xac" }, { "By Name", "\xec\x9d\xb4\xeb\xa6\x84\xec\x88\x9c" }, { "By Size", "\xed\x81\xac\xea\xb8\xb0\xec\x88\x9c" }, { "By Type", "\xec\xa2\x85\xeb\xa5\x98\xec\x88\x9c" }, { "By Date", "\xeb\x82\xa0\xec\xa7\x9c\xec\x88\x9c" } } },
-    { { "Tools", "\xeb\x8f\x84\xea\xb5\xac" }, 1, { { "MiniShell here", "\xec\x97\xac\xea\xb8\xb0\xec\x84\x9c\x20\x4d\x69\x6e\x69\x53\x68\x65\x6c\x6c" } } },
+    { { "Tools", "\xeb\x8f\x84\xea\xb5\xac" }, 4, { { "Mount", "\xeb\xa7\x88\xec\x9a\xb4\xed\x8a\xb8" }, { "Unmount", "\xeb\xa7\x88\xec\x9a\xb4\xed\x8a\xb8\x20\xed\x95\xb4\xec\xa0\x9c" }, { "Install MiniWin", "\x4d\x69\x6e\x69\x57\x69\x6e\x20\xec\x84\xa4\xec\xb9\x98" }, { "MiniShell here", "\xec\x97\xac\xea\xb8\xb0\xec\x84\x9c\x20\x4d\x69\x6e\x69\x53\x68\x65\x6c\x6c" } } },
     { { "Help", "\xeb\x8f\x84\xec\x9b\x80\xeb\xa7\x90" }, 1, { { "About MiniFiles", "\x4d\x69\x6e\x69\x46\x69\x6c\x65\x73\x20\xec\xa0\x95\xeb\xb3\xb4" } } },
 };
 static void files_menu_action(int menu, int item) {
@@ -726,8 +777,10 @@ static void files_menu_action(int menu, int item) {
     } else if (menu == 2) {
         if (item == 0) fx_set_view(0); else if (item == 1) fx_set_view(1); else fx_sort_by(item - 2);
     } else if (menu == 3) {
-        fx_type_into_shell("cd ", fx_cwd);
-        files_set_msg("Press Enter in MiniShell.");
+        if (item == 0) fx_mount_row(files_sel);
+        else if (item == 1) fx_unmount_row(files_sel);
+        else if (item == 2) fx_install_row(files_sel);
+        else { fx_type_into_shell("cd ", fx_cwd); files_set_msg("Press Enter in MiniShell."); }
     } else {
         files_set_msg("MiniFiles: folders, files and disks");
     }
@@ -853,8 +906,8 @@ static void draw_files_window(void) {
         }
     }
 
-    /* ---- the folder tree ---- */
-    if (!fx_view_disks) {
+    /* ---- the folder tree (shown in /mnt too: the mounted volumes are its children) ---- */
+    {
         int tx = fx_tree_x(), tw = fx_tree_w(), ty = fx_tl_y(), th = fx_tl_h();
         fx_draw_hdr(tx, fx_body_y(), tw, mb_str(&(mb_txt_t){ "All Folders", "\xeb\xaa\xa8\xeb\x93\xa0\x20\xed\x8f\xb4\xeb\x8d\x94" }), 0);
         ui_field(tx, ty, tw, th, TH_FIELD, 0);
@@ -895,7 +948,7 @@ static void draw_files_window(void) {
     int lx = files_list_x(), ly = files_list_y(), lw = files_list_w(), lh = files_list_h();
     ui_field(lx, ly, lw, lh, TH_FIELD, 0);
     int vis = files_visible_rows();
-    if (files_row_count == 0) font_draw_string(lx + 6, ly + 4, fx_view_disks ? "(no ide disk found)" : "(empty)", TH_FIELD_TEXT);
+    if (files_row_count == 0) font_draw_string(lx + 6, ly + 4, fx_view_disks ? "(no disk found)" : "(empty)", TH_FIELD_TEXT);
     for (int i = 0; i < vis && files_scroll + i < files_row_count; i++) {
         int ri = files_scroll + i;
         fx_row_t *r = &files_rows[ri];

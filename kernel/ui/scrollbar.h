@@ -13,6 +13,12 @@
  *     sb_register(WIN_ID_WEB, web_sb_geom, web_sb_set, SB_LINE_WEB);
  *     ... draw:   sb_draw(WIN_ID_WEB);
  *     ... input:  sb_press / sb_drag / sb_release / sb_wheel (ui/input.h calls them for every window)
+ * HORIZONTAL BARS (1.1-alpha-12). Content wider than its window used to just run past the frame; now the same widget lies down:
+ * register it with sb_register_h() under the owner id SB_H_BASE + window id. For a horizontal bar the geometry callback
+ * reports the bar's LEFT x, TOP y and its LENGTH (in the `h` slot: the bar's extent along its own axis), and the model is in
+ * whatever the app scrolls by horizontally (character columns for the shell, pixels for MiniFiles). Everything else -- arrows,
+ * thumb, dragging, page jumps -- is the very same code as the vertical bar, working on x instead of y.
+ *
  * The thumb never gets smaller than SB_MIN_THUMB, and the arithmetic stays inside 32 bits (no 64-bit division in this
  * kernel): track*page and (track-thumb)*pos are both far below 2^31 for any window that fits the screen. */
 
@@ -25,14 +31,20 @@
 typedef int  (*sb_geom_fn)(int *x, int *y, int *h, int *total, int *page, int *pos);
 typedef void (*sb_set_fn)(int pos);
 
-typedef struct { sb_geom_fn geom; sb_set_fn set; int line; } sb_target_t;
-#define SB_MAX_TARGETS 16
+typedef struct { sb_geom_fn geom; sb_set_fn set; int line; int horiz; } sb_target_t;
+#define SB_MAX_TARGETS 32
+#define SB_H_BASE      16                      /* horizontal bars: owner = SB_H_BASE + window id (vertical owners stay below it) */
 static sb_target_t sb_targets[SB_MAX_TARGETS];
 static int sb_drag_owner = -1, sb_drag_grab = 0;
 
 static inline void sb_register(int owner, sb_geom_fn geom, sb_set_fn set, int line) {
     if (owner < 0 || owner >= SB_MAX_TARGETS) return;
-    sb_targets[owner].geom = geom; sb_targets[owner].set = set; sb_targets[owner].line = line > 0 ? line : 1;
+    sb_targets[owner].geom = geom; sb_targets[owner].set = set; sb_targets[owner].line = line > 0 ? line : 1; sb_targets[owner].horiz = 0;
+}
+static inline void sb_register_h(int win_id, sb_geom_fn geom, sb_set_fn set, int line) {
+    int owner = SB_H_BASE + win_id;
+    if (win_id < 0 || owner >= SB_MAX_TARGETS) return;
+    sb_targets[owner].geom = geom; sb_targets[owner].set = set; sb_targets[owner].line = line > 0 ? line : 1; sb_targets[owner].horiz = 1;
 }
 
 static inline int sb_max_pos(int total, int page) { return total > page ? total - page : 0; }
@@ -59,6 +71,15 @@ static void sb_arrow(int x, int y, int up, int pressed) {
     }
 }
 
+static void sb_arrow_h(int x, int y, int left, int pressed) {
+    ui_button(x, y, SB_ARROW, SB_W, "", 0, 0, pressed);
+    int cx = x + SB_ARROW / 2, cy = y + SB_W / 2;
+    for (int i = 0; i < 4; i++) {
+        int w = left ? i : 3 - i, xx = cx - 2 + i;
+        for (int k = -w; k <= w; k++) bb_putpixel(xx, cy + k, TH_TEXT);
+    }
+}
+
 static void sb_draw_at(int x, int y, int h, int total, int page, int pos) {
     int ty, th;
     sb_thumb(y, h, total, page, pos, &ty, &th);
@@ -66,41 +87,54 @@ static void sb_draw_at(int x, int y, int h, int total, int page, int pos) {
     sb_arrow(x, y, 1, 0);
     sb_arrow(x, y + h - SB_ARROW, 0, 0);
 }
+/* the same bar lying down: x/y = its left/top, len = its width */
+static void sb_draw_at_h(int x, int y, int len, int total, int page, int pos) {
+    int tx, tw;
+    sb_thumb(x, len, total, page, pos, &tx, &tw);
+    bb_fillrect(x + SB_ARROW, y, len - 2 * SB_ARROW, SB_W, TH_SCROLL_TRACK);
+    bb_fillrect(tx, y + 1, tw, SB_W - 2, TH_SCROLL_THUMB);
+    sb_arrow_h(x, y, 1, 0);
+    sb_arrow_h(x + len - SB_ARROW, y, 0, 0);
+}
 static void sb_draw(int owner) {
     int x, y, h, total, page, pos;
     if (owner < 0 || owner >= SB_MAX_TARGETS || !sb_targets[owner].geom) return;
     if (!sb_targets[owner].geom(&x, &y, &h, &total, &page, &pos)) return;
-    sb_draw_at(x, y, h, total, page, pos);
+    if (sb_targets[owner].horiz) sb_draw_at_h(x, y, h, total, page, pos); else sb_draw_at(x, y, h, total, page, pos);
 }
+static inline void sb_draw_h(int win_id) { sb_draw(SB_H_BASE + win_id); }
 
 /* A left-button press. 1 = the bar took it (an arrow step, a page jump, or the start of a thumb drag). */
 static int sb_press(int owner, int px, int py) {
     int x, y, h, total, page, pos;
     if (owner < 0 || owner >= SB_MAX_TARGETS || !sb_targets[owner].geom || !sb_targets[owner].geom(&x, &y, &h, &total, &page, &pos)) return 0;
-    if (!in_rect(px, py, x, y, SB_W, h)) return 0;
+    int hz = sb_targets[owner].horiz;
+    if (hz ? !in_rect(px, py, x, y, h, SB_W) : !in_rect(px, py, x, y, SB_W, h)) return 0;
+    int c = hz ? px : py, o = hz ? x : y;                       /* along-the-bar coordinate of the press, and of the bar's start */
     int line = sb_targets[owner].line;
-    if (py < y + SB_ARROW)               pos -= line;
-    else if (py >= y + h - SB_ARROW)     pos += line;
+    if (c < o + SB_ARROW)                pos -= line;
+    else if (c >= o + h - SB_ARROW)      pos += line;
     else {
         int ty, th;
-        sb_thumb(y, h, total, page, pos, &ty, &th);
-        if (py < ty)                     pos -= page > line ? page - line : page;       /* the track above the thumb: a page up */
-        else if (py >= ty + th)          pos += page > line ? page - line : page;
-        else { sb_drag_owner = owner; sb_drag_grab = py - ty; return 1; }             /* on the thumb: start dragging it */
+        sb_thumb(o, h, total, page, pos, &ty, &th);
+        if (c < ty)                      pos -= page > line ? page - line : page;       /* the track before the thumb: a page back */
+        else if (c >= ty + th)           pos += page > line ? page - line : page;
+        else { sb_drag_owner = owner; sb_drag_grab = c - ty; return 1; }              /* on the thumb: start dragging it */
     }
     sb_targets[owner].set(sb_clamp(pos, total, page));
     return 1;
 }
 /* Called every poll while the button is held: moves the position with the thumb. */
-static void sb_drag(int py) {
+static void sb_drag(int px, int py) {
     if (sb_drag_owner < 0) return;
     int x, y, h, total, page, pos;
     sb_target_t *t = &sb_targets[sb_drag_owner];
     if (!t->geom || !t->geom(&x, &y, &h, &total, &page, &pos)) { sb_drag_owner = -1; return; }
+    int o = t->horiz ? x : y, c = t->horiz ? px : py;
     int ty, th;
-    sb_thumb(y, h, total, page, pos, &ty, &th);
+    sb_thumb(o, h, total, page, pos, &ty, &th);
     int track = h - 2 * SB_ARROW, room = track - th, max = sb_max_pos(total, page);
-    int want = py - sb_drag_grab - (y + SB_ARROW);
+    int want = c - sb_drag_grab - (o + SB_ARROW);
     if (want < 0) want = 0;
     if (want > room) want = room;
     t->set(room > 0 ? (want * max) / room : 0);

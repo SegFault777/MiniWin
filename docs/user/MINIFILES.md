@@ -42,7 +42,8 @@ the volume. Messages ("Deleted.", "That is not a valid name.", ...) replace the 
 | Copy / Cut / Paste | Edit | copy a **file** (folders can be moved with Cut, not copied), then open another folder and Paste there; a name that is already used is refused, never overwritten |
 | trash | File > Delete | the first click arms it (*Click DELETE again: NAME*), the second deletes; a folder must be empty; the folders the system stands on (`/docs`, `/progs`, `/mnt`, `/sys`, the volumes) cannot be deleted or renamed; a document open in Notepad cannot be deleted or renamed |
 | refresh | File > Refresh | rereads the disk (the lists are built when you open a folder and after your own actions, not continuously) |
-| computer | View > Disks | switches to the disk list (below); press again for the folders |
+| computer | View > Disks | goes to `/mnt`, where the disks are listed (below); View > Folders goes back to `/` |
+| Mount / Unmount / Install | Tools | work on the selected disk or partition in `/mnt` (the buttons appear only there; a button that does not fit a narrow window is left out, the menu always has it) |
 | | File > Rename | an inline name box on the selected row: type, **Enter** accepts, **Esc** cancels; a click elsewhere accepts |
 | | File > Open | a folder: go into it; a program in `/progs`: run it (the screen is repainted when it returns); a document in `/docs`: open it in Notepad |
 | | Tools > MiniShell here | opens MiniShell with `cd <this folder>` typed in (press Enter) |
@@ -53,10 +54,12 @@ A file elsewhere than `/docs` and `/progs` cannot be opened from here yet (*Only
 A file that fails its CRC-32 check when you select it (small files only) is flagged **DAMAGED** and refuses to open
 (see [DISK-LAYOUT.md](../dev/DISK-LAYOUT.md)).
 
-## Disks (View > Disks)
+## Disks (the `/mnt` folder)
 
-Lists the disks and their partitions, with the **id** each is called by in `os-inst`
-([STORAGE-IDS.md](../dev/STORAGE-IDS.md)):
+Since 1.1-alpha-12 the disks are what `/mnt` shows (there is no separate disk view any more; the folder tree stays on the left, and a mounted
+volume is also a child of `/mnt` in it). It lists the disks and their partitions, with the **id** each is called by in `os-inst`
+([STORAGE-IDS.md](../dev/STORAGE-IDS.md)). **Double-click** a partition: if it is not mounted yet MiniFiles mounts it (as `part mount <id>` would)
+and opens `/mnt/<id>`; **Mount** and **Unmount** do the same without opening it, **Install** types `os-inst <id>` into MiniShell:
 
 ```
 [disk icon] ide100     1 MB   Disk  RUNNING     <- the disk MiniWin runs from
@@ -65,7 +68,7 @@ Lists the disks and their partitions, with the **id** each is called by in `os-i
    [partition icon] ide202     4 MB   Part
 ```
 
-Remarks: `RUNNING` (MiniWin is running from there, not installable), `EXTENDED` (a container, pick a logical partition inside it),
+Remarks: `MOUNTED` (an MWFS volume of it is open under `/mnt/<id>`), `RUNNING` (MiniWin is running from there, not installable), `EXTENDED` (a container, pick a logical partition inside it),
 `TOO SMALL` (under 1 MB).
 
 **Install** (the button, or Enter / double-click on a row) does *not* install by itself. It opens MiniShell with `os-inst <id>` already

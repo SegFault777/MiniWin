@@ -121,6 +121,10 @@ static inline void ko_draw_mixed_string(int x, int y, const char *s, u32 color) 
             ko_font_draw_codepoint(cx, y, ko_utf8_decode3(&s[i]), color);
             cx += FONT_CELL;
             i += 3;
+        } else if (font_kerning) {                                 /* kerned Latin: ink-to-ink spacing, pairs tucked together */
+            font_draw_char_k(cx, y, s[i], color);
+            cx += font_adv(s[i]) + ((i + 1 < len && ko_utf8_char_len((unsigned char)s[i + 1]) == 1) ? font_kern(s[i], s[i + 1]) : 0);
+            i += 1;
         } else {
             font_draw_char(cx, y, s[i], color);
             cx += FONT_CELL;
@@ -140,8 +144,10 @@ static inline int ko_string_width(const char *s) {
     int w = 0;
     while (i < len) {
         int clen = ko_utf8_char_len((unsigned char)s[i]);
-        w += FONT_CELL;
-        i += (clen == 3 && i + 3 <= len) ? 3 : 1;
+        if (clen == 3 && i + 3 <= len) { w += FONT_CELL; i += 3; continue; }
+        if (font_kerning) w += font_adv(s[i]) + ((i + 1 < len && ko_utf8_char_len((unsigned char)s[i + 1]) == 1) ? font_kern(s[i], s[i + 1]) : 0);
+        else w += FONT_CELL;
+        i += 1;
     }
     return w;
 }

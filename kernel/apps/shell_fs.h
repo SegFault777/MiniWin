@@ -168,7 +168,7 @@ static void term_cmd_cat(const char *arg) {
     char line[TERM_COLS + 1]; u32 l = 0;
     for (u32 i = 0; i <= len; i++) {
         char c = i < len ? term_cat_buf[i] : '\n';
-        if (c == '\n' || l >= TERM_COLS - 2) {
+        if (c == '\n' || l >= (u32)term_wrap_cols() - 2) {
             line[l] = 0;
             if (i < len || l) term_print(line);
             l = 0;

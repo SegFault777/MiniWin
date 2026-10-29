@@ -51,9 +51,16 @@ static void append_uint2(char *out, u32 *len, u32 outsz, int v) { /* zero-padded
     kstrcpy_append(out, len, outsz, (char)('0' + v % 10));
 }
 
-/* "3:45 PM" (English) or "오후 3:45" (Korean) -- what the taskbar shows. */
+/* "3:45 PM" (English) or "오후 3:45" (Korean) -- what the taskbar shows; "15:45" in both with Settings > Display > Clock set to 24-hour. */
+static int clock_24h = 0;
 static void format_clock_time(rtc_time_t *t, char *out, u32 outsz) {
     u32 len = 0;
+    if (clock_24h) {
+        append_uint2(out, &len, outsz, t->hour);
+        kstrcpy_append(out, &len, outsz, ':');
+        append_uint2(out, &len, outsz, t->minute);
+        return;
+    }
     int h12 = t->hour % 12; if (h12 == 0) h12 = 12;
     int is_pm = t->hour >= 12;
 

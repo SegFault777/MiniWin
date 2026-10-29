@@ -54,8 +54,8 @@ typedef struct {
  * stay grouped with the rest of SETTING.MWP further down. */
 #define SETTING_DEFAULT_X   100
 #define SETTING_DEFAULT_Y   40
-#define SETTING_DEFAULT_W   260
-#define SETTING_DEFAULT_H   160
+#define SETTING_DEFAULT_W   420
+#define SETTING_DEFAULT_H   200
 
 static window_t setting = {
     .open = 0, .minimized = 0, .maximized = 0,

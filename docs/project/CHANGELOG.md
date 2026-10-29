@@ -1,5 +1,35 @@
 # Changelog
 
+## MiniWin 1.1-alpha-12 (2026-10)
+
+* **MiniShell follows its window.** The shell was a fixed 40 x 14 grid painted in the top-left corner of whatever window it lived in:
+  maximised, it left a sea of black; shrunk, the text ran past the frame. Now the rows and columns shown come from the window's size,
+  prose (`?`, `cat`, wrapped messages) re-flows to the current width (never narrower than 40 columns), and the scrollback holds lines up
+  to 128 columns (it lives on the heap now: 256 rows x 129 bytes, allocated by the first line printed). Eleven fixed messages that used
+  to be cut off at 40 columns (the `run` line of `?` lost its `-f: full screen`) now wrap instead. The input line shows its END when
+  it is longer than the field, and may be 120 characters.
+* **Horizontal scroll bars** (`kernel/ui/scrollbar.h`): the scroll-bar widget lies down. A window whose content is wider than it shows
+  gets a bar under the content instead of drawing past its frame: MiniShell (columns) and Settings (see below) use it. Owner ids
+  `SB_H_BASE + window id`; `sb_register_h()`; `sb_drag` takes both coordinates.
+* **MiniFiles: the disks live in `/mnt`.** The separate Disks view is gone; `/mnt` lists the disks and their partitions (with `MOUNTED`
+  / `RUNNING` notes) next to the folder tree. A new **Mount** / **Unmount** pair joins **Install** on the tool bar (and the Tools menu)
+  while `/mnt` is open; double-clicking a partition mounts it if needed and opens `/mnt/<id>`. View > Disks goes to `/mnt`, View >
+  Folders to `/`. Tool-bar buttons that do not fit a narrow window are left out (every action is also in a menu).
+* **Settings grows from three pages to nine**: Language, IME, Time Zone, **Display** (12/24-hour clock; desktop colour presets, captions
+  follow the background), **Mouse** (pointer speed slow/normal/fast/faster with the remainder carried over, double-click time),
+  **Sound** (programs' beep on/off), **Text** (kerning), **About** (version, CPU, memory, screen), **Power** (restart / shut down,
+  armed by a first click). The window is 420 x 200 by default; when it is too small the sidebar and the content get scroll bars.
+  Nothing is saved across a reboot yet.
+* **Kerning** (`kernel/font.h`): UI text (`ko_draw_mixed_string` / `ko_string_width`: menus, buttons, labels, status line) is set with the
+  letters' real ink widths and with pairs such as AV, To, LT, PA tucked together. No table: the advance is each glyph's ink width + 1
+  empty column, and a pair slides together until the tightest pixel row (looking one row up and down too) keeps one empty column (two next
+  to a `.` `,` `:` `i` `l`, which get a column of space on both sides), by at most 2 px. Hangul, the shell, Notepad and every fixed grid
+  keep the fixed cell. On by default; Settings > Text turns it off.
+* **Fix: `off` did not power the machine off** (a 1.1-alpha-11 regression, found by `tools/test/qemu_power.py`): `acpi_poweroff()` read the
+  BIOS data area at 0x40E straight, and since alpha-11 page 0 is not present, so the read faulted. The page is now opened for that one read.
+* Internals: `desktop_bg` / `desktop_fg`, `double_click_window`, `mouse_speed`, `clock_24h`, `sound_enabled` and `font_kerning` are now
+  variables instead of constants.
+
 ## MiniWin 1.1-alpha-11 (2026-10)
 
 * **Programs run in a window.** `run NAME.MWP` in MiniShell, a double-click on a program's desktop icon, and opening one in MiniFiles

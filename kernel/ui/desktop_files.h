@@ -54,8 +54,8 @@ static void draw_desktop_file_icons(void) {
         if (own) blit_rgba32(x + (ICON_SLOT_W - ICON_GLYPH_W) / 2, y, own);
         else blit_icon32(x + (ICON_SLOT_W - ICON_GLYPH_W) / 2, y, kind == DESK_KIND_DOC ? ICONC_DOC : ICONC_PROG);
         int n1 = 0, n2 = 0; while (stem[n1]) n1++; while (ext[n2]) n2++;
-        font_draw_string(x + (ICON_SLOT_W - FONT_CELL * n1) / 2, y + ICON_GLYPH_H + 4, stem, TH_DESKTOP_TEXT);
-        if (n2) font_draw_string(x + (ICON_SLOT_W - FONT_CELL * n2) / 2, y + ICON_GLYPH_H + 4 + FONT_CELL + 1, ext, TH_DESKTOP_TEXT);
+        font_draw_string(x + (ICON_SLOT_W - FONT_CELL * n1) / 2, y + ICON_GLYPH_H + 4, stem, desktop_fg);
+        if (n2) font_draw_string(x + (ICON_SLOT_W - FONT_CELL * n2) / 2, y + ICON_GLYPH_H + 4 + FONT_CELL + 1, ext, desktop_fg);
     }
 }
 

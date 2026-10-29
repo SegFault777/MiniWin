@@ -17,7 +17,7 @@ headers with `gcc` and need no emulator; the **QEMU** suites boot the real image
 | mwp | `tools/test/run_host_mwp.sh` | the `.mwp` trailer parser (`mwp_trailer.h`) on files made by `tools/mwp_pack.py` and on 20,000 damaged copies, each in an exact-size heap block so one byte of overread is an ASan error; and the SDK's `mw_libc.h` (strings, `mw_snprintf`, `mw_isqrt`, `mw_muldiv` against 64-bit arithmetic, sine, sort). ASan + UBSan |
 | mm | `tools/test/run_host_mm.sh` | the memory manager (`mm.h`) on an 8 MB array: page runs and exhaustion, refused bad frees, heap alignment, split/merge, chunk growth and release, `krealloc`, double free, a smashed header found by `mm_check`, and a 60,000-step random run where every live block carries a pattern checked when it is freed. ASan + UBSan |
 
-Counts at 1.1-alpha-10: web 134, engine fuzz 300 iterations, crypto 952, critical 204 (the rest of the old 416 tested the retired slot journals; their job is `mwfs` now), x509 22, storage 166, mwfs 6224, mm 29647, font + cursor 15 (`run_host_font.sh`).
+Counts at 1.1-alpha-12 (the others unchanged since alpha-10): kerning 76115 (`host_kern_test.c`, run by `run_host_font.sh`: for every pair of ASCII letters the advance fits the cell, a pair never moves more than 2 px or apart, and no two letters touch). Counts at 1.1-alpha-10: web 134, engine fuzz 300 iterations, crypto 952, critical 204 (the rest of the old 416 tested the retired slot journals; their job is `mwfs` now), x509 22, storage 166, mwfs 6224, mm 29647, font + cursor 15 (`run_host_font.sh`).
 Other checks:
 
 | script | what it checks | time |
@@ -36,7 +36,8 @@ A suite prints
 | suite | command | what it covers |
 |---|---|---|
 | UI goldens | `tools/test/ui_golden.sh check classic` / `check dark` | 15 screenshots of a scripted tour, compared pixel for pixel; `record` rewrites them (only for an *intended* visual change) |
-| MiniFiles goldens | `tools/test/ui_golden_files.sh check` | 6 screenshots of the file manager (list, selection, delete armed, disks tab, no selection, install refused) |
+| MiniFiles goldens | `tools/test/ui_golden_files.sh check` | 8 screenshots of the file manager (list, selection, delete armed, new folder, rename, View menu, the disks in `/mnt`); its clicks are coordinates, and kerning narrows the menu titles and text buttons, so re-aim them when a label changes |
+| Settings goldens | `tools/test/ui_golden_setting.sh check` | 6 screenshots of SETTING.MWP (language, display with a 24-hour clock and a Teal desktop, mouse, text, kerning off, a shrunk window with all three scroll bars). The tour must not change the pointer speed: the harness moves the mouse in relative steps |
 | plain HTTP | `NIC=rtl8139\|e1000 tools/test/qemu_plain_http.sh 30 small.html` | DHCP, ARP, TCP and the HTTP client against `tools/test/webserver.py` |
 | TLS | `mkdir -p /tmp/pki; tools/test/tls_e2e.sh rsa rsa 45 -tls1_2 -cipher ECDHE-RSA-AES128-GCM-SHA256 -curves X25519` | the whole stack to an `openssl s_server` (success = `RESULT https-ok`); `LEAF_KU=` / `LEAF_EXTRA=` make negative certificates |
 | os-inst | `tools/test/qemu_osinst.sh` | installs onto a second disk (whole disk, then a partition behind a blank MBR), boots the result alone on the primary and the secondary channel, and checks the disk bytes: the copied sectors, the freshly formatted root filesystem filling the target, nothing else touched (about 4 minutes) |

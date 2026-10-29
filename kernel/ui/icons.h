@@ -120,8 +120,8 @@ static void blit_icon32(int x, int y, int idx) {
  * (name, then extension) centered underneath. */
 static void draw_icon_with_label(int slot_x, int y, int idx, const char *line1, int n1, const char *line2, int n2) {
     blit_icon32(slot_x + (ICON_SLOT_W - ICON_GLYPH_W) / 2, y, idx);
-    font_draw_string(slot_x + (ICON_SLOT_W - FONT_CELL * n1) / 2, y + ICON_GLYPH_H + 4, line1, TH_DESKTOP_TEXT);
-    font_draw_string(slot_x + (ICON_SLOT_W - FONT_CELL * n2) / 2, y + ICON_GLYPH_H + 4 + FONT_CELL + 1, line2, TH_DESKTOP_TEXT);
+    font_draw_string(slot_x + (ICON_SLOT_W - FONT_CELL * n1) / 2, y + ICON_GLYPH_H + 4, line1, desktop_fg);
+    font_draw_string(slot_x + (ICON_SLOT_W - FONT_CELL * n2) / 2, y + ICON_GLYPH_H + 4 + FONT_CELL + 1, line2, desktop_fg);
 }
 
 static void draw_desktop_icon(void) {

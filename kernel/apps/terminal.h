@@ -48,24 +48,35 @@ static void system_shutdown(void);
  *           power menu already uses)
  *   off   - halt the machine (same `cli; hlt` SETTING.MWP already uses)
  * ============================================================ */
-#define TERM_COLS        40   /* matches TERM_DEFAULT_W's sizing (see
-                               * this file's window_t table above) */
-#define TERM_SCROLLBACK_ROWS 200  /* ring buffer -- old lines just get
+/* THE SHELL'S GRID (1.1-alpha-12). Until alpha-11 the shell was a fixed 40 x 14 grid painted at the top-left of whatever window it
+ * lived in: maximize it and a 40-column strip of text sat in a sea of black; shrink it and the same strip ran off the frame. Now
+ * the grid follows the window:
+ *   - TERM_COLS is the WIDEST line the scrollback can hold (128 columns; the largest screen MiniWin starts on is under 1300 px
+ *     wide, which is 116 cells), and a line is stored at the width it was printed at;
+ *   - how many rows and columns are SHOWN comes from the window's size (term_visible_rows / term_vis_cols), so a maximized shell
+ *     uses all of its space and its prose (`help`, `cat`, wrapped messages) re-flows to the current width (term_wrap_cols);
+ *   - when the window is narrower than the longest line, a HORIZONTAL scroll bar appears under the text (ui/scrollbar.h) and the
+ *     view slides across the columns, so nothing is ever drawn past the frame.
+ * The scrollback lives on the heap (mm.h) because 256 rows x 129 bytes is 33 KB and .bss has no such room to spare. */
+#define TERM_COLS        128
+#define TERM_COLS_MIN    40   /* the narrowest width prose is wrapped to (a smaller window scrolls sideways instead) */
+#define TERM_SCROLLBACK_ROWS 256  /* ring buffer -- old lines just get
                                    * overwritten once this fills, no
                                    * "scrollback full" error to handle */
-#define TERM_VISIBLE_ROWS 14  /* how many rows actually fit in the
-                               * window at TERM_DEFAULT_H -- see
-                               * draw_terminal_window()'s geometry */
-#define TERM_INPUT_MAXLEN 64
+#define TERM_INPUT_MAXLEN 120
+
+static int term_visible_rows(void);                  /* geometry: defined with the window's other geometry below */
+static int term_vis_cols(void);
+static int term_wrap_cols(void);
+static void term_print_wrapped(const char *text, int indent);   /* defined further down; wraps to the window's current width */
 
 /* One line of scrollback, fixed-width and NUL-terminated -- plain
  * ASCII only (same as the URL bar; see MINIWEB.MWP's own reasoning for why
  * user-typed command-line text doesn't route through the Hangul IME).
  * A ring buffer (term_scroll_head wraps around TERM_SCROLLBACK_ROWS)
- * rather than a growable log, because this kernel has no heap to grow
- * one in -- every buffer here is a fixed static array, same as
- * everywhere else in this codebase. */
-static char term_scrollback[TERM_SCROLLBACK_ROWS][TERM_COLS + 1];
+ * rather than a growable log -- the ring itself is one kmalloc'd block, allocated by the first line that is printed. */
+static char (*term_sb)[TERM_COLS + 1] = 0;
+#define term_scrollback term_sb
 static int  term_scroll_count = 0;  /* how many rows have EVER been written
                                      * (caps at TERM_SCROLLBACK_ROWS; used
                                      * to know how far back there's real
@@ -73,6 +84,14 @@ static int  term_scroll_count = 0;  /* how many rows have EVER been written
 static int  term_scroll_head = 0;   /* ring-buffer write cursor */
 static int  term_scroll_off = 0;    /* how many rows the view is scrolled back from the newest line (Up/Down keys); any
                                      * new output snaps it back to 0 so fresh output is never hidden */
+static int  term_hscroll = 0;       /* how many columns the view is scrolled to the right (0 = the left edge) */
+
+static int term_sb_ensure(void) {
+    if (!term_sb) {
+        term_sb = (char (*)[TERM_COLS + 1])kzalloc((u32)TERM_SCROLLBACK_ROWS * (TERM_COLS + 1));
+    }
+    return term_sb != 0;
+}
 
 static char term_input_buf[TERM_INPUT_MAXLEN + 1];
 static u32  term_input_len = 0;
@@ -83,18 +102,28 @@ static int  term_input_focused = 0;
  * simpler than word-wrap, and every message this file actually prints
  * was written short enough not to need it. */
 static void term_print(const char *s) {
+    if (!term_sb_ensure()) return;
     char *row = term_scrollback[term_scroll_head];
     u32 i = 0;
     while (s[i] && i < TERM_COLS) { row[i] = s[i]; i++; }
     row[i] = 0;
     term_scroll_head = (term_scroll_head + 1) % TERM_SCROLLBACK_ROWS;
     if (term_scroll_count < TERM_SCROLLBACK_ROWS) term_scroll_count++;
-    term_scroll_off = 0;
+    term_scroll_off = 0; term_hscroll = 0;
+}
+
+/* The longest line the scrollback holds (what the horizontal bar scrolls across). Scans only the rows that exist; lines are
+ * short, so this is a few thousand byte reads -- nothing next to drawing one frame. */
+static int term_max_len(void) {
+    if (!term_sb) return 0;
+    int best = 0;
+    for (int r = 0; r < term_scroll_count; r++) { int n = 0; const char *p = term_sb[r]; while (p[n]) n++; if (n > best) best = n; }
+    return best;
 }
 
 /* Up/Down: move the view by `d` rows (positive = back in time), clamped to what exists. */
 static void term_scroll_by(int d) {
-    int max_off = term_scroll_count - TERM_VISIBLE_ROWS;
+    int max_off = term_scroll_count - term_visible_rows();
     if (max_off < 0) max_off = 0;
     term_scroll_off += d;
     if (term_scroll_off < 0) term_scroll_off = 0;
@@ -168,7 +197,7 @@ static void term_cmd_help(void) {
     term_print("rd <n>     - read document n (see peek)");
     term_print("del <n>    - delete document n");
     term_print("apps       - list installed programs");
-    term_print("run <nm> [args] - run a program in a window (-f: full screen)");
+    term_print_wrapped("run <nm> [args] - run a program in a window (-f: full screen)", 0);
     term_print("tick       - show the time and date");
     term_print("fetch      - show system information");
     term_print("mem [test] - memory: RAM, pages, heap");
@@ -226,7 +255,7 @@ static void term_cmd_read(const char *arg) {
     if (!fs_read_slot(slot, (char *)buf, sizeof(buf), &got)) { term_print("  read error: the file is damaged"); return; }
     char line[TERM_COLS + 1]; u32 l = 0;
     for (u32 i = 0; i < got; i++) {
-        if (buf[i] == '\n' || l >= TERM_COLS) {
+        if (buf[i] == '\n' || l >= (u32)term_wrap_cols()) {
             line[l] = 0;
             term_print(line);
             l = 0;
@@ -525,14 +554,14 @@ static st_target_t term_inst_target;
 static int term_inst_progress_head = -1;   /* scrollback row holding the live "NN%" line, if it is still the last row */
 static u32 term_inst_last_pct = 0xFFFFFFFFu;
 
-/* word-wraps `text` into rows of at most TERM_COLS, each indented by `indent` spaces */
+/* word-wraps `text` into rows of at most term_wrap_cols() (the window's current width, never under 40), each indented by `indent` spaces */
 static void term_print_wrapped(const char *text, int indent) {
     char row[TERM_COLS + 1];
     u32 i = 0;
     while (text[i]) {
         u32 l = 0;
         for (int k = 0; k < indent; k++) row[l++] = ' ';
-        u32 limit = TERM_COLS - (u32)indent, take = 0, last_space = 0;
+        u32 limit = (u32)term_wrap_cols() - (u32)indent, take = 0, last_space = 0;
         while (text[i + take] && take < limit) { if (text[i + take] == ' ') last_space = take; take++; }
         if (text[i + take] && last_space > 0) take = last_space;       /* break at the last space that fits */
         for (u32 k = 0; k < take; k++) row[l++] = text[i + k];
@@ -650,7 +679,7 @@ static void term_cmd_osinst(const char *arg, const char *arch) {
     if (term_streq(arg, "list")) { term_inst_list(); return; }
     if (arch[0]) {
         int a = inst_arch_check(arch);
-        if (a < 0) { char l2[TERM_COLS + 1]; u32 k = 0; append_str(l2, &k, sizeof(l2), "  unknown architecture: "); append_str(l2, &k, sizeof(l2), arch); term_print(l2); term_print("  arch: i386  (x86_64: not available yet)"); return; }
+        if (a < 0) { char l2[TERM_COLS + 1]; u32 k = 0; append_str(l2, &k, sizeof(l2), "  unknown architecture: "); append_str(l2, &k, sizeof(l2), arch); term_print(l2); term_print_wrapped("arch: i386  (x86_64: not available yet)", 2); return; }
         if (a == 0) { char l2[TERM_COLS + 1]; u32 k = 0; append_str(l2, &k, sizeof(l2), "  cannot install for "); append_str(l2, &k, sizeof(l2), arch); term_print(l2); term_print_wrapped("MiniWin is a 32-bit (i386) system; there is no 64-bit kernel yet, so only i386 installs can be made.", 2); return; }
     }
     st_target_t t;
@@ -861,8 +890,17 @@ static int term_input_hit(int px, int py) {
     return in_rect(px, py, term_input_x(), term_input_y(), term_input_w(), TERM_INPUT_H);
 }
 
+/* The text area is the black rectangle between the menu bar and the input row. Its left edge is x+4, and the vertical scroll bar takes
+ * the last SB_W columns of pixels, so the text itself has (width - 8 - SB_W) pixels: term_vis_cols() cells of FONT_CELL each. */
 static inline int term_output_y(void) { return term_win.y + TITLEBAR_H + MB_H + 4; }
-static inline int term_output_h(void) { return term_input_y() - term_output_y() - 3; }
+static int term_vis_cols(void) { int c = (term_win.w - 8 - SB_W) / FONT_CELL; return c < 1 ? 1 : c; }
+static int term_wrap_cols(void) { int c = term_vis_cols(); return c < TERM_COLS_MIN ? TERM_COLS_MIN : (c > TERM_COLS ? TERM_COLS : c); }
+/* Is the horizontal bar needed? Yes when the longest stored line is wider than the window shows. It takes SB_W pixels off the
+ * bottom of the black area (the text then has one row less -- the rows are derived from the height AFTER this). */
+static inline int term_hbar_shown(void) { return term_max_len() > term_vis_cols(); }
+static inline int term_output_h(void) { return term_input_y() - term_output_y() - 3 - (term_hbar_shown() ? SB_W : 0); }
+static inline int term_hbar_y(void) { return term_output_y() + term_output_h(); }
+static int term_visible_rows(void) { int n = (term_output_h() - 2) / (FONT_CELL + 1); return n < 1 ? 1 : n; }
 
 
 /* ---------------------------------------------------------------- MiniShell's menu bar: the screen, the view, the tools, help */
@@ -886,8 +924,8 @@ static void term_menu_action(int menu, int item) {
         else if (item == 1) term_cmd_help();
         else { term_win.open = 0; win_z_remove(WIN_ID_TERMINAL); }
     } else if (menu == 1) {
-        if (item == 0) term_scroll_by(TERM_VISIBLE_ROWS - 2);
-        else if (item == 1) term_scroll_by(-(TERM_VISIBLE_ROWS - 2));
+        if (item == 0) term_scroll_by(term_visible_rows() - 2);
+        else if (item == 1) term_scroll_by(-(term_visible_rows() - 2));
         else term_scroll_off = 0;
     } else if (menu == 2) {
         static const char *const cmds[4] = { "part list", "ls", "lsusb", "tick" };
@@ -914,22 +952,37 @@ static void draw_terminal_window(void) {
 
     /* Scrollback: black background (classic terminal look, and a clean
      * visual break from every other window's light-gray body), showing
-     * the most recent TERM_VISIBLE_ROWS lines. */
+     * as many of the most recent lines as the window is tall and as many
+     * columns of them as it is wide (scrolled sideways by term_hscroll). */
+    term_sb_ensure();
     int oy = term_output_y();
     int oh = term_output_h();
+    int rows = term_visible_rows(), cols = term_vis_cols();
+    { int mx = term_max_len() - cols; if (mx < 0) mx = 0; if (term_hscroll > mx) term_hscroll = mx; }     /* the window grew: no empty space past the text */
+    { int mo = term_scroll_count - rows; if (mo < 0) mo = 0; if (term_scroll_off > mo) term_scroll_off = mo; }
     bb_fillrect(wx + 2, oy, ww - 4, oh, TH_CONSOLE);
 
     sb_draw(WIN_ID_TERMINAL);
-    int visible = term_scroll_count < TERM_VISIBLE_ROWS ? term_scroll_count : TERM_VISIBLE_ROWS;
+    if (term_hbar_shown()) {
+        bb_fillrect(wx + ww - 3 - SB_W, term_hbar_y(), SB_W, SB_W, TH_FACE);      /* the corner where the two bars meet */
+        sb_draw_h(WIN_ID_TERMINAL);
+    }
+    int visible = term_scroll_count < rows ? term_scroll_count : rows;
     int start = (term_scroll_head - term_scroll_off - visible + 2 * TERM_SCROLLBACK_ROWS) % TERM_SCROLLBACK_ROWS;
-    for (int i = 0; i < visible; i++) {
-        int row = (start + i) % TERM_SCROLLBACK_ROWS;
-        font_draw_string(wx + 4, oy + 2 + i * (FONT_CELL + 1), term_scrollback[row], TH_CONSOLE_TEXT);
+    for (int i = 0; i < visible && term_sb; i++) {
+        const char *row = term_scrollback[(start + i) % TERM_SCROLLBACK_ROWS];
+        int len = 0; while (row[len]) len++;
+        if (len <= term_hscroll) continue;                       /* this line ends before the visible columns begin */
+        char shown[TERM_COLS + 1]; int k = 0;
+        for (int c = term_hscroll; c < len && k < cols; c++) shown[k++] = row[c];
+        shown[k] = 0;
+        font_draw_string(wx + 4, oy + 2 + i * (FONT_CELL + 1), shown, TH_CONSOLE_TEXT);
     }
 
     /* Input row: sunken field, "> " prompt drawn as part of the same
-     * string so it scrolls off the left edge along with long input
-     * rather than staying pinned while text runs under it. */
+     * string. When prompt + input is wider than the field, the line is
+     * drawn from its END (the caret stays visible, the beginning slides
+     * off the left edge) instead of running past the window frame. */
     int ix = term_input_x(), iy = term_input_y(), iw = term_input_w();
     ui_field(ix, iy, iw, TERM_INPUT_H, TH_CONSOLE, term_input_focused);
 
@@ -939,9 +992,11 @@ static void draw_terminal_window(void) {
     char prompt_line[TERM_INPUT_MAXLEN + 44]; u32 pl = 0;
     append_str(prompt_line, &pl, sizeof(prompt_line), prompt);
     append_str(prompt_line, &pl, sizeof(prompt_line), term_input_buf);
-    font_draw_string(ix + 3, iy + 3, prompt_line, TH_CONSOLE_TEXT);
+    int fit = (iw - 8) / FONT_CELL; if (fit < 1) fit = 1;        /* characters that fit the field (3px margin + the 2px caret) */
+    int skip = (int)pl > fit ? (int)pl - fit : 0;
+    font_draw_string(ix + 3, iy + 3, prompt_line + skip, TH_CONSOLE_TEXT);
     if (term_input_focused) {
-        bb_fillrect(ix + 3 + (plen + (int)term_input_len) * FONT_CELL, iy + 3, 2, FONT_CELL, TH_CONSOLE_TEXT);
+        bb_fillrect(ix + 3 + (plen + (int)term_input_len - skip) * FONT_CELL, iy + 3, 2, FONT_CELL, TH_CONSOLE_TEXT);
     }
     mb_draw_drop(WIN_ID_TERMINAL, wx, wy, term_menus, TERM_MENU_N);
 }

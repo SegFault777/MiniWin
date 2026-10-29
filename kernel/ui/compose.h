@@ -10,7 +10,7 @@
  * Frame composition
  * ============================================================ */
 static void draw_status_line(const char *msg) {
-    ko_draw_mixed_string(5, VGA_HEIGHT - TASKBAR_H - FONT_CELL - 2, msg, TH_DESKTOP_TEXT);
+    ko_draw_mixed_string(5, VGA_HEIGHT - TASKBAR_H - FONT_CELL - 2, msg, desktop_fg);
 }
 
 static void render_frame(int mouse_x, int mouse_y, const char *status_msg) {

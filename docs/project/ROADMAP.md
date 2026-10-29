@@ -39,6 +39,19 @@ bytes, `kernel/lz.h`) and is inflated to `0x7D0000` at boot: the image is about 
 headroom, so the budget is no longer the constraint it was. Still available if it ever is: more tables inflated the
 same way (`tools/gen_hangul_font.py` has the compressor), moving `.bss` tables to high memory, loading the kernel above 1 MB.
 
+## The plan (set by the author, 2026-10)
+
+* **1.1-alpha-12** (done, see the [changelog](CHANGELOG.md)): MiniShell that follows its window, horizontal scroll bars, the disks in
+  `/mnt`, nine Settings pages, kerning.
+* **1.1-alpha-13**: **ring 3 and user space** together with the kernel work it needs: better memory management and paging, a kernel that
+  behaves like a real one -- **processes and a scheduler** -- and **page-table based memory protection** (one address space per program).
+* **1.1-alpha-14**: the web engine: **HTML5 and CSS3 implemented completely, JavaScript in part**.
+* **1.1-alpha-15**: **USB flash drives** (mass storage over the existing OHCI/EHCI/xHCI stack) and a set of the essential features
+  of a modern OS.
+* After alpha-15 comes **beta-1**; what follows it is not decided yet.
+
+The notes below are older and kept for their details.
+
 ## The next alphas
 
 **1.1-alpha-10** is done (see the [changelog](CHANGELOG.md)): the explorer-style MiniFiles, icons in the start menu, task bar, title

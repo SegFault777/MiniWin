@@ -16,6 +16,7 @@
 /* PIT channel 2, configured for square-wave output. The chip's input
  * clock is a fixed ~1.193182 MHz no matter what CPU you're on, so this
  * divisor math is the same on real 1981 hardware and inside QEMU. */
+static int sound_enabled = 1;      /* Settings > Sound > Beep: programs' mw beep() is silent when this is 0 */
 static inline void speaker_set_frequency(u32 hz) {
     if (hz == 0) hz = 1; /* dividing by zero would be a genuinely different kind of silence */
     u32 divisor = 1193182 / hz;

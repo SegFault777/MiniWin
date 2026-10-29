@@ -12,7 +12,7 @@ mode by hand, a from-scratch VGA/mouse/keyboard stack with its own disk
 drivers (IDE, SATA/AHCI, SCSI, NVMe), and a windowing system with no libc, no
 bootloader framework, and no borrowed kernel code.
 
-**Current version: 1.1-alpha-11** ([changelog](docs/project/CHANGELOG.md)). Developed and
+**Current version: 1.1-alpha-12** ([changelog](docs/project/CHANGELOG.md)). Developed and
 tested on QEMU; for VMware / VirtualBox see
 [docs/user/VIRTUAL-MACHINES.md](docs/user/VIRTUAL-MACHINES.md).
 
@@ -93,9 +93,8 @@ people who change it ([architecture](docs/dev/ARCHITECTURE.md), [source map](doc
 - **Apps**: NOTEPAD.MWP (supports opening several documents at once, each
   in its own window, saving to real persistent disk storage -- File > Save As
   asks for a name, Save keeps the document's own),
-  SETTING.MWP (System language switch between English/한국어 -- actually
-  retranslates the whole UI live -- and a multi-select IME picker that
-  controls what Right Alt cycles through while typing), and MINIWEB.MWP
+  SETTING.MWP (nine pages: language -- retranslates the whole UI live --, a multi-select IME picker that
+  controls what Right Alt cycles through while typing, time zone, display, mouse, sound, text/kerning, about and power), and MINIWEB.MWP
   ("MiniWeb" -- a small browser built on kernel/tcp.h, kernel/http.h,
   kernel/tls.h, kernel/https.h, and kernel/dns.h, with a real address
   bar: type a hostname (or a bare IP literal) and it resolves/connects

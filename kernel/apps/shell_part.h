@@ -203,7 +203,7 @@ static void part_cmd_check(const char *arg, const char *mode) {
     if (e != MWFS_OK) { term_fs_err("superblock", e); term_print("  (nothing to repair it from: reformat)"); return; }
     if (fix && t.pos == blk_boot_dev && st_overlap(t.base, t.sectors, blk_boot_base, ST_INSTALL_SECTORS) && vfs_is_root_ok() && vfs_vols[0].base == vb) {
         term_print("  the running root cannot be repaired");
-        term_print("  while it is in use: check it without fix");
+        term_print_wrapped("while it is in use: check it without fix", 2);
         fix = 0;
     }
     term_print(fix ? "  checking and repairing..." : "  checking...");
@@ -225,9 +225,9 @@ static void part_cmd_check(const char *arg, const char *mode) {
     if (r.skipped_leak_scan) term_print("  (lost-sector scan skipped: > 8 GB)");
     if (!bad && !junk) term_print("  clean");
     else if (fix) part_num_line("  repaired ", r.fixed, " problem(s)");
-    else if (junk && !bad) term_print("  only leftovers of a crash: part check <id> fix");
+    else if (junk && !bad) term_print_wrapped("only leftovers of a crash: part check <id> fix", 2);
     else term_print("  damage found: part check <id> fix");
-    if (r.damaged_files) term_print("  (damaged files cannot be repaired: rm them)");
+    if (r.damaged_files) term_print_wrapped("(damaged files cannot be repaired: rm them)", 2);
 }
 
 static void part_confirm(int op, const char *what, const st_target_t *t1, const st_target_t *t2) {
@@ -288,8 +288,8 @@ static void part_mbr_fill(u8 *e, u32 start, u32 sectors, u8 type, int active) {
 /* Only primary entries of an MBR disk can be edited. */
 static int part_editable(const st_target_t *t) {
     if (t->whole) { term_print("  pick a partition, not a whole disk"); return 0; }
-    if (t->part < 1 || t->part > 4) { term_print("  only primary partitions 01-04 can be edited"); return 0; }
-    if (st_scheme(t->pos) != ST_SCHEME_MBR) { term_print("  only MBR partition tables can be edited"); return 0; }
+    if (t->part < 1 || t->part > 4) { term_print_wrapped("only primary partitions 01-04 can be edited", 2); return 0; }
+    if (st_scheme(t->pos) != ST_SCHEME_MBR) { term_print_wrapped("only MBR partition tables can be edited", 2); return 0; }
     return 1;
 }
 
@@ -305,14 +305,14 @@ static void part_cmd_create(const char *arg, const char *mb) {
     if (pos < 0 || !st_devs[pos].present) { term_print_wrapped(st_error_text(ST_E_NO_DEVICE), 2); return; }
     u8 m[512];
     int have = part_mbr_load(pos, m);
-    if (have < 0) { term_print("  that disk has a GPT table: not edited here"); return; }
+    if (have < 0) { term_print_wrapped("that disk has a GPT table: not edited here", 2); return; }
     u8 *entry = MBR_ENTRY(m, (int)id.part - 1);
     if (have == 1 && st_le32(entry + 12) != 0 && entry[4] != 0) { term_print("  that partition number is taken"); return; }
     u32 total = st_devs[pos].sectors;
     u32 want = 0;
     if (mb[0]) {
         u32 v = 0;
-        for (int i = 0; mb[i]; i++) { if (mb[i] < '0' || mb[i] > '9' || v > 2000000u) { term_print("  size is in megabytes: part create <id> 512"); return; } v = v * 10 + (u32)(mb[i] - '0'); }
+        for (int i = 0; mb[i]; i++) { if (mb[i] < '0' || mb[i] > '9' || v > 2000000u) { term_print_wrapped("size is in megabytes: part create <id> 512", 2); return; } v = v * 10 + (u32)(mb[i] - '0'); }
         if (v == 0) { term_print("  size must be at least 1"); return; }
         want = v * 2048u;
     }
@@ -394,7 +394,7 @@ static void part_cmd_merge(const char *a, const char *b) {
     if (!a[0] || !b[0]) { term_print("  usage: part merge <id1> <id2>"); return; }
     if (!part_resolve_say(a, &t1, 0) || !part_resolve_say(b, &t2, 0)) return;
     if (!part_editable(&t1) || !part_editable(&t2)) return;
-    if (t1.pos != t2.pos || t1.part == t2.part) { term_print("  they must be two partitions of one disk"); return; }
+    if (t1.pos != t2.pos || t1.part == t2.part) { term_print_wrapped("they must be two partitions of one disk", 2); return; }
     if (vfs_find_mount(t1.id) || vfs_find_mount(t2.id)) { term_print("  one is mounted: part unmount first"); return; }
     u32 lo_end = t1.base < t2.base ? t1.base + t1.sectors : t2.base + t2.sectors;
     u32 hi_start = t1.base < t2.base ? t2.base : t1.base;
@@ -455,7 +455,7 @@ static void part_help(void) {
     term_print("  delete <id>     remove an MBR entry");
     term_print("  set <id> active|inactive|type <hex>");
     term_print("  merge <id1> <id2>  join two neighbours");
-    term_print("id like ide101, sata200 (00 = whole disk)");
+    term_print_wrapped("id like ide101, sata200 (00 = whole disk)", 0);
 }
 static void term_cmd_part(const char *c, const char *a, const char *b, const char *d) {
     if (!c[0] || term_streq(c, "?")) { part_help(); return; }

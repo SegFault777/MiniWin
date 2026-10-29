@@ -75,7 +75,12 @@ static int acpi_under_hypervisor(void) {
 
 /* Tries to power the machine off. Returns only if every method failed. */
 static void acpi_poweroff(void) {
+    /* The BIOS data area (0x40E holds the EBDA segment) is in page 0, which paging.h leaves NOT PRESENT so that a null pointer faults --
+     * reading it straight crashed the kernel with a page fault, so `off` never powered anything off (1.1-alpha-11 regression, caught by
+     * tools/test/qemu_power.py). Open the page for this one read, then close it again. */
+    paging_unguard((void *)0);
     u16 ebda_seg = *(volatile u16 *)0x40E;
+    paging_guard((void *)0);
     const u8 *rsdp = 0;
     if (ebda_seg >= 0x8000u && ebda_seg < 0xA000u) rsdp = acpi_scan((u32)ebda_seg << 4, ((u32)ebda_seg << 4) + 1024);
     if (!rsdp) rsdp = acpi_scan(0xE0000u, 0x100000u);

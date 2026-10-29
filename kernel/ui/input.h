@@ -21,8 +21,8 @@ static int awaiting_second_click_file_slot = -1;   /* which file icon (if any) s
 static u32 last_file_icon_click_tick = 0;
 static u32 tick = 0;
 static int np_mb_m, np_mb_i;                 /* the Notepad menu item just chosen (ui/menubar.h's mb_click fills them) */
-static const u32 double_click_window = 60000; /* tuned for delay(2000) per frame;
-                                             * adjust proportionally if delay() changes */
+static int setting_click_result = 0;         /* what setting_click() said about the last click (apps/setting.h) */
+/* double_click_window (apps/setting.h) is the double-click time in ticks; Settings > Mouse picks it. */
 
 /* Window-drag state: while dragging, we track which window id is
  * being dragged (-1 = none) and the offset from that window's
@@ -52,7 +52,7 @@ static void handle_mouse(void) {
         int clicked = mouse_click_event; /* per-packet edge detection from the driver */
 
         /* ---- a scroll bar thumb being dragged (ui/scrollbar.h) ---- */
-        if (sb_dragging()) { if (left_now) sb_drag(my); else sb_release(); }
+        if (sb_dragging()) { if (left_now) sb_drag(mx, my); else sb_release(); }
 
         /* ---- the mouse wheel scrolls the window under the pointer ---- */
         if (mouse_wheel) {
@@ -265,7 +265,7 @@ static void handle_mouse(void) {
                     resize_start_y = rw->y;
                     resize_start_w = rw->w;
                     resize_start_h = rw->h;
-                } else if (hit_id >= 0 && (sb_press(hit_id, mx, my) || (hit_id == WIN_ID_FILES && sb_press(SB_OWNER_FILES_TREE, mx, my)))) {
+                } else if (hit_id >= 0 && (sb_press(hit_id, mx, my) || sb_press(SB_H_BASE + hit_id, mx, my) || (hit_id == WIN_ID_FILES && sb_press(SB_OWNER_FILES_TREE, mx, my)) || (hit_id == WIN_ID_SETTING && sb_press(SB_OWNER_SETTING_NAV, mx, my)))) {
                     win_z_raise(hit_id);                       /* a press on a scroll bar: arrow, page jump or the start of a thumb drag */
                 } else if (hit_id == WIN_ID_SETTING) {
                     /* Clicking anywhere on a window -- not just a
@@ -281,39 +281,9 @@ static void handle_mouse(void) {
                     } else if (setting_close_hit(mx, my)) {
                         pressed_btn_kind = BTN_CLOSE;
                         pressed_btn_win = WIN_ID_SETTING;
-                    } else if (setting_nav_hit(mx, my, SETTING_NAV_LANGUAGE)) {
-                        setting_page = SETTING_NAV_LANGUAGE;
-                    } else if (setting_nav_hit(mx, my, SETTING_NAV_IME)) {
-                        setting_page = SETTING_NAV_IME;
-                    } else if (setting_nav_hit(mx, my, SETTING_NAV_TIMEZONE)) {
-                        setting_page = SETTING_NAV_TIMEZONE;
-                    } else if (setting_page == SETTING_NAV_LANGUAGE && setting_row_hit(mx, my, 0)) {
-                        sys_language = LANG_ENGLISH;
-                        status = t(STR_DEFAULT_HINT);
-                    } else if (setting_page == SETTING_NAV_LANGUAGE && setting_row_hit(mx, my, 1)) {
-                        sys_language = LANG_KOREAN;
-                        status = t(STR_DEFAULT_HINT);
-                    } else if (setting_page == SETTING_NAV_IME && setting_row_hit(mx, my, 0)) {
-                        /* multi-select checkbox -- refuse to uncheck the
-                         * last remaining enabled IME, same as real OSes
-                         * never let you remove your only keyboard layout */
-                        if (ime_enabled[IME_ENGLISH] && !ime_enabled[IME_KOREAN]) {
-                            status = t(STR_IME_MIN_ONE);
-                        } else {
-                            ime_enabled[IME_ENGLISH] = !ime_enabled[IME_ENGLISH];
-                            ime_ensure_current_enabled();
-                        }
-                    } else if (setting_page == SETTING_NAV_IME && setting_row_hit(mx, my, 1)) {
-                        if (ime_enabled[IME_KOREAN] && !ime_enabled[IME_ENGLISH]) {
-                            status = t(STR_IME_MIN_ONE);
-                        } else {
-                            ime_enabled[IME_KOREAN] = !ime_enabled[IME_KOREAN];
-                            ime_ensure_current_enabled();
-                        }
-                    } else if (setting_page == SETTING_NAV_TIMEZONE && tz_minus_hit(mx, my)) {
-                        if (tz_offset_hours > -12) tz_offset_hours--;
-                    } else if (setting_page == SETTING_NAV_TIMEZONE && tz_plus_hit(mx, my)) {
-                        if (tz_offset_hours < 14) tz_offset_hours++;
+                    } else if ((setting_click_result = setting_click(mx, my)) != 0) {
+                        if (setting_click_result == 2) status = t(STR_IME_MIN_ONE);
+                        else if (setting_click_result == 3) status = t(STR_DEFAULT_HINT);
                     } else if (setting_titlebar_drag_hit(mx, my) && !setting.maximized) {
                         dragging_id = WIN_ID_SETTING;
                         drag_offset_x = mx - setting.x;

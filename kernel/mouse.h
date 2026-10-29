@@ -50,6 +50,19 @@ static inline void mouse_write(u8 val) {
 }
 
 static int mouse_dx = 0, mouse_dy = 0;   /* how far the mouse moved since we last asked */
+
+/* POINTER SPEED (Settings > Mouse): 0 = slow (x1/2), 1 = normal, 2 = fast (x2), 3 = faster (x3). Relative motion is scaled by
+ * num/den with the remainder carried to the next report, so "slow" still moves on a 1-count nudge every second time instead of
+ * never. (Tablets report absolute positions and are not scaled.) */
+static int mouse_speed = 1;
+static int mouse_rem_x = 0, mouse_rem_y = 0;
+static inline int mouse_scale(int d, int *rem) {
+    static const signed char num[4] = { 1, 1, 2, 3 }, den[4] = { 2, 1, 1, 1 };
+    int n = num[mouse_speed & 3], m = den[mouse_speed & 3];
+    int a = *rem + d * n, out = a / m;
+    *rem = a - out * m;
+    return out;
+}
 static int mouse_left = 0, mouse_right = 0;
 static int mouse_left_prev = 0;           /* left-button state last time we looked */
 static int mouse_click_event = 0;         /* 1 if the left button went down THIS poll -- a real click, not just "still held" */
@@ -216,8 +229,8 @@ static inline int mouse_poll(void) {
         mouse_right = mouse_usb_right;
         got_any = 1;
     }
-    mouse_dx = acc_dx;
-    mouse_dy = acc_dy;
+    mouse_dx = mouse_scale(acc_dx, &mouse_rem_x);
+    mouse_dy = mouse_scale(acc_dy, &mouse_rem_y);
     mouse_click_event = click_event;
     mouse_release_event = release_event;
     return got_any;

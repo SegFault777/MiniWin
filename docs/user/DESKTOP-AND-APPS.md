@@ -55,8 +55,12 @@ A plain-text editor; you can have several windows open at once.
 
 ## Setting
 
-System settings in three pages: **Language** (menus and messages in English or Korean), **IME** (which input methods Right Alt
-cycles through) and **Time Zone** (for the clock and the `tick` command).
+System settings in nine pages. Click a line to change it; the change takes effect at once (nothing is kept across a reboot yet).
+**Language** (menus and messages in English or Korean), **IME** (which input methods Right Alt cycles through), **Time Zone** (for the
+clock and the `tick` command), **Display** (12- or 24-hour clock; the desktop colour), **Mouse** (pointer speed; double-click time),
+**Sound** (whether programs' beeps are heard), **Text** (kerning: tighter letter pairs such as AV and To in menus and labels; the
+shell and Notepad stay fixed-width), **About** (version, CPU, memory, screen) and **Power** (restart / shut down; click twice).
+When the window is too small, the sidebar and the page get scroll bars.
 
 ## Scroll bars and menus
 
@@ -65,7 +69,7 @@ click the track above or below the thumb to move a page, **drag the thumb**, or 
 
 MiniShell, MiniWeb and MiniFiles have a **menu bar** under the title bar, with menus that fit each app (not copies of Notepad's):
 MiniShell: *Shell, View, Tools, Help*; MiniWeb: *Page* (reload, address bar, top of page, close), *Sites*, *Help*; MiniFiles:
-*File* (open/run/install, delete, refresh, close), *View* (files, disks), *Help*. Click a title to open its drop-down, click an item
+*File* (open/run/install, delete, refresh, close), *View* (folders, disks: the disks are the contents of `/mnt`, where **Mount** / **Unmount** / **Install** work on the selected disk or partition), *Help*. Click a title to open its drop-down, click an item
 to choose it; clicking anywhere else closes it.
 
 ## MiniWeb

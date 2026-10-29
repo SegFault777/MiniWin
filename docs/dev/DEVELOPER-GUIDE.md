@@ -10,8 +10,9 @@
 * Budgets that bite (all checked by `build.sh`): the **kernel image** has 512 KB (1024 sectors, 524,288 bytes) and
   image + `.bss` + stack must end below `0x9FC00`. At 1.1-alpha-2 about **187 KB of image and 186 KB of `.bss`** remain (the Korean font is stored compressed); see
   [ROADMAP.md](../project/ROADMAP.md) for the history of that budget. Check `build.sh`'s last lines before and after a feature.
-* MiniShell is **40 columns wide** and shows 14 rows (Up/Down scroll the history); every `term_print()` string must fit
-  40 columns (it truncates silently).
+* MiniShell's grid follows its window (rows and columns shown come from the window's size; lines up to `TERM_COLS` = 128 are
+  stored and a horizontal bar scrolls the rest). Prose longer than a line should go through `term_print_wrapped()`, which wraps to the
+  current width (at least `TERM_COLS_MIN` = 40 columns); `term_print()` truncates at 128. Up/Down scroll the history.
 * Warnings are tracked: the build currently has 8 (2 come from the linker, the rest are old). A change should not add one.
 
 ## Adding a window application (the checklist)
