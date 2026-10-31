@@ -13,7 +13,7 @@ export THEME=$TH; OUT=/tmp/ui_shots
 rm -rf $OUT; mkdir -p $OUT /tmp/www; cp tools/test/pages/ui_page.html /tmp/www/
 LINES_OUT=1 tools/test/qemu_shot.sh ui_page.html \
   "wait 22" "shot $OUT/s00_desktop.ppm" \
-  "move 50 202" "click" "click" "wait 2" "move 300 307" "click" "type apps" "key ret" "wait 1" "shot $OUT/s01_terminal.ppm" \
+  "move 50 202" "click" "click" "wait 2" "move 300 307" "click" "shot $OUT/s01a_first_start.ppm" "type mw-test-pw" "key ret" "type mw-test-pw" "key ret" "wait 1" "type apps" "key ret" "wait 1" "shot $OUT/s01_terminal.ppm" \
   "move 50 143" "click" "click" "wait 3" "shot $OUT/s02_web.ppm" \
   "move 50 84" "click" "click" "wait 2" "shot $OUT/s03_setting.ppm" \
   "move 50 25" "click" "click" "wait 2" "type Hello MiniWin" "wait 1" "shot $OUT/s04_notepad.ppm" \

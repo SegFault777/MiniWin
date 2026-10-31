@@ -17,6 +17,8 @@ static int awaiting_second_click_term = 0;  /* ...and for the MINISHELL.MWP icon
 static u32 last_term_click_tick = 0;
 static int awaiting_second_click_files = 0; /* ...and for the MINIFILES.MWP icon */
 static u32 last_files_click_tick = 0;
+static int awaiting_second_click_install = 0; /* ...and for the live disc's INSTALL.MWP icon */
+static u32 last_install_click_tick = 0;
 static int awaiting_second_click_file_slot = -1;   /* which file icon (if any) saw a first click */
 static u32 last_file_icon_click_tick = 0;
 static u32 tick = 0;
@@ -225,6 +227,7 @@ static void handle_mouse(void) {
                      * isn't a document either. */
                     term_win.open = 0;
                     term_win.minimized = 0;
+                    term_session_end();
                     win_z_remove(WIN_ID_TERMINAL);
                 } else if (taskbar_close_id == WIN_ID_FILES) {
                     files_win.open = 0;           /* a file list holds nothing to lose */
@@ -265,13 +268,14 @@ static void handle_mouse(void) {
                     resize_start_y = rw->y;
                     resize_start_w = rw->w;
                     resize_start_h = rw->h;
-                } else if (hit_id >= 0 && (sb_press(hit_id, mx, my) || sb_press(SB_H_BASE + hit_id, mx, my) || (hit_id == WIN_ID_FILES && sb_press(SB_OWNER_FILES_TREE, mx, my)) || (hit_id == WIN_ID_SETTING && sb_press(SB_OWNER_SETTING_NAV, mx, my)))) {
+                } else if (hit_id >= 0 && (sb_press(hit_id, mx, my) || sb_press(SB_H_BASE + hit_id, mx, my) || (hit_id == WIN_ID_FILES && sb_press(SB_OWNER_FILES_TREE, mx, my)) )) {
                     win_z_raise(hit_id);                       /* a press on a scroll bar: arrow, page jump or the start of a thumb drag */
                 } else if (hit_id == WIN_ID_SETTING) {
                     /* Clicking anywhere on a window -- not just a
                      * control that does something -- brings it to
                      * the front, same as any real window manager. */
                     win_z_raise(WIN_ID_SETTING);
+                    int mb_m, mb_i;
                     if (setting_min_hit(mx, my)) {
                         pressed_btn_kind = BTN_MIN;
                         pressed_btn_win = WIN_ID_SETTING;
@@ -281,7 +285,9 @@ static void handle_mouse(void) {
                     } else if (setting_close_hit(mx, my)) {
                         pressed_btn_kind = BTN_CLOSE;
                         pressed_btn_win = WIN_ID_SETTING;
-                    } else if ((setting_click_result = setting_click(mx, my)) != 0) {
+                    } else if (mb_click(WIN_ID_SETTING, setting.x, setting.y, setting.w, setting_menus, SETTING_MENU_N, mx, my, &mb_m, &mb_i)) {
+                        if (mb_i >= 0) setting_menu_action(mb_m, mb_i);
+                    } else if ((setting_click_result = setting_click(mx, my, tick)) != 0) {
                         if (setting_click_result == 2) status = t(STR_IME_MIN_ONE);
                         else if (setting_click_result == 3) status = t(STR_DEFAULT_HINT);
                     } else if (setting_titlebar_drag_hit(mx, my) && !setting.maximized) {
@@ -484,6 +490,16 @@ static void handle_mouse(void) {
                         awaiting_second_click_files = 1;
                         last_files_click_tick = tick;
                     }
+                } else if (live_boot && in_rect(mx, my, ICONI_X, ICONI_Y, ICON_SLOT_W, ICON_H)) {
+                    /* INSTALL.MWP, bottom right: only on a live disc (it is not even drawn anywhere else) */
+                    if (awaiting_second_click_install && (tick - last_install_click_tick) < double_click_window) {
+                        const char *why = installer_open();
+                        if (why) status = why;
+                        awaiting_second_click_install = 0;
+                    } else {
+                        awaiting_second_click_install = 1;
+                        last_install_click_tick = tick;
+                    }
                 } else {
                     /* Check the desktop shortcuts last: documents (open in Notepad) and programs (run). The double-click
                      * memory is one number per shortcut: a document's slot, or 100 + a program's slot. */
@@ -628,6 +644,7 @@ static void handle_mouse(void) {
                          * concept for a scrollback log, so this
                          * closes immediately. */
                         term_win.open = 0;
+                        term_session_end();
                         win_z_remove(WIN_ID_TERMINAL);
                     }
                 } else {
@@ -688,6 +705,12 @@ static void handle_keyboard(void) {
         else if (k == KEY_DOWN) { web_scroll_by(WEB_SCROLL_STEP);  k = KEY_NONE; }
         else if (!web_urlbar_focused && k == ' ')                { web_scroll_by(page);  k = KEY_NONE; }
         else if (!web_urlbar_focused && (k == 'b' || k == 'B'))  { web_scroll_by(-page); k = KEY_NONE; }
+    }
+
+    /* Settings (the Control Panel): arrows move between the icons, Enter opens one, Esc goes back from a page */
+    if (focused_id == WIN_ID_SETTING) {
+        setting_key(k);
+        k = KEY_NONE;
     }
 
     /* MiniFiles: arrows select, Left/Right switch tabs, Enter opens/runs/installs */

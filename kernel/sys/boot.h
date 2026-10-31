@@ -14,6 +14,18 @@ static inline u32 boot_info_u32(u32 addr) {
     return *p;
 }
 
+/* The three biggest tables were static arrays (58 KB of the 125 KB .bss, in the 640 KB of conventional memory the kernel shares with its
+ * stack). They live on the heap now, allocated before anything can use them. */
+static void boot_heap_init(void) {
+    notepads = (notepad_t *)kzalloc(sizeof(notepad_t) * NOTEPAD_MAX);
+    files_rows = (fx_row_t *)kzalloc(sizeof(fx_row_t) * FX_ROWS_MAX);
+    tls_conn_p = (tls_conn_t *)kzalloc(sizeof(tls_conn_t));
+    if (!notepads || !files_rows || !tls_conn_p) {
+        const char *const msg[] = { "MiniWin has stopped.", "", "ERROR MW-K02 NO_HEAP", "", "The kernel heap could not hold its start-up tables." };
+        fatal_screen(msg, 5);
+    }
+}
+
 static void kernel_boot(void) {
     /* Serial first, before anything else touches the framebuffer --
      * if the memory-safety check just below ever fails, this is the
@@ -70,6 +82,8 @@ static void kernel_boot(void) {
         fatal_screen(msg, 7);
     }
     mm_init_boot();
+    boot_heap_init();   /* the big tables that used to be static: Notepad windows, MiniFiles rows, the TLS connection (frees ~58 KB of .bss) */
+    if (!st_boot_found) live_try();   /* no disk on any bus carries our boot sector: are we a live disc? then run from a RAM copy of it (kernel/live.h) */
     paging_init();      /* identity map with a null page, a read-only kernel image and guard pages; 0 = left off (the kernel runs as before) */     /* everything above the last fixed region (0x900000 up) becomes pages + a heap; a failure only means kmalloc() returns 0 */
     if (!vga_color_layout_is_standard()) {
         /* Every real 32bpp direct-color VBE implementation this kernel

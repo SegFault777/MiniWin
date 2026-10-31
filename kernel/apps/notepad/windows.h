@@ -48,8 +48,8 @@ typedef struct {
     int  info_kind;                  /* CONFIRM_INFO: 1 = Keys, 2 = About */
 } notepad_t;
 
-static notepad_t notepads[NOTEPAD_MAX];
-static notepad_t *active_np = &notepads[0];
+static notepad_t *notepads;            /* NOTEPAD_MAX windows, from the heap (boot_heap_init in sys/boot.h): 33 KB that no longer sit in .bss */
+static notepad_t *active_np = 0;   /* set in kernel_boot once the heap holds the windows */
 
 /* ------------------------------------------------------------
  * Window IDs + z-order (stacking) + minimize-order (taskbar layout)

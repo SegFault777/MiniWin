@@ -181,8 +181,105 @@ static int term_cmd_is(const char *typed, const char *names) {
     return 0;
 }
 
+
+/* ============================================================ ACCOUNTS (1.1-alpha-13): root and user
+ * The shell now has two accounts. They do not differ in what they may do yet -- that comes with the kernel work that follows (ring 3,
+ * processes) -- but every session has one, the prompt shows it ("~#" is root, "~$" is a user) and the plumbing is in place:
+ *   - The FIRST time MiniShell is opened on an image that has no root password, it asks for one (twice, to be sure, with the keys
+ *     shown as *), stores it, and the session is root.
+ *   - Closing the window ends the session. The next time MiniShell is opened it starts as a USER, and the command `root` asks for the
+ *     password and makes it root; `user` goes back.
+ * The password is kept in /sys/ROOT.PWD as 16 bytes of salt and a SHA-256 hash of salt + password, stretched over 1000 rounds, both in
+ * hex (96 characters): the password itself is never written anywhere. Nothing here stops someone who can write the disk image from
+ * deleting that file -- no password scheme can, without encrypting the volume. ============================================================ */
+#define TERM_PW_FILE "/sys/ROOT.PWD"
+enum { TP_NONE, TP_NEW, TP_CONFIRM, TP_LOGIN };           /* what the input line is asking for */
+static int  term_pw_mode = TP_NONE;                       /* TP_NONE: an ordinary command line */
+static char term_pw_first[TERM_INPUT_MAXLEN + 1];         /* the first entry, while the confirmation is being typed */
+static int  term_is_root = 0;                             /* the session's account */
+static int  term_session_on = 0;                          /* 1 from the first frame after the window opens until it is closed */
+
+static void term_pw_hex(char *o, const u8 *b, int n) {
+    static const char h[] = "0123456789abcdef";
+    for (int i = 0; i < n; i++) { o[2 * i] = h[b[i] >> 4]; o[2 * i + 1] = h[b[i] & 15]; }
+}
+static int term_pw_unhex(const char *s, u8 *b, int n) {
+    for (int i = 0; i < n; i++) {
+        int v[2];
+        for (int k = 0; k < 2; k++) { char c = s[2 * i + k]; v[k] = c >= '0' && c <= '9' ? c - '0' : (c >= 'a' && c <= 'f' ? c - 'a' + 10 : -1); if (v[k] < 0) return 0; }
+        b[i] = (u8)(v[0] << 4 | v[1]);
+    }
+    return 1;
+}
+static void term_pw_hash(const u8 salt[16], const char *pw, u8 out[32]) {
+    u32 pl = 0; while (pw[pl]) pl++;
+    sha256_ctx_t c;
+    sha256_init(&c); sha256_update(&c, salt, 16); sha256_update(&c, (const u8 *)pw, pl); sha256_final(&c, out);
+    for (int r = 1; r < 1000; r++) {                      /* stretching: a guess costs 1000 hashes instead of one */
+        sha256_init(&c); sha256_update(&c, out, 32); sha256_update(&c, salt, 16); sha256_update(&c, (const u8 *)pw, pl); sha256_final(&c, out);
+    }
+}
+static int term_pw_load(u8 salt[16], u8 hash[32]) {       /* 1 when a well-formed password file exists */
+    u8 buf[128]; u32 len = 0;
+    if (vfs_read(TERM_PW_FILE, buf, sizeof buf, &len, 0) != MWFS_OK || len < 96) return 0;
+    return term_pw_unhex((const char *)buf, salt, 16) && term_pw_unhex((const char *)buf + 32, hash, 32);
+}
+static int term_pw_is_set(void) { u8 s[16], h[32]; return term_pw_load(s, h); }
+static int term_pw_check(const char *pw) {
+    u8 salt[16], want[32], got[32];
+    if (!term_pw_load(salt, want)) return 0;
+    term_pw_hash(salt, pw, got);
+    u8 diff = 0; for (int i = 0; i < 32; i++) diff |= (u8)(want[i] ^ got[i]);           /* no early exit */
+    return diff == 0;
+}
+static int term_pw_store(const char *pw) {
+    u8 salt[16], h[32]; char file[96];
+    tls_rng_mix_hw(); tls_rng_bytes(salt, 16);
+    term_pw_hash(salt, pw, h);
+    term_pw_hex(file, salt, 16); term_pw_hex(file + 32, h, 32);
+    return vfs_write(TERM_PW_FILE, (const u8 *)file, 96, 0) == MWFS_OK;
+}
+
+static void term_session_end(void) {                      /* the window was closed */
+    term_session_on = 0; term_is_root = 0; term_pw_mode = TP_NONE; term_pw_first[0] = 0;
+    term_input_buf[0] = 0; term_input_len = 0;
+}
+static void term_session_begin(void) {                    /* the first frame of a new session */
+    term_session_on = 1; term_is_root = 0; term_pw_mode = TP_NONE;
+    if (!term_pw_is_set()) {
+        term_print_wrapped("First start: there is no root password yet. Choose one for the root account; it is asked twice.", 0);
+        term_pw_mode = TP_NEW;
+    } else {
+        term_print_wrapped("user session: type root for the root account", 0);
+    }
+}
+/* Enter was pressed while the input line was asking for a password. The text is never echoed into the scrollback. */
+static void term_pw_submit(void) {
+    if (term_pw_mode == TP_NEW) {
+        if (term_input_len == 0) { term_print("  a password cannot be empty"); }
+        else { for (u32 i = 0; i <= term_input_len; i++) term_pw_first[i] = term_input_buf[i]; term_pw_mode = TP_CONFIRM; }
+    } else if (term_pw_mode == TP_CONFIRM) {
+        int same = 1; for (u32 i = 0; i <= term_input_len; i++) if (term_pw_first[i] != term_input_buf[i]) same = 0;
+        if (!same || term_pw_first[term_input_len] != 0) { term_print("  the two do not match -- start again"); term_pw_mode = TP_NEW; }
+        else {
+            if (term_pw_store(term_input_buf)) term_print("  root password set. You are root.");
+            else term_print_wrapped("The password could not be saved (is the disk full or read-only?). You are root for this session; the next one will ask again.", 2);
+            term_is_root = 1; term_pw_mode = TP_NONE;
+        }
+        for (u32 i = 0; i < sizeof term_pw_first; i++) term_pw_first[i] = 0;
+    } else {                                              /* TP_LOGIN */
+        if (term_pw_check(term_input_buf)) { term_is_root = 1; term_print("  you are root now"); }
+        else term_print("  wrong password");
+        term_pw_mode = TP_NONE;
+    }
+    for (u32 i = 0; i < sizeof term_input_buf; i++) term_input_buf[i] = 0;
+    term_input_len = 0;
+}
+
 static void term_cmd_help(void) {
     term_print("?          - show this list");
+    term_print("root       - become the root account");
+    term_print("user       - go back to the user account");
     term_print("ls [dir]   - list a directory  (dir)");
     term_print("cd <dir>   - change directory (cd = /)");
     term_print("pwd        - show the current directory");
@@ -505,8 +602,11 @@ static void term_cmd_fetch(void) {
     {
         int type = blk_type_of(blk_boot_dev);
         char id[16];
-        st_format_id((st_type_t)type, (u32)(blk_boot_dev - blk_first_of(type)) + 1, 0, id);
-        { int n = 0; while (id[n]) n++; id[n - 2] = 0; }
+        if (blk_boot_dev == BLK_RAM_DEV) { id[0] = 'r'; id[1] = 'a'; id[2] = 'm'; id[3] = 0; }          /* a live boot: the disc image in RAM */
+        else {
+            st_format_id((st_type_t)type, (u32)(blk_boot_dev - blk_first_of(type)) + 1, 0, id);
+            { int n = 0; while (id[n]) n++; id[n - 2] = 0; }
+        }
         l = 0;
         append_str(v, &l, sizeof(v), id); append_str(v, &l, sizeof(v), " ");
         term_fetch_mib(v, &l, sizeof(v), st_devs[blk_boot_dev].sectors / 2u); append_str(v, &l, sizeof(v), " MiB (boot)");
@@ -723,7 +823,7 @@ static void term_cmd_osinst(const char *arg, const char *arch) {
 
 /* Called every frame from the main loop: advances a running install and keeps the progress line current. */
 static void term_install_poll(void) {
-    if (!inst_active()) return;
+    if (!inst_active() || inst_gui_owns) return;          /* (the INSTALL window of the live disc steps its own job) */
     int phase = inst_step(24);
     if (phase == INST_PHASE_WRITE || phase == INST_PHASE_VERIFY) {
         u32 pct = inst_percent() / 5 * 5;                         /* update in 5% steps */
@@ -768,6 +868,7 @@ static void term_install_poll(void) {
  * with no record of what triggered it), then clears the input line. */
 static void term_run_input(void) {
     char echoed[TERM_COLS + 1]; u32 el = 0;
+    if (term_pw_mode != TP_NONE) { term_pw_submit(); return; }          /* a password is being typed: not a command, and never echoed */
     char prompt[40];
     term_prompt_str(prompt, sizeof prompt);
     append_str(echoed, &el, sizeof(echoed), prompt);
@@ -836,6 +937,12 @@ static void term_run_input(void) {
         term_cmd_dup(n > 1 ? tokens[1] : "", n > 2 ? tokens[2] : "");
     } else if (term_cmd_is(tokens[0], "mv move")) {
         term_cmd_ship(n > 1 ? tokens[1] : "", n > 2 ? tokens[2] : "");
+    } else if (term_streq(tokens[0], "root")) {
+        if (term_is_root) term_print("  you are root already");
+        else { term_pw_mode = term_pw_is_set() ? TP_LOGIN : TP_NEW; if (term_pw_mode == TP_NEW) term_print("  there is no root password yet: choose one"); }
+    } else if (term_streq(tokens[0], "user")) {
+        if (!term_is_root) term_print("  you are a user already");
+        else { term_is_root = 0; term_print("  you are a user now"); }
     } else if (term_streq(tokens[0], "tick")) {
         term_cmd_tick();
     } else if (term_streq(tokens[0], "fetch")) {
@@ -912,6 +1019,7 @@ static const mb_menu_t term_menus[TERM_MENU_N] = {
     { { "Help",  "\xeb\x8f\x84\xec\x9b\x80\xeb\xa7\x90" }, 2, { { "About MiniShell", "MiniShell \xec\xa0\x95\xeb\xb3\xb4" }, { "Command list", "\xeb\xaa\x85\xeb\xa0\xb9 \xeb\xaa\xa9\xeb\xa1\x9d" } } },
 };
 static void term_menu_run(const char *cmd) {          /* an item that is just a command: type it for the user, exactly as if they had */
+    if (term_pw_mode != TP_NONE) return;                  /* the input line belongs to a password prompt right now */
     u32 i = 0;
     while (cmd[i] && i < TERM_INPUT_MAXLEN) { term_input_buf[i] = cmd[i]; i++; }
     term_input_buf[i] = 0;
@@ -922,7 +1030,7 @@ static void term_menu_action(int menu, int item) {
     if (menu == 0) {
         if (item == 0) term_cmd_wipe();
         else if (item == 1) term_cmd_help();
-        else { term_win.open = 0; win_z_remove(WIN_ID_TERMINAL); }
+        else { term_win.open = 0; term_session_end(); win_z_remove(WIN_ID_TERMINAL); }
     } else if (menu == 1) {
         if (item == 0) term_scroll_by(term_visible_rows() - 2);
         else if (item == 1) term_scroll_by(-(term_visible_rows() - 2));
@@ -955,6 +1063,7 @@ static void draw_terminal_window(void) {
      * as many of the most recent lines as the window is tall and as many
      * columns of them as it is wide (scrolled sideways by term_hscroll). */
     term_sb_ensure();
+    if (!term_session_on) term_session_begin();                       /* the first frame after the window was opened */
     int oy = term_output_y();
     int oh = term_output_h();
     int rows = term_visible_rows(), cols = term_vis_cols();
@@ -991,7 +1100,8 @@ static void draw_terminal_window(void) {
     int plen = 0; while (prompt[plen]) plen++;
     char prompt_line[TERM_INPUT_MAXLEN + 44]; u32 pl = 0;
     append_str(prompt_line, &pl, sizeof(prompt_line), prompt);
-    append_str(prompt_line, &pl, sizeof(prompt_line), term_input_buf);
+    if (term_pw_mode != TP_NONE) { for (u32 i = 0; i < term_input_len; i++) kstrcpy_append(prompt_line, &pl, sizeof(prompt_line), '*'); }   /* a password is shown as stars */
+    else append_str(prompt_line, &pl, sizeof(prompt_line), term_input_buf);
     int fit = (iw - 8) / FONT_CELL; if (fit < 1) fit = 1;        /* characters that fit the field (3px margin + the 2px caret) */
     int skip = (int)pl > fit ? (int)pl - fit : 0;
     font_draw_string(ix + 3, iy + 3, prompt_line + skip, TH_CONSOLE_TEXT);

@@ -117,6 +117,20 @@ static inline void font_draw_char_k(int x, int y, char c, u32 color) {
     font_draw_char(x + fk_pad(g) - (l == 99 ? 0 : l), y, c, color);
 }
 
+/* Plain-ASCII strings in the kerned style, for the many labels that are not Hangul-capable (taskbar, icon captions, title bars, buttons,
+ * status bars): font_width_k() is how wide font_draw_k() paints it. With Settings > Text > Kerning off both are exactly the fixed-cell
+ * font_draw_string() and FONT_CELL * length. */
+static int font_width_k(const char *s) {
+    int w = 0;
+    for (; *s; s++) w += font_kerning ? font_adv(*s) + (s[1] ? font_kern(*s, s[1]) : 0) : FONT_CELL;
+    return w;
+}
+static inline void font_draw_string(int x, int y, const char *s, u32 color);
+static void font_draw_k(int x, int y, const char *s, u32 color) {
+    if (!font_kerning) { font_draw_string(x, y, s, color); return; }
+    for (; *s; s++) { font_draw_char_k(x, y, *s, color); x += font_adv(*s) + (s[1] ? font_kern(*s, s[1]) : 0); }
+}
+
 static inline void font_draw_string(int x, int y, const char *s, u32 color) {
     int cx = x;
     while (*s) {

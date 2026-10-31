@@ -21,6 +21,7 @@ static void render_frame(int mouse_x, int mouse_y, const char *status_msg) {
     draw_desktop_icon3();
     draw_desktop_icon4();
     draw_desktop_icon5();
+    draw_desktop_icon_install();                     /* live disc only */
     draw_desktop_file_icons();
 
     if (status_msg) draw_status_line(status_msg);

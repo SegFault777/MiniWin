@@ -47,7 +47,7 @@ typedef struct { char name[FX_NAME]; char note[12]; u32 size, stamp; u8 kind, ic
 
 static fx_node_t fx_tree[FX_TREE_MAX];
 static int  fx_tree_n = 0, fx_tree_sel = 0, fx_tscroll = 0;
-static fx_row_t files_rows[FX_ROWS_MAX];
+static fx_row_t *files_rows;           /* FX_ROWS_MAX rows, from the heap (sys/boot.h boot_heap_init): 11 KB that no longer sit in .bss */
 static int  files_row_count = 0, files_sel = -1, files_scroll = 0;
 static char fx_cwd[VFS_PATH_MAX] = "/";
 static int fx_cwd_is(const char *p);
@@ -145,13 +145,17 @@ static void fx_fmt_stamp(char *out, u32 *l, u32 cap, u32 st) {
     append_uint2(out, l, cap, (int)((st >> 11) & 31)); append_str(out, l, cap, ":");
     append_uint2(out, l, cap, (int)((st >> 5) & 63));
 }
-/* Draws s cut to max_w pixels (the font is fixed-width: FONT_CELL per character). */
+/* Draws s cut to max_w pixels (as many characters as fit, measured with the kerned font when kerning is on). */
 static void fx_text_clip(int x, int y, const char *s, int max_w, u32 color) {
-    char tmp[48]; int n = 0, cap = max_w / FONT_CELL;
-    if (cap <= 0) return;
-    while (s[n] && n < cap && n < (int)sizeof(tmp) - 1) { tmp[n] = s[n]; n++; }
+    char tmp[48]; int n = 0;
+    if (max_w < FONT_CELL) return;
+    while (s[n] && n < (int)sizeof(tmp) - 2) {
+        tmp[n] = s[n]; tmp[n + 1] = 0;
+        if (font_width_k(tmp) > max_w) break;
+        n++;
+    }
     tmp[n] = 0;
-    font_draw_string(x, y, tmp, color);
+    font_draw_k(x, y, tmp, color);
 }
 
 /* ---------------------------------------------------------------- the folder tree */
@@ -499,6 +503,7 @@ static void files_open_window(void) {
 
 /* ---------------------------------------------------------------- actions */
 static void fx_type_into_shell(const char *cmd, const char *arg) {
+    if (term_pw_mode != TP_NONE) { term_win.open = 1; term_win.minimized = 0; win_z_raise(WIN_ID_TERMINAL); return; }   /* the input line is a password prompt: do not type into it */
     term_input_len = 0; term_input_buf[0] = 0;
     for (u32 i = 0; cmd[i]; i++) kstrcpy_append(term_input_buf, &term_input_len, sizeof(term_input_buf), cmd[i]);
     for (u32 i = 0; arg[i]; i++) kstrcpy_append(term_input_buf, &term_input_len, sizeof(term_input_buf), arg[i]);
@@ -702,7 +707,7 @@ static void fx_sort_by(int key) {
 
 /* ---------------------------------------------------------------- tool bar */
 enum { FB_UP, FB_NEW, FB_COPY, FB_CUT, FB_PASTE, FB_DELETE, FB_REFRESH, FB_VIEW, FB_MOUNT, FB_UNMOUNT, FB_INSTALL, FB_COUNT };
-static const u8 fb_icon[FB_COUNT] = { IC_UP, IC_FOLDER, 255, 255, 255, IC_TRASH, IC_REFRESH, IC_PC, 255, 255, 255 };
+static const u8 fb_icon[FB_COUNT] = { IC_UP, IC_FOLDER, IC_COPY, IC_CUT, IC_PASTE, IC_TRASH, IC_REFRESH, IC_PC, 255, 255, 255 };
 static const mb_txt_t fb_text[FB_COUNT] = {
     { 0, 0 }, { 0, 0 }, { "Copy", "\xeb\xb3\xb5\xec\x82\xac" }, { "Cut", "\xec\x9e\x98\xeb\x9d\xbc\xeb\x82\xb4\xea\xb8\xb0" }, { "Paste", "\xeb\xb6\x99\xec\x97\xac\xeb\x84\xa3\xea\xb8\xb0" },
     { 0, 0 }, { 0, 0 }, { 0, 0 }, { "Mount", "\xeb\xa7\x88\xec\x9a\xb4\xed\x8a\xb8" }, { "Unmount", "\xeb\xa7\x88\xec\x9a\xb4\xed\x8a\xb8\x20\xed\x95\xb4\xec\xa0\x9c" }, { "Install", "\xec\x84\xa4\xec\xb9\x98" }
@@ -948,7 +953,7 @@ static void draw_files_window(void) {
     int lx = files_list_x(), ly = files_list_y(), lw = files_list_w(), lh = files_list_h();
     ui_field(lx, ly, lw, lh, TH_FIELD, 0);
     int vis = files_visible_rows();
-    if (files_row_count == 0) font_draw_string(lx + 6, ly + 4, fx_view_disks ? "(no disk found)" : "(empty)", TH_FIELD_TEXT);
+    if (files_row_count == 0) font_draw_k(lx + 6, ly + 4, fx_view_disks ? "(no disk found)" : "(empty)", TH_FIELD_TEXT);
     for (int i = 0; i < vis && files_scroll + i < files_row_count; i++) {
         int ri = files_scroll + i;
         fx_row_t *r = &files_rows[ri];
@@ -1008,11 +1013,11 @@ static void draw_files_window(void) {
             }
         }
         int wide = sw >= 420 && !files_msg[0];                      /* a message gets the whole bar: it is the thing to read */
-        int fw = fq[0] && wide ? (int)fl * FONT_CELL + 10 : 0, mw = bq[0] && wide ? (int)bl * FONT_CELL + 10 : 0;
+        int fw = fq[0] && wide ? font_width_k(fq) + 10 : 0, mw = bq[0] && wide ? font_width_k(bq) + 10 : 0;
         int aw = sw - fw - mw - (fw ? 2 : 0) - (mw ? 2 : 0);
         ui_readout(sx, sy, aw, 14, 0); fx_text_clip(sx + 4, sy + 1, a, aw - 8, TH_TEXT);
-        if (mw) { ui_readout(sx + aw + 2, sy, mw, 14, 0); font_draw_string(sx + aw + 2 + 5, sy + 1, bq, TH_TEXT); }
-        if (fw) { ui_readout(sx + aw + 2 + mw + 2, sy, fw, 14, 0); font_draw_string(sx + aw + 2 + mw + 2 + 5, sy + 1, fq, TH_TEXT); }
+        if (mw) { ui_readout(sx + aw + 2, sy, mw, 14, 0); font_draw_k(sx + aw + 2 + 5, sy + 1, bq, TH_TEXT); }
+        if (fw) { ui_readout(sx + aw + 2 + mw + 2, sy, fw, 14, 0); font_draw_k(sx + aw + 2 + mw + 2 + 5, sy + 1, fq, TH_TEXT); }
     }
     mb_draw_drop(WIN_ID_FILES, wx, wy, files_menus, FILES_MENU_N);
 }

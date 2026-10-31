@@ -11,7 +11,7 @@ cd "$(dirname "$0")/../.."
 fail=0
 check() {      # key  expected-text
     QEMU_EXTRA="-d cpu_reset -D /tmp/qp_reset_$1.log" LINES_OUT=1 timeout 150 tools/test/qemu_shot.sh ui_page.html \
-        "wait 22" "move 50 202" "click" "click" "wait 2" "move 300 307" "click" "type run CRASHTST.MWP" "key ret" "wait 3" \
+        "wait 22" "move 50 202" "click" "click" "wait 2" "move 300 307" "click" "type mw-test-pw" "key ret" "type mw-test-pw" "key ret" "wait 1" "type run CRASHTST.MWP" "key ret" "wait 3" \
         "key $1" "wait 3" "type mem" "key ret" "wait 2" "shot /tmp/qp_$1.ppm" >/dev/null 2>&1
     if grep -aq "PROGRAM STOPPED: $2" /tmp/serial.log; then echo "ok   key $1: $2"; else echo "FAIL key $1: expected '$2'"; grep -a "MWP\|FATAL" /tmp/serial.log | tail -2; fail=1; fi
     # QEMU itself logs two "CPU Reset" lines while it powers the machine on (an idle boot has exactly two); a third is the guest resetting

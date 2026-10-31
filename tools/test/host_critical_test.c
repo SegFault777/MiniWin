@@ -887,6 +887,7 @@ static void test_peer_window(void) {
 
 int main(void) {
     signal(SIGALRM, on_alarm); alarm(60);
+    tls_conn_p = calloc(1, sizeof *tls_conn_p);        /* the kernel allocates the one TLS connection on its heap (sys/boot.h boot_heap_init) */
     /* the kernel's fixed network-buffer region, as ordinary memory */
     void *m = mmap((void *)MW_NETMEM_BASE, MW_NETMEM_END - MW_NETMEM_BASE, PROT_READ | PROT_WRITE,
                    MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);

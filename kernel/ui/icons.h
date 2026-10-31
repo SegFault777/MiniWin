@@ -40,6 +40,11 @@
 #define DESK_PER_COLUMN   ((DESK_BOTTOM_Y - ICON_Y) / ICON_H)
 #define DESK_CELL_X(n)    (ICON_X + ((n) / DESK_PER_COLUMN) * DESK_COL_W)
 #define DESK_CELL_Y(n)    (ICON_Y + ((n) % DESK_PER_COLUMN) * ICON_H)
+/* 1.1-alpha-13: on a LIVE disc the INSTALL icon sits in the bottom RIGHT corner (draw_desktop_icon_install()), the same row as the last
+ * cell of the first column -- far from the grid, which fills from the top left, so nothing in it has to make room. On an installed
+ * disk (live_boot == 0, kernel/live.h) it is not drawn and not clickable: the installed system has no installer icon. */
+#define ICONI_X           (VGA_WIDTH - ICON_SLOT_W - ICON_X)
+#define ICONI_Y           (DESK_BOTTOM_Y - ICON_H)
 #define DESK_BUILTIN_COUNT 5                                   /* NOTEPAD, SETTING, WEB, TERMINAL, MINIFILES */
 #define ICON_H   (ICON_GLYPH_H + 4 + 11 + 1 + 11)   /* glyph + gap + two label lines */
 
@@ -61,10 +66,11 @@
 #define ICONC_TERM    4
 #define ICONC_FILES   5
 #define ICONC_PROG    6          /* the program shortcut glyph (the pack's "Program") */
-#define ICONC_COUNT   7
+#define ICONC_INSTALL 7          /* the live disc's INSTALL icon (the pack's "Download_and_install") */
+#define ICONC_COUNT   8
 
-static const char *const icon_cache_names[ICONC_COUNT] = { "NOTEPAD", "SETTING", "WEB", "DOC", "TERMINAL", "FILEMANAGER", "PROGRAM" };
-/* 28KB: lives in memmap.h's MISC area, not .bss (always filled by icon_cache_init() before it is read) */
+static const char *const icon_cache_names[ICONC_COUNT] = { "NOTEPAD", "SETTING", "WEB", "DOC", "TERMINAL", "FILEMANAGER", "PROGRAM", "DOWNLOAD_AND_INSTALL" };
+/* 32KB: lives in memmap.h's MISC area, not .bss (always filled by icon_cache_init() before it is read) */
 #define icon_cache ((u32 (*)[32 * 32])MW_ICON_CACHE_ADDR)
 static u8  icon_cache_ok[ICONC_COUNT];
 
@@ -120,8 +126,9 @@ static void blit_icon32(int x, int y, int idx) {
  * (name, then extension) centered underneath. */
 static void draw_icon_with_label(int slot_x, int y, int idx, const char *line1, int n1, const char *line2, int n2) {
     blit_icon32(slot_x + (ICON_SLOT_W - ICON_GLYPH_W) / 2, y, idx);
-    font_draw_string(slot_x + (ICON_SLOT_W - FONT_CELL * n1) / 2, y + ICON_GLYPH_H + 4, line1, desktop_fg);
-    font_draw_string(slot_x + (ICON_SLOT_W - FONT_CELL * n2) / 2, y + ICON_GLYPH_H + 4 + FONT_CELL + 1, line2, desktop_fg);
+    (void)n1; (void)n2;
+    font_draw_k(slot_x + (ICON_SLOT_W - font_width_k(line1)) / 2, y + ICON_GLYPH_H + 4, line1, desktop_fg);
+    font_draw_k(slot_x + (ICON_SLOT_W - font_width_k(line2)) / 2, y + ICON_GLYPH_H + 4 + FONT_CELL + 1, line2, desktop_fg);
 }
 
 static void draw_desktop_icon(void) {
@@ -174,6 +181,12 @@ static void draw_desktop_icon4(void) {
 
 static void draw_desktop_icon5(void) {
     draw_icon_with_label(ICON5_X, ICON5_Y, ICONC_FILES, "MINIFILES", 9, ".MWP", 4);
+}
+
+/* INSTALL.MWP -- only on a live disc (live_boot): bottom right. Double-click opens the installer window (apps/installer.h). */
+static void draw_desktop_icon_install(void) {
+    if (!live_boot) return;
+    draw_icon_with_label(ICONI_X, ICONI_Y, ICONC_INSTALL, "INSTALL", 7, ".MWP", 4);
 }
 
 /* (TASKBAR_H / TASKBAR_Y come from ui/theme.h) */

@@ -55,6 +55,7 @@
 
 #include "clipboard.h"       /* the OS clipboard (Notepad's Edit menu, programs' sys.clipboard_*) */
 #include "mm.h"              /* page allocator + heap (kmalloc/kfree); mm_init_boot() runs from boot.h */
+#include "live.h"            /* the live disc: a RAM copy of the El Torito boot image becomes the boot device (needs the heap) */
 
 #include "paging.h"          /* page tables, guard pages, the double-fault task (needs mm.h, fatal.h's IDT, memmap.h) */
 #include "mwp_meta.h"        /* the icon/title packed into a program file (needs fs.h + mm.h) */
@@ -109,6 +110,7 @@ static u32 desktop_fg = TH_DESKTOP_TEXT;
 #include "ui/compose.h"
 #include "mwp_api2.h"       /* the program syscall table's version-2 functions (needs mm.h, vfs.h, icons, widgets, MiniFiles) */
 #include "sys/power.h"
+#include "apps/installer.h"  /* the live disc's INSTALL window (needs progwin.h, power.h, terminal.h, os_inst.h) */
 #include "sys/boot.h"
 #include "ui/input.h"
 

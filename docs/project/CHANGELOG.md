@@ -1,5 +1,39 @@
 # Changelog
 
+## MiniWin 1.1-alpha-13 (2026-10)
+
+* **A live ISO** (`build/os-image.iso`, made by `tools/mkiso.py`, never over 5 MB -- the build refuses). Boot it in a VM or on a CD and
+  MiniWin runs from a RAM copy of the disc image (`[LIVE] running from RAM` on the serial port). The boot image is an El Torito
+  "hard disk" image (media 4) whose partition entry ends on the last head and sector of the last cylinder: BIOSes take the emulated
+  disk's geometry straight from that entry (a first try with the true CHS of the last sector gave a 96-sector disk and the kernel read
+  failed with `MW-B03`). The image carries a LIVE stamp in its boot sector; `kernel/live.h` reads it.
+* **The INSTALL window** (`kernel/apps/installer.h`): on a live disc an INSTALL icon sits in the bottom right corner of the desktop;
+  double-click it. Step 1 lists the disks and partitions the installer accepts (the others are greyed with the reason), step 2 says what
+  will be erased and wants `YES` typed, step 3 writes and reads back with a progress bar, step 4 says what happened to the boot sector
+  and offers Restart. It is a program-in-a-window run by `apps/progwin.h` (new `pw_launch_fn()` starts a kernel function instead of a
+  `.MWP`), so the title bar, task bar button, minimise / maximise and close come for free. It drives the same engine as the terminal's
+  `os-inst <id> i386` (`kernel/os_inst.h`); `inst_gui_owns` keeps the terminal's poll off a job the window owns, and a window closed
+  half-way leaves the job to the poll. A disk MiniWin was installed on is not a live disc (the LIVE stamp and the ISO's partition
+  entry are not copied), so it has no INSTALL icon.
+* **Two images.** The `.img` is the minimal system and fits a 1.44 MB floppy (`build/os-image-floppy.img`: kernel, icon catalog, an empty
+  `/progs`); the `.iso` is the full system (GREETER, the SDK examples, the installer). `tools/install_all.sh` builds both;
+  `tools/test/qemu_iso.sh` boots the ISO, installs from it (terminal and window) and boots the result.
+* **Settings became the Control Panel**, Windows 95 style: a 3 x 3 grid of icons (Date/Time, Display, Keyboard, Mouse, Power, Regional
+  Settings, Sounds, System, Text), double-click or Enter opens a page, a Back button, File / View / Help menus, a status line, and the
+  grid re-flows (with a scroll bar) when the window is narrow.
+* **A new icon bundle** (75 icons, `third_party/icon-bundle`): `tools/icon_sets/{lite,full}.txt` and `install_icons.py --set lite|full`;
+  folders, MiniFiles' Copy / Cut / Paste, the Start button's logo, Paint's icon. The 16 x 16 icon cache lives on the heap (48 slots).
+* **Kerning almost everywhere in the UI** (`font_width_k()` / `font_draw_k()`): task bar, icon names, title bars, buttons, MiniFiles'
+  status line and truncation (by pixels), the browser's status line. MiniShell, Notepad's editor, the browser body, input fields and the
+  SDK's `draw_string` keep the fixed cell.
+* **Terminal accounts**: the first run asks for a root password twice (shown as stars); afterwards the prompt is `~#`; closing and
+  re-opening the window gives a plain user (`~$`), `root` promotes, `user` goes back. The password is kept as 16 bytes of salt +
+  SHA-256 x 1000 in `/sys/ROOT.PWD`. There is no privilege difference yet.
+* **More `.bss` room**: Notepad's documents (33 KB), MiniFiles' rows (11 KB) and the TLS connection (14 KB) moved to the heap
+  (`sys/boot.h boot_heap_init()`).
+* Tests: `tools/test/qemu_iso.sh` (new); the host tests follow the TLS connection's move to the heap and an installed disk's cleared
+  LIVE stamp; `kernel/cursor_data.h` regenerated.
+
 ## MiniWin 1.1-alpha-12 (2026-10)
 
 * **MiniShell follows its window.** The shell was a fixed 40 x 14 grid painted in the top-left corner of whatever window it lived in:

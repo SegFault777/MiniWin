@@ -15,7 +15,7 @@
  * meeting about it. Sized to fit "AM" plus a proper raised bevel. */
 #define STARTBTN_X    3
 #define STARTBTN_Y    (TASKBAR_Y + 2)
-#define STARTBTN_W    34
+#define STARTBTN_W    40
 #define STARTBTN_H    14
 
 /* The minimized-window pill used to hug the taskbar's left edge; now

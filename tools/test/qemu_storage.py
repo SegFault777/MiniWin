@@ -56,7 +56,7 @@ log = qemu(["-device", "ich9-ahci,id=ahci"] + ahci(IMG, 0, True), 10)
 check("AHCI: the kernel lists the disk", "[AHCI] sata1 = port 0, 2048 sectors" in log)
 check("AHCI: ...and finds its own boot disk", "LBA 0 on sata1" in boot_line(log), boot_line(log))
 
-cmds = ["wait 14", "move 50 202", "click", "click", "wait 2", "move 300 307", "click", "type os-inst list", "key ret", "wait 2",
+cmds = ["wait 14", "move 50 202", "click", "click", "wait 2", "move 300 307", "click", "type mw-test-pw", "key ret", "type mw-test-pw", "key ret", "wait 1", "type os-inst list", "key ret", "wait 2",
         "type os-inst sata200", "key ret", "wait 2", "type YES", "key ret", "wait 25", "shot /tmp/mw_storage_done.ppm"]
 log = qemu(["-device", "ich9-ahci,id=ahci"] + ahci(IMG, 0, True) + ahci(DISK2, 1), mon_cmds=cmds)
 check("AHCI: two disks are both found", "sata2 = port 1, 16384 sectors" in log)
@@ -88,7 +88,7 @@ check("SCSI: ...and finds its own boot disk", "LBA 0 on scsi1" in boot_line(log)
 
 if os.path.exists(DISK2): os.remove(DISK2)
 subprocess.check_call(["truncate", "-s", "8M", DISK2])
-cmds = ["wait 14", "move 50 202", "click", "click", "wait 2", "move 300 307", "click", "type os-inst list", "key ret", "wait 2",
+cmds = ["wait 14", "move 50 202", "click", "click", "wait 2", "move 300 307", "click", "type mw-test-pw", "key ret", "type mw-test-pw", "key ret", "wait 1", "type os-inst list", "key ret", "wait 2",
         "type os-inst scsi200", "key ret", "wait 2", "type YES", "key ret", "wait 25", "shot /tmp/mw_storage_scsi_done.ppm"]
 log = qemu(MPT + scsi(IMG, 0, True) + scsi(DISK2, 3), mon_cmds=cmds)
 check("SCSI: two targets (0 and 3) are both found", "target 3, 16384 sectors" in log, log[-300:])
@@ -145,7 +145,7 @@ log = qemu(nvme(IMG, 0, True), 12)
 check("NVMe: the kernel lists the SSD", "[NVMe] nvme1 = controller 0, namespace 1, 2048 sectors" in log, log[-300:])
 check("NVMe: ...and finds its own boot disk", "LBA 0 on nvme1" in boot_line(log), boot_line(log))
 
-cmds = ["wait 14", "move 50 202", "click", "click", "wait 2", "move 300 307", "click", "type os-inst list", "key ret", "wait 2",
+cmds = ["wait 14", "move 50 202", "click", "click", "wait 2", "move 300 307", "click", "type mw-test-pw", "key ret", "type mw-test-pw", "key ret", "wait 1", "type os-inst list", "key ret", "wait 2",
         "type os-inst nvme200", "key ret", "wait 2", "type YES", "key ret", "wait 25", "shot /tmp/mw_storage_nvme_done.ppm"]
 log = qemu(nvme(IMG, 0, True) + nvme(DISK2, 1), mon_cmds=cmds)
 check("NVMe: two controllers are both found", "nvme2 = controller 1, namespace 1, 16384 sectors" in log, log[-300:])

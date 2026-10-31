@@ -97,7 +97,8 @@ static void draw_taskbar(void) {
     /* nudge the label a pixel down-right while "pressed", like it's
      * physically sinking into the taskbar under the weight of your click */
     int press = start_menu_open ? 1 : 0;
-    font_draw_string(STARTBTN_X + 5 + press, STARTBTN_Y + 2 + press, "AM", TH_TEXT);
+    ic16_blit12(STARTBTN_X + 3 + press, STARTBTN_Y + 1 + press, IC_MINIWIN);       /* the MiniWin logo, shrunk to fit the 14-pixel button */
+    font_draw_k(STARTBTN_X + 3 + 12 + 3 + press, STARTBTN_Y + 2 + press, "AM", TH_TEXT);
 
     int ids[WIN_ID_COUNT], count, pill_w;
     taskbar_layout(ids, &count, &pill_w);
@@ -112,7 +113,7 @@ static void draw_taskbar(void) {
         if (pill_w >= 90) {
             char label[8];
             taskbar_pill_label(id, label, sizeof(label));
-            font_draw_string(px + 3 + 14, py + 2, label, TH_TEXT);
+            font_draw_k(px + 3 + 14, py + 2, label, TH_TEXT);
         }
 
         /* restore glyph: two overlapping squares */

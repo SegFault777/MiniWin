@@ -43,6 +43,7 @@ typedef struct {
     int  mx, my, mb, mchg, capture;            /* the pointer in client coordinates; capture = a drag that began inside */
     int  spin;                                 /* key_poll calls since the program last yielded */
     int  slot;                                 /* its /progs slot (for its packed icon and title), -1 if unknown */
+    int  fixed_icon;                           /* 1.1-alpha-13: an in-kernel window (the installer) names its title-bar icon here (ui/icon16.h id + 1; 0 = none) */
     char args[64];                             /* `run NAME args...`: the text after the name */
     u32  icon16[256]; int has_icon;            /* set at run time with sys.set_icon */
     mwp_mem_t mem;
@@ -59,6 +60,7 @@ static const u32 *ic16_custom_ptr(int idx) {
 }
 /* The icon id the program window and its task bar button show: set at run time > packed into the file > the generic program icon. */
 static int pw_icon_id(void) {
+    if (pw.used && pw.fixed_icon) return pw.fixed_icon - 1;
     if (pw.used && pw.has_icon) return IC_RUNTIME;
     if (pw.used && pw.slot >= 0 && mwp_icon16_of(pw.slot)) return IC_CUSTOM_BASE + pw.slot;
     return IC_PROG;
@@ -106,6 +108,7 @@ static void pw_trampoline(void) {
 }
 
 static void pw_free_run(void) {                /* give back everything this run owns */
+    inst_gui_owns = 0;                         /* the INSTALL window (apps/installer.h) is the only thing that sets it, and it is the program window */
     speaker_off();                             /* the program may have been killed in the middle of sys.beep */
     for (int i = 0; i < MWP_ALLOC_MAX; i++) if (pw.mem.p[i]) { kfree(pw.mem.p[i]); pw.mem.p[i] = 0; }
     pw.mem.bytes = 0;
@@ -134,7 +137,7 @@ static const char *pw_launch_args(int slot, const char *name, const char *args) 
     for (int i = 0; i < MWP_ALLOC_MAX; i++) pw.mem.p[i] = 0;
     pw.mem.bytes = 0;
     pw.entry = entry;
-    pw.slot = slot; pw.has_icon = 0;
+    pw.slot = slot; pw.has_icon = 0; pw.fixed_icon = 0;
     { int k = 0; if (args) while (args[k] && k < (int)sizeof(pw.args) - 1) { pw.args[k] = args[k]; k++; } pw.args[k] = 0; }
     pw.used = 1; pw.finished = 0; pw.faulted = 0; pw.kh = pw.kt = 0; pw.spin = 0;
     pw.mx = pw.my = pw.mb = pw.mchg = pw.capture = 0;
@@ -145,6 +148,34 @@ static const char *pw_launch_args(int slot, const char *name, const char *args) 
     pw.caller_sp = 0;
     pw.sp = coro_prepare(pw.stack, PW_STACK_BYTES, pw_trampoline);
     pw_win.open = 1; pw_win.minimized = 0;
+    win_z_raise(WIN_ID_PROG);
+    return 0;
+}
+
+/* 1.1-alpha-13: runs a function that is part of the KERNEL in the program window (the live disc's installer, apps/installer.h). It is a
+ * coroutine exactly like a loaded .MWP -- same surface, same stack, same pw_yield() at the end of each frame, same title bar, task bar
+ * button, minimise / maximise / close -- but it needs no file and may call kernel functions directly. Returns 0, or a sentence saying
+ * why not. `icon` is a ui/icon16.h id for the title bar and the task bar. */
+static const char *pw_launch_fn(mwp_entry_fn entry, const char *title, int icon) {
+    if (pw.used) return "A program is already running in a window.";
+    pw.surface = (u32 *)mm_pages_alloc((PW_SURF_BYTES + MM_PAGE - 1) / MM_PAGE);
+    pw.stack_alloc = (u8 *)mm_pages_alloc(PW_STACK_BYTES / MM_PAGE + 1);
+    if (pw.stack_alloc) { paging_guard(pw.stack_alloc); pw.stack = pw.stack_alloc + MM_PAGE; }
+    if (!pw.surface || !pw.stack_alloc) { pw_free_run(); return "Not enough memory to start it."; }
+    for (u32 i = 0; i < (u32)VGA_WIDTH * VGA_HEIGHT; i++) pw.surface[i] = TH_FACE;
+    for (int i = 0; i < MWP_ALLOC_MAX; i++) pw.mem.p[i] = 0;
+    pw.mem.bytes = 0;
+    pw.entry = entry;
+    pw.slot = -1; pw.has_icon = 0; pw.fixed_icon = icon + 1;
+    pw.args[0] = 0;
+    pw.used = 1; pw.finished = 0; pw.faulted = 0; pw.kh = pw.kt = 0; pw.spin = 0;
+    pw.mx = pw.my = pw.mb = pw.mchg = pw.capture = 0;
+    int n = 0; while (title[n] && n < (int)sizeof(pw.name) - 1) { pw.name[n] = title[n]; n++; }
+    pw.name[n] = 0;
+    pw.caller_sp = 0;
+    pw.sp = coro_prepare(pw.stack, PW_STACK_BYTES, pw_trampoline);
+    pw_win.open = 1; pw_win.minimized = 0; pw_win.maximized = 0;
+    pw_win.x = pw_win.restore_x = 90; pw_win.y = pw_win.restore_y = 20; pw_win.w = pw_win.restore_w = 444; pw_win.h = pw_win.restore_h = 395;
     win_z_raise(WIN_ID_PROG);
     return 0;
 }

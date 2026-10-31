@@ -19,7 +19,11 @@ future `run`/lookup call types is far more likely to match "NOTEPAD"
 than "Notepad" or "notepad" -- same ALL-CAPS convention
 kernel/kernel.c already uses for NOTEPAD.MWP and friends.
 
-Usage: tools/install_icons.py build/os-image.img <bundle-dir>
+Usage: tools/install_icons.py build/os-image.img <bundle-dir> [--set lite|full]
+
+--set picks WHICH icons of the bundle go into the catalog (tools/icon_sets/<set>.txt, one name per line): "lite" (the default) is the
+64 icons that fill the stock catalog -- what the 1.44 MB floppy image carries; "full" is every icon of the bundle except the ones named
+..._DONTUSE, for an image whose catalog (kernel/fs.h ICON_MAX_SLOTS) has room for them (the ISO). Slots are filled in name order.
 """
 import os
 import struct
@@ -67,10 +71,26 @@ def collect_icons(bundle_dir):
     return icons
 
 
+def read_set(set_name):
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icon_sets", set_name + ".txt")
+    if not os.path.isfile(path):
+        sys.exit(f"no icon set {set_name!r}: {path} does not exist")
+    with open(path) as f:
+        return [l.strip().upper() for l in f if l.strip() and not l.lstrip().startswith("#")]
+
+
 def main():
-    if len(sys.argv) != 3:
-        sys.exit(f"usage: {sys.argv[0]} <image> <bundle-dir>")
-    image_path, bundle_dir = sys.argv[1], sys.argv[2]
+    args = sys.argv[1:]
+    set_name = "lite"
+    if "--set" in args:
+        i = args.index("--set")
+        if i + 1 >= len(args):
+            sys.exit("--set needs a name (lite or full)")
+        set_name = args[i + 1]
+        del args[i:i + 2]
+    if len(args) != 2:
+        sys.exit(f"usage: {sys.argv[0]} <image> <bundle-dir> [--set lite|full]")
+    image_path, bundle_dir = args[0], args[1]
 
     icon_base_lba = read_define("kernel/fs.h", "ICON_BASE_LBA")
     slot_sectors = read_define("kernel/fs.h", "ICON_SLOT_SECTORS")
@@ -78,7 +98,14 @@ def main():
     name_maxlen = read_define("kernel/fs.h", "ICON_NAME_MAXLEN")
 
     icons = collect_icons(bundle_dir)
-    names = sorted(icons.keys())
+    wanted = read_set(set_name)
+    absent = [n for n in wanted if n not in icons]
+    if absent:
+        sys.exit(f"icon set {set_name!r} names icons the bundle does not have: {', '.join(absent)}")
+    names = sorted(wanted)                      # slots are filled in name order, so the catalog is the same on every build
+    skipped = sorted(set(icons) - set(wanted))
+    if skipped:
+        print(f"icon set {set_name!r}: {len(names)} installed; not in this set: {', '.join(skipped)}")
     if len(names) > max_slots:
         sys.exit(f"{len(names)} icons found, but ICON_MAX_SLOTS is only {max_slots} "
                   f"-- grow ICON_MAX_SLOTS in kernel/fs.h (and re-run build.sh, since "

@@ -24,6 +24,15 @@ for a in "$@"; do
         *)          IMG="$a" ;;
     esac
 done
+# THE TWO PROFILES (1.1-alpha-13). The .img is the MINIMAL system and has to fit a 1.44 MB floppy: the kernel and the icon catalog, an
+# empty /progs. It is made first, from the image exactly as build.sh left it (so run this straight after build.sh), before the demo
+# programs go into the main image. The .iso (made last, below) is the FULL system: everything in the main image -- GREETER and the SDK
+# examples -- plus the live installer (apps/installer.h), and is never allowed to pass 5 MB.
+FLOPPY="${IMG%.img}-floppy.img"
+cp "$IMG" "$FLOPPY"
+python3 tools/install_icons.py "$FLOPPY" third_party/icon-bundle >/dev/null
+truncate -s 1474560 "$FLOPPY"
+
 if [ "$NO_DEMOS" != "1" ]; then
     # Always rebuild: a .mwp is linked for ONE fixed load address (kernel/mwp_link.ld), so a stale build/greeter.mwp
     # from before that address moved would load fine and then jump into garbage. It takes a fraction of a second.
@@ -39,8 +48,8 @@ if [ "$NO_DEMOS" != "1" ]; then
 fi
 python3 tools/install_icons.py "$IMG" third_party/icon-bundle
 if [ "$NO_DEMOS" = "1" ]; then echo "install_all: icon catalog written to $IMG (demos left out)"; else echo "install_all: GREETER.MWP + the SDK examples + icon catalog written to $IMG"; fi
-# The same image padded to a 1.44 MB floppy: what VMware / VirtualBox want when the image is attached as a floppy (the BIOS then boots
-# it as drive 00h; the loader reads it by CHS and the kernel's floppy driver, kernel/fdc.h, keeps using it). A raw copy, nothing else.
-FLOPPY="${IMG%.img}-floppy.img"
-cp "$IMG" "$FLOPPY" && truncate -s 1474560 "$FLOPPY"
-echo "install_all: $FLOPPY (1.44 MB floppy copy)"
+# $FLOPPY (above) is what VMware / VirtualBox want when the image is attached as a floppy (the BIOS then boots it as drive 00h; the
+# loader reads it by CHS and the kernel's floppy driver, kernel/fdc.h, keeps using it).
+echo "install_all: $FLOPPY (1.44 MB floppy, the minimal system)"
+# The live ISO (the full system; tools/mkiso.py: El Torito, the image stamped LIVE, never over 5 MB) and a size check of both.
+python3 tools/mkiso.py "$IMG" "${IMG%.img}.iso" --floppy "$FLOPPY"

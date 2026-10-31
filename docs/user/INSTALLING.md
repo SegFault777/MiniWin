@@ -12,6 +12,19 @@ os-inst list       show the IDE disks and their partitions, each with the id to 
 os-inst <id>       install onto <id>
 ```
 
+## From the live disc: the INSTALL window
+
+Boot `build/os-image.iso` (a CD / DVD in a VM, or `qemu-system-i386 -cdrom build/os-image.iso -boot d`). MiniWin runs from a RAM copy of
+the disc and shows an **INSTALL** icon in the bottom right corner of the desktop. Double-click it:
+
+1. **Pick** the disk or partition (greyed rows cannot be used; the reason is shown under the list), then **Next**.
+2. **Confirm**: the window says what is on the target and that everything on it will be erased. Type `YES`, then **Install**.
+3. **Install**: the system is written and read back; do not turn the machine off or close the window.
+4. **Done**: take the disc out (or put the new disk first in the BIOS boot order) and **Restart**.
+
+It does exactly what `os-inst <id> i386` does (below), with the same safety rules. A system installed this way is an ordinary
+installation: it has no INSTALL icon and does not run from RAM.
+
 ## The storage id
 
 ```

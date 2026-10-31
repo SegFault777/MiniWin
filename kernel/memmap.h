@@ -118,12 +118,12 @@ typedef char mw_assert_netmem_fits[(MW_NETMEM_USED_END <= MW_NETMEM_END) ? 1 : -
  * every KB the engine's own state costs there is a KB the rest of the kernel can't have. So the biggest
  * pure-cache arrays get a fixed home out here instead (they are always initialised before they are read). */
 #define MW_MISC_BASE        0x007C0000u
-#define MW_ICON_CACHE_ADDR  (MW_MISC_BASE)               /* 7 icons x 32x32 x u32 = 28KB */
-#define MW_ICON_CACHE_SIZE  0x00007000u
+#define MW_ICON_CACHE_ADDR  (MW_MISC_BASE)               /* 8 icons x 32x32 x u32 = 32KB (alpha-13: the 8th is the live disc's installer) */
+#define MW_ICON_CACHE_SIZE  0x00008000u
 /* The shared 16x16 icon cache (ui/icon16.h): up to 36 icons x 16x16 x u32 = 36KB, filled one icon at a time the first time it is
  * drawn. It runs right up to the Korean font below. (Before alpha-10 this was MiniFiles' private 4-icon cache.) */
 #define MW_ICON16_ADDR      (MW_MISC_BASE + MW_ICON_CACHE_SIZE)
-#define MW_ICON16_MAX       36u
+#define MW_ICON16_MAX       28u              /* (the cache itself lives on the heap since alpha-13; this block is reserved, not used) */
 #define MW_ICON16_SIZE      (MW_ICON16_MAX * 1024u)
 
 /* The Korean font: 11172 syllables x 11 rows x u16 = 245,784 bytes, inflated here at boot from the LZ4 table in

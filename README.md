@@ -12,7 +12,7 @@ mode by hand, a from-scratch VGA/mouse/keyboard stack with its own disk
 drivers (IDE, SATA/AHCI, SCSI, NVMe), and a windowing system with no libc, no
 bootloader framework, and no borrowed kernel code.
 
-**Current version: 1.1-alpha-12** ([changelog](docs/project/CHANGELOG.md)). Developed and
+**Current version: 1.1-alpha-13** ([changelog](docs/project/CHANGELOG.md)). Developed and
 tested on QEMU; for VMware / VirtualBox see
 [docs/user/VIRTUAL-MACHINES.md](docs/user/VIRTUAL-MACHINES.md).
 
@@ -21,7 +21,7 @@ tested on QEMU; for VMware / VirtualBox see
 people who change it ([architecture](docs/dev/ARCHITECTURE.md), [source map](docs/dev/SOURCE-MAP.md),
 [contributing](docs/dev/CONTRIBUTING.md)).
 
-![Desktop](screenshots/01-boot-desktop.png)
+![Desktop](tools/test/golden/s00_desktop.png)
 
 ## What's actually in here
 
@@ -94,7 +94,7 @@ people who change it ([architecture](docs/dev/ARCHITECTURE.md), [source map](doc
   in its own window, saving to real persistent disk storage -- File > Save As
   asks for a name, Save keeps the document's own),
   SETTING.MWP (nine pages: language -- retranslates the whole UI live --, a multi-select IME picker that
-  controls what Right Alt cycles through while typing, time zone, display, mouse, sound, text/kerning, about and power), and MINIWEB.MWP
+  controls what Right Alt cycles through while typing, time zone, display, mouse, sound, font/kerning, about and power), and MINIWEB.MWP
   ("MiniWeb" -- a small browser built on kernel/tcp.h, kernel/http.h,
   kernel/tls.h, kernel/https.h, and kernel/dns.h, with a real address
   bar: type a hostname (or a bare IP literal) and it resolves/connects
@@ -175,6 +175,10 @@ you're on a 64-bit host), and `ld`.
 ./build.sh && tools/install_all.sh --no-demos   # the same, without GREETER and the SDK examples (an empty /progs)
 THEME=dark ./build.sh && tools/install_all.sh   # the same OS in another look (kernel/ui/themes/<name>.h)
 ```
+
+`install_all.sh` makes the two images to hand out: **`build/os-image.iso`** (the default: the full system as a live disc, at most 5 MB,
+boot it and double-click INSTALL in the bottom right corner to put MiniWin on a disk) and **`build/os-image-floppy.img`** (the minimal
+system in a 1.44 MB floppy image, for VMware / VirtualBox "floppy image file").
 
 **Don't want to build it?** Older versions' ready-made images are attached to their
 [GitHub Releases](../../releases) as `<version>-image.img` (e.g. `MiniWin 1.0-pre-25-image.img`).

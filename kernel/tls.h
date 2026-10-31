@@ -263,7 +263,9 @@ typedef struct {
     u32 rng_counter;
 } tls_conn_t;
 
-static tls_conn_t tls_conn;
+/* The one TLS connection lives on the heap (sys/boot.h boot_heap_init): 14 KB that no longer sit in .bss. `tls_conn` stays the name everything uses. */
+static tls_conn_t *tls_conn_p;
+#define tls_conn (*tls_conn_p)
 
 #define TLS_RX_RAW   ((u8 *)MW_TLS_RAW_ADDR)
 #define TLS_HS_BUF   ((u8 *)MW_TLS_HS_ADDR)

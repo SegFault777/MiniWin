@@ -58,6 +58,7 @@ For how the pieces fit together see [ARCHITECTURE.md](ARCHITECTURE.md); for the 
 | `kernel/keyboard.h` | The keyboard: PS/2 scancodes (set 1) read from the i8042 controller by polling, turned into ASCII bytes with Shift and the extended keys (arrows, Right Alt) handled. |
 | `kernel/layout.h` | The back half of MiniWeb's HTML5 engine: a styled tree goes in, a flat DISPLAY LIST of pixel-positioned things to paint comes out (rectangles, text runs, bullets, image placeholders,... |
 | `kernel/link.ld` | Every section pattern below uses the trailing "*" wildcard (.text*, .data*, etc.) instead of matching the bare section name. |
+| `kernel/live.h` | The LIVE DISC (1.1-alpha-13): MiniWin run from the .iso, without touching any disk. |
 | `kernel/lz.h` | A tiny decoder for the standard LZ4 *block* format (token: high nibble = literal count, low nibble = match length - 4, either one extended by 255-run bytes; literals; 16-bit... |
 | `kernel/memmap.h` | The ONE place that decides who owns which chunk of physical memory above 1MB. Paging is off in this kernel, so a raw physical address IS a pointer (the same trick vga.h already uses for... |
 | `kernel/mm.h` | The kernel's memory manager (1.1-alpha-10): a page-frame allocator and a heap on top of it. |
@@ -96,6 +97,7 @@ For how the pieces fit together see [ARCHITECTURE.md](ARCHITECTURE.md); for the 
 | `kernel/vga.h` | The video mode itself (a real 640x480, 32-bit-per-pixel, direct-color VBE mode -- true color, not a 256-entry palette) is found and set by the bootloader's second stage in real mode --... |
 | `kernel/x25519.h` | Curve25519 Diffie-Hellman, per RFC 7748. |
 | `kernel/x509.h` | Turns a DER-encoded X.509 certificate into the handful of fields kernel/tls.h actually needs to establish trust: who signed it, what its public key is, whether it's still within its... |
+| `kernel/apps/installer.h` | The INSTALL window of the live disc (1.1-alpha-13). |
 | `kernel/apps/minifiles.h` | MINIFILES.MWP, the file manager, laid out like the Windows 95 Explorer (1.1-alpha-10). |
 | `kernel/apps/notepad/dialogs.h` | Notepad's File dropdown and the save/new confirm dialog (drawing). |
 | `kernel/apps/notepad/draw.h` | Drawing a Notepad window (title bar, menu bar, text area, caret). |
@@ -104,7 +106,7 @@ For how the pieces fit together see [ARCHITECTURE.md](ARCHITECTURE.md); for the 
 | `kernel/apps/notepad/save.h` | Save / save-as / new logic shared by the menu, Ctrl+S and the confirm dialog. |
 | `kernel/apps/notepad/windows.h` | The NOTEPAD_MAX Notepad windows: state, creation, focus, per-window text buffers. |
 | `kernel/apps/progwin.h` | A .MWP running IN A WINDOW (1.1-alpha-11). |
-| `kernel/apps/setting.h` | SETTING.MWP: language / IME / time zone / display / mouse / sound / text / about / power. |
+| `kernel/apps/setting.h` | SETTING.MWP, laid out like the Windows 95 Control Panel (1.1-alpha-13): a grid of big icons with their names under them, one per kind of setting; double-click one (or select it and press... |
 | `kernel/apps/shell_fs.h` | MiniShell's file commands: pwd cd ls mkdir touch cat cp mv rm -- Unix names first, with the Windows ones (dir md type copy move del) and MiniWin's own (where go look dig new dup) as... |
 | `kernel/apps/shell_part.h` | MiniShell's `part` command: look at, format, mount, check and (on MBR disks) edit the partitions of the storage devices this kernel drives, and the `usb` listing. |
 | `kernel/apps/terminal.h` | MINISHELL.MWP: the command-line app and its commands. |
@@ -166,6 +168,7 @@ For how the pieces fit together see [ARCHITECTURE.md](ARCHITECTURE.md); for the 
 | `tools/install_all.sh` | One-shot "put everything back after build.sh" -- build.sh rebuilds os-image.img from scratch, which wipes the root filesystem (GREETER.MWP in /progs) and the icon catalog. |
 | `tools/install_icons.py` | Installs a bundle of 16x16/32x32 PNG icons directly into an existing os-image.img's icon catalog (see kernel/fs.h's ICON_* constants) -- same "write the disk image offline, no in-OS... |
 | `tools/install_mwp.py` | Puts a compiled .mwp flat binary (see tools/build_mwp.sh) into /progs of the root filesystem of an os-image.img -- the disk-image equivalent of what kernel/fs.h's prog_save_slot() does... |
+| `tools/mkiso.py` | SeaBIOS (and others) take the geometry LITERALLY from the END CHS of partition 0: sectors per track = its sector field, heads = its head + 1, cylinders = its cylinder + 1. |
 | `tools/mwfs.py` | The offline twin of kernel/mwfs.h: format an MWFS volume inside an image file and put files in it. |
 | `tools/mwp_pack.py` | Append the optional metadata trailer to a .mwp: the program's own icon (16x16 and 32x32), a title, and the oldest ABI version it needs. |
 
@@ -193,6 +196,7 @@ For how the pieces fit together see [ARCHITECTURE.md](ARCHITECTURE.md); for the 
 | `tools/test/host_web_test.c` | Unit tests for kernel/httpresp.h (HTTP response handling). |
 | `tools/test/host_x509_test.c` | Certificate-extension handling (audit M-02): critical extensions we do not understand must make a certificate unacceptable, and keyUsage must agree with the certificate's role (TLS... |
 | `tools/test/mkcerts.sh` | Throwaway test PKI for the QEMU end-to-end TLS tests (tls_e2e.sh). |
+| `tools/test/qemu_iso.sh` | End-to-end test of the LIVE ISO in QEMU (1.1-alpha-13): 1. |
 | `tools/test/qemu_mon.py` | Drives a running QEMU through its monitor socket: a tiny script language, one command per argument. |
 | `tools/test/qemu_osinst.sh` | End-to-end test of the terminal's `os-inst` in QEMU: install MiniWin onto a second disk (whole disk, and a partition of an MBR disk with a blank boot-code area), then boot the TARGET... |
 | `tools/test/qemu_paging.sh` | Paging and fault containment (1.1-alpha-11), end to end in QEMU: boots the image, starts sdk/examples/crash.c (CRASHTST.MWP) in a window, presses each of its six keys in a fresh boot --... |
@@ -215,5 +219,5 @@ For how the pieces fit together see [ARCHITECTURE.md](ARCHITECTURE.md); for the 
 | `tools/test/ui_diff.py` | Compares a directory of fresh screenshots (PPM) against the golden PNGs, pixel for pixel. |
 | `tools/test/ui_golden.sh` | Boots the OS in QEMU, drives the desktop through a fixed tour (open every app, type, open menus, press a button without releasing) and compares every screenshot with... |
 | `tools/test/ui_golden_files.sh` | Screen tour of MINIFILES.MWP (1.1-alpha-1), compared pixel for pixel with tools/test/golden_files/*.png. |
-| `tools/test/ui_golden_setting.sh` | Screen tour of SETTING.MWP (1.1-alpha-12), compared pixel for pixel with tools/test/golden_setting/*.png. |
+| `tools/test/ui_golden_setting.sh` | Screen tour of SETTING.MWP -- the Control Panel (1.1-alpha-13) -- compared pixel for pixel with tools/test/golden_setting/*.png. |
 | `tools/test/webserver.py` | A small web server for the MiniWeb end-to-end tests: it serves exactly the awkward things a real site does and a plain `http.server` never will. |

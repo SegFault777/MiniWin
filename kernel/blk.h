@@ -50,11 +50,22 @@ typedef struct {
     u32  sectors;       /* usable (LBA28-addressable) sectors */
     char model[41];
 } st_dev_t;
-static st_dev_t st_devs[BLK_DEV_MAX];
+/* One slot more than there are real devices: index BLK_RAM_DEV (= BLK_DEV_MAX) is the RAM DISK of a live boot (live.h) -- the whole boot
+ * image copied from the disc into memory. It exists only then, is the boot device then, and is the only device that is not on a bus. */
+#define BLK_RAM_DEV BLK_DEV_MAX
+static st_dev_t st_devs[BLK_DEV_MAX + 1];
+static u8 *blk_ram = 0;            /* the RAM disk's memory (0 = not a live boot) */
+static u32 blk_ram_sectors = 0;
 static int st_scanned = 0;
 
 /* Absolute-LBA sector I/O on device d. 1 = worked, 0 = failed (bad device, error, timeout). */
 static inline int blk_read(int d, u32 lba, void *buf) {
+    if (d == BLK_RAM_DEV) {
+        if (!blk_ram || lba >= blk_ram_sectors) return 0;
+        const u32 *src = (const u32 *)(blk_ram + (u32)lba * 512u); u32 *dst = (u32 *)buf;
+        for (int i = 0; i < 128; i++) dst[i] = src[i];
+        return 1;
+    }
     if (d < 0 || d >= BLK_DEV_MAX) return 0;
     if (d < BLK_SATA_FIRST) return ata_at_read(ata_positions[d].io, ata_positions[d].slave, lba, buf);
     if (d < BLK_SCSI_FIRST) return ahci_read(d - BLK_SATA_FIRST, lba, buf);
@@ -64,6 +75,12 @@ static inline int blk_read(int d, u32 lba, void *buf) {
     return atapi_read(d - BLK_CD_FIRST, lba, buf);
 }
 static inline int blk_write(int d, u32 lba, const void *buf) {
+    if (d == BLK_RAM_DEV) {                                   /* the live system's disk: RAM, so writing works -- until the next reboot */
+        if (!blk_ram || lba >= blk_ram_sectors) return 0;
+        const u32 *src = (const u32 *)buf; u32 *dst = (u32 *)(blk_ram + (u32)lba * 512u);
+        for (int i = 0; i < 128; i++) dst[i] = src[i];
+        return 1;
+    }
     if (d < 0 || d >= BLK_DEV_MAX) return 0;
     if (d < BLK_SATA_FIRST) return ata_at_write(ata_positions[d].io, ata_positions[d].slave, lba, buf);
     if (d < BLK_SCSI_FIRST) return ahci_write(d - BLK_SATA_FIRST, lba, buf);

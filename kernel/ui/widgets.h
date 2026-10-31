@@ -42,14 +42,14 @@ static void ui_panel(int x, int y, int w, int h, int shadow) {
 /* The accent-colored title strip inside a panel's frame, with its title text. */
 static void ui_titlebar(int x, int y, int w, const char *title) {
     bb_fillrect(x + 1, y + 1, w - 2, TITLEBAR_H, TH_ACCENT);
-    font_draw_string(x + 3, y + 1, title, TH_ACCENT_TEXT);
+    font_draw_k(x + 3, y + 1, title, TH_ACCENT_TEXT);
 }
 
 /* The same, with a 12x12 program icon (ui/icon16.h, IC_*) in front of the title -- the way Windows 95 shows what a window is. */
 static void ui_titlebar_ic(int x, int y, int w, const char *title, int icon) {
     bb_fillrect(x + 1, y + 1, w - 2, TITLEBAR_H, TH_ACCENT);
     ic16_blit12(x + 3, y + 1 + (TITLEBAR_H - 12) / 2, icon);
-    font_draw_string(x + 3 + 14, y + 1, title, TH_ACCENT_TEXT);
+    font_draw_k(x + 3 + 14, y + 1, title, TH_ACCENT_TEXT);
 }
 
 /* A whole window frame: shadow (not when maximized -- it would hang off the screen edge), body, outline, title bar. */
@@ -111,7 +111,7 @@ static u32 ui_button_flat(int x, int y, int w, int h, int hover) {
 static void ui_button(int x, int y, int w, int h, const char *label, int label_dx, int label_dy, int pressed) {
     ui_bevel(x, y, w, h, pressed);
     int o = pressed ? 1 : 0;
-    font_draw_string(x + label_dx + o, y + label_dy + o, label, TH_TEXT);
+    font_draw_k(x + label_dx + o, y + label_dy + o, label, TH_TEXT);
 }
 
 /* ---- title-bar glyphs (each draws its own bevel; `pressed` sinks both bevel and glyph) ---- */

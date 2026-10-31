@@ -159,7 +159,10 @@ static void source_sector(int dev, u32 src_base, u32 lba, u8 *out) {
 static int image_ok(int tdev, u32 base, u32 id, int sdev, u32 src_base, u32 *bad_lba) {
     for (u32 lba = 0; lba < MW_ROOTFS_LBA; lba++) {                  /* the copied part; the root filesystem after it is formatted, not copied */
         source_sector(sdev, src_base, lba, expect_buf);
-        if (lba == 0) { put32(expect_buf + ST_BOOT_FIELDS_OFF, base); put32(expect_buf + ST_BOOT_FIELDS_OFF + 4, id); }
+        if (lba == 0) {
+            put32(expect_buf + ST_BOOT_FIELDS_OFF, base); put32(expect_buf + ST_BOOT_FIELDS_OFF + 4, id);
+            put32(expect_buf + ST_BOOT_FIELDS_OFF - 8, 0); put32(expect_buf + ST_BOOT_FIELDS_OFF - 4, 0);   /* an installed disk is not a live disc: the LIVE stamp is gone */
+        }
         if (memcmp(sec(tdev, base + lba), expect_buf, 512) != 0) { *bad_lba = lba; return 0; }
     }
     return 1;

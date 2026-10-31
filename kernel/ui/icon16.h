@@ -21,16 +21,23 @@ enum {
     IC_DOC, IC_PROG, IC_FOLDER, IC_FOLDER_OPEN, IC_PC, IC_DRIVE, IC_IDE, IC_SATA, IC_NVME, IC_SCSI, IC_USB, IC_FLOPPY, IC_CD,
     IC_HTML, IC_CSS, IC_JS, IC_C, IC_ASM, IC_NOTEPAD, IC_SETTING, IC_WEB, IC_TERM, IC_FILES, IC_WARNING, IC_ERROR, IC_HELP,
     IC_POWER, IC_REFRESH, IC_TRASH, IC_SEARCH, IC_SECURITY, IC_EARTH, IC_UNKNOWN, IC_NEXT, IC_UP,
+    IC_COPY, IC_CUT, IC_PASTE, IC_PREV, IC_RESTART, IC_MINIWIN,          /* 1.1-alpha-13: the second icon bundle's toolbar and logo icons */
+    IC_INSTALL,                                                          /* the installer window (apps/installer.h) */
     IC16_COUNT
 };
-typedef char ic16_assert_slots[(IC16_COUNT <= MW_ICON16_MAX) ? 1 : -1];
+/* The cache: IC16_CACHE_SLOTS icons of 1 KB each, allocated from the heap by the first icon that is drawn. (Until alpha-12 it was a fixed
+ * 36 KB block in memmap.h, MW_ICON16_ADDR, which was full at 35 icons.) */
+#define IC16_CACHE_SLOTS 48
+typedef char ic16_assert_slots[(IC16_COUNT <= IC16_CACHE_SLOTS) ? 1 : -1];
 
-/* The catalog names (tools/install_icons.py upper-cases the 16x16 file stem). IC_UP is the pack's "Open2" (the green arrow
- * that leaves a folder); IC_FOLDER_OPEN is its "Open" (the folder with its lid up). */
+/* The catalog names (tools/install_icons.py upper-cases the 16x16 file stem). IC_UP is the pack's "Open2" (the green arrow that
+ * leaves a folder). Since the second bundle the folders are: IC_FOLDER = "Closed_Folder" (what a folder looks like in a list or in the
+ * tree) and IC_FOLDER_OPEN = "Folder" (the same folder with its lid up: the one that is open / selected). */
 static const char *const ic16_names[IC16_COUNT] = {
-    "DOC", "PROGRAM", "FOLDER", "OPEN", "PC", "DRIVE", "IDE_DRIVE", "SATA_DRIVE", "NVME_DRIVE", "SCSI_DRIVE", "USB_2_0", "FD_144", "CD-ROM",
+    "DOC", "PROGRAM", "CLOSED_FOLDER", "FOLDER", "PC", "DRIVE", "IDE_DRIVE", "SATA_DRIVE", "NVME_DRIVE", "SCSI_DRIVE", "USB_2_0", "FD_144", "CD-ROM",
     "HTML_CODE", "CSS_CODE", "JAVASCRIPT_CODE", "C_CODE", "ASM_CODE", "NOTEPAD", "SETTING", "WEB", "TERMINAL", "FILEMANAGER", "WARNING", "ERROR", "HELP",
-    "POWER", "REFRESH", "TRASHCAN", "SEARCH", "SECURITY", "EARTH", "UNKNOWN_DRIVE", "NEXT", "OPEN2"
+    "POWER", "REFRESH", "TRASHCAN", "SEARCH", "SECURITY", "EARTH", "UNKNOWN_DRIVE", "NEXT", "OPEN2",
+    "COPY", "CUT", "PASTE", "PREV", "RESTART", "MINIWIN", "DOWNLOAD_AND_INSTALL"
 };
 
 /* Icons that are not in the catalog: a program's own (packed into its file, mwp_meta.h) and the one a running program set with
@@ -39,13 +46,14 @@ static const char *const ic16_names[IC16_COUNT] = {
 #define IC_RUNTIME     96                       /* the icon the program in the window set at run time */
 static const u32 *ic16_custom_ptr(int idx);     /* defined in apps/progwin.h: the pixels of a custom id, or 0 */
 
-#define ic16_cache ((u32 (*)[16 * 16])MW_ICON16_ADDR)
+static u32 (*ic16_cache)[16 * 16] = 0;      /* heap, allocated by the first ic16_ready() */
 static u8 ic16_state[IC16_COUNT];          /* 0 = not tried yet, 1 = loaded, 2 = not in the catalog */
 
 /* Makes sure icon `idx` is in the cache. 1 = it can be drawn, 0 = no such icon. */
 static int ic16_ready(int idx) {
     if (idx >= IC_CUSTOM_BASE) return ic16_custom_ptr(idx) != 0;
     if (idx < 0 || idx >= IC16_COUNT) return 0;
+    if (!ic16_cache) { ic16_cache = (u32 (*)[16 * 16])kzalloc(IC16_CACHE_SLOTS * 1024); if (!ic16_cache) return 0; }
     if (ic16_state[idx]) return ic16_state[idx] == 1;
     ic16_state[idx] = 2;
     int slot = icon_find_by_name(ic16_names[idx]);

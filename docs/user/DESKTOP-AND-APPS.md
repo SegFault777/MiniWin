@@ -53,14 +53,15 @@ A plain-text editor; you can have several windows open at once.
   click the track, and the **mouse wheel** works over the window. Typing follows the end of the text.
 * Saved documents get a desktop icon; double-click it to open the document again.
 
-## Setting
+## Setting (the Control Panel)
 
-System settings in nine pages. Click a line to change it; the change takes effect at once (nothing is kept across a reboot yet).
-**Language** (menus and messages in English or Korean), **IME** (which input methods Right Alt cycles through), **Time Zone** (for the
-clock and the `tick` command), **Display** (12- or 24-hour clock; the desktop colour), **Mouse** (pointer speed; double-click time),
-**Sound** (whether programs' beeps are heard), **Text** (kerning: tighter letter pairs such as AV and To in menus and labels; the
-shell and Notepad stay fixed-width), **About** (version, CPU, memory, screen) and **Power** (restart / shut down; click twice).
-When the window is too small, the sidebar and the page get scroll bars.
+SETTING.MWP opens the Control Panel: a grid of nine icons, like the Windows 95 one. Double-click an icon (or select it and press Enter)
+to open its page; **Back** returns to the grid. The change takes effect at once (nothing is kept across a reboot yet).
+**Date/Time** (time zone, which the clock and the `tick` command use), **Display** (12- or 24-hour clock; the desktop colour),
+**Keyboard** (which input methods Right Alt cycles through), **Mouse** (pointer speed; double-click time), **Power** (restart / shut
+down; click twice), **Regional Settings** (menus and messages in English or Korean), **Sounds** (whether programs' beeps are heard),
+**System** (version, CPU, memory, screen) and **Font** (kerning: tighter letter pairs such as AV and To in menus and labels; the shell
+and Notepad stay fixed-width). When the window is too small, the grid re-flows and gets a scroll bar.
 
 ## Scroll bars and menus
 

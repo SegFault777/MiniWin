@@ -53,6 +53,7 @@ static inline int fs_boot_mount(void) {
         u32 total = st_devs[blk_boot_dev].sectors;
         region = total > blk_boot_base + MW_ROOTFS_LBA ? total - blk_boot_base - MW_ROOTFS_LBA : 0;
     }
+    if (blk_boot_dev == BLK_RAM_DEV) region = blk_ram_sectors > MW_ROOTFS_LBA ? blk_ram_sectors - MW_ROOTFS_LBA : 0;   /* a live boot: the RAM copy of the image */
     if (region == 0xFFFFFFFFu) region = MW_ROOTFS_STOCK_SECTORS;
     return vfs_mount_root(blk_boot_dev, blk_boot_base + MW_ROOTFS_LBA, region);
 }
@@ -282,8 +283,8 @@ static inline int prog_delete_slot(int slot) {
  * ============================================================ */
 #define ICON_BASE_LBA        1029
 #define ICON_SLOT_SECTORS    11    /* 1 header + 8 data (32x32) + 2 data (16x16) */
-#define ICON_MAX_SLOTS       64    /* the current bundle has 61 distinct icons; 3 spare */
-#define ICON_NAME_MAXLEN     24    /* e.g. "TYPESCRIPT_CODE" -- room to spare */
+#define ICON_MAX_SLOTS       64    /* the "lite" icon set (tools/icon_sets/lite.txt, 45 icons) leaves 19 free; the bundle has 74 usable icons -- see the full set */
+#define ICON_NAME_MAXLEN     28    /* e.g. "PERSONALIZATION_OR_DISPLAY" (26) -- the header sector has room for far more */
 
 #define ICON_32_BYTES  (32 * 32 * 4)  /* 4096 bytes -- exactly 8 sectors, no padding */
 #define ICON_16_BYTES  (16 * 16 * 4)  /* 1024 bytes -- exactly 2 sectors, no padding */

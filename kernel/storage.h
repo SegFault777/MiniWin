@@ -335,6 +335,7 @@ static inline int st_boot_sector_matches(const u8 *disk_sector) {
  * broken the same way every boot. If nothing matches (booted from a bus this build cannot drive) the kernel falls
  * back to the primary IDE master, as it always did, and says so over serial. */
 static u32 st_boot_id = 0;     /* the running installation's id (0 for a stock image) */
+static int st_boot_found = 0;  /* 1 when some device on a known bus carries the boot sector (otherwise live.h may still find it on a disc) */
 
 static inline void st_boot_locate(u32 base, u32 id) {
     blk_boot_dev = 0; blk_boot_base = base; st_boot_id = id;
@@ -345,9 +346,9 @@ static inline void st_boot_locate(u32 base, u32 id) {
         if (!st_read(d, base, s)) continue;
         int match = id ? (st_le32(s + ST_BOOT_FIELDS_OFF) == base && st_le32(s + ST_BOOT_FIELDS_OFF + 4) == id)
                        : st_boot_sector_matches(s);
-        if (match) { blk_boot_dev = d; return; }
+        if (match) { blk_boot_dev = d; st_boot_found = 1; return; }
     }
-    serial_puts("[BOOT] boot disk not found on any known bus; assuming ide1\n");
+    serial_puts("[BOOT] boot disk not found on any known bus; assuming ide1 (unless this is a live disc: kernel/live.h)\n");
 }
 
 #endif

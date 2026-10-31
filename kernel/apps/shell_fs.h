@@ -28,15 +28,21 @@ static void term_fs_err(const char *what, int e) {
     term_print_wrapped(mwfs_err_text(e), 2);
 }
 
-/* The prompt: the current directory, then "~# " -- "/docs~# ", "/mnt/ide200/photos~# ". A long path keeps its END
- * ("...x/y/z/a/b/c~# "), which is the part that says where you are. */
+/* The prompt: the current directory, then "~# " for root or "~$ " for a user -- "/docs~# ", "/mnt/ide200/photos~$ ". A long path keeps
+ * its END ("...x/y/z/a/b/c~# "), which is the part that says where you are. While a password is being asked for, the prompt says what
+ * is wanted instead. */
 static void term_prompt_str(char *out, u32 cap) {
     u32 l = 0;
+    if (term_pw_mode != TP_NONE) {
+        append_str(out, &l, cap, term_pw_mode == TP_NEW ? "New root password: " : (term_pw_mode == TP_CONFIRM ? "Retype it: " : "Password: "));
+        out[l] = 0;
+        return;
+    }
     const char *p = vfs_is_root_ok() ? vfs_cwd : "?";
     u32 n = 0; while (p[n]) n++;
     if (n > 24) { append_str(out, &l, cap, "..."); p += n - 21; }
     append_str(out, &l, cap, p);
-    append_str(out, &l, cap, "~# ");
+    append_str(out, &l, cap, term_is_root ? "~# " : "~$ ");
     out[l] = 0;
 }
 

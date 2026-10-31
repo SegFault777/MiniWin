@@ -10,76 +10,89 @@
  * One string per pixel row: '.' transparent, 'A' outline, 'B' fill. The arrow's tip is its top-left pixel (the hot spot);
  * the resize cursors are centred on the pointer. */
 
-#define CURSOR_ARROW_W 7
-#define CURSOR_ARROW_H 11
-static const char *const cursor_arrow[11] = {
-    "A......",
-    "AA.....",
-    "ABA....",
-    "ABBA...",
-    "ABBBA..",
-    "ABBBBA.",
-    "ABBBBBA",
-    "ABBBBA.",
-    "ABBABA.",
-    "ABA.ABA",
-    "AA...AA",
+#define CURSOR_ARROW_W 12
+#define CURSOR_ARROW_H 12
+static const char *const cursor_arrow[12] = {
+    "A...........",
+    "AA..........",
+    "ABA.........",
+    "ABBA........",
+    "ABBBA.......",
+    "ABBBBA......",
+    "ABBBBAA.....",
+    "ABBBA.......",
+    "AAABA.......",
+    "A..ABA......",
+    "...ABA......",
+    "....AA......",
 };
 
-#define CURSOR_HRESIZE_W 11
-#define CURSOR_HRESIZE_H 7
-static const char *const cursor_hresize[7] = {
-    "...AA.AA...",
-    "..ABA.ABA..",
-    ".ABBAAABBA.",
-    "ABBBBBBBBBA",
-    ".ABBAAABBA.",
-    "..ABA.ABA..",
-    "...AA.AA...",
+#define CURSOR_HRESIZE_W 12
+#define CURSOR_HRESIZE_H 12
+static const char *const cursor_hresize[12] = {
+    "............",
+    "............",
+    "...AA..AA...",
+    "..ABA..ABA..",
+    ".ABBAAAABBA.",
+    "ABBBBBBBBBBA",
+    ".ABBAAAABBA.",
+    "..ABA..ABA..",
+    "...AA..AA...",
+    "............",
+    "............",
+    "............",
 };
 
-#define CURSOR_VRESIZE_W 7
-#define CURSOR_VRESIZE_H 11
-static const char *const cursor_vresize[11] = {
-    "...A...",
-    "..ABA..",
-    ".ABBBA.",
-    "ABBBBBA",
-    "AAABAAA",
-    "..ABA..",
-    "AAABAAA",
-    "ABBBBBA",
-    ".ABBBA.",
-    "..ABA..",
-    "...A...",
+#define CURSOR_VRESIZE_W 12
+#define CURSOR_VRESIZE_H 12
+static const char *const cursor_vresize[12] = {
+    ".....A......",
+    "....ABA.....",
+    "...ABBBA....",
+    "..ABBBBBA...",
+    "..AAABAAA...",
+    "....ABA.....",
+    "....ABA.....",
+    "..AAABAAA...",
+    "..ABBBBBA...",
+    "...ABBBA....",
+    "....ABA.....",
+    ".....A......",
 };
 
-#define CURSOR_DIAG_NWSE_W 9
-#define CURSOR_DIAG_NWSE_H 9
-static const char *const cursor_diag_nwse[9] = {
-    "AAAAAA...",
-    "ABBBA....",
-    "ABBA.....",
-    "ABABA...A",
-    "AA.ABA.AA",
-    "A...ABABA",
-    ".....ABBA",
-    "....ABBBA",
-    "...AAAAAA",
+#define CURSOR_DIAG_NWSE_W 12
+#define CURSOR_DIAG_NWSE_H 12
+static const char *const cursor_diag_nwse[12] = {
+    "AAAAAA......",
+    "ABBBBA......",
+    "ABBBA.......",
+    "ABBBA.......",
+    "ABAABA......",
+    "AA..ABA..AA.",
+    ".....ABAABA.",
+    "......ABBBA.",
+    "......ABBBA.",
+    ".....ABBBBA.",
+    ".....AAAAAA.",
+    "............",
 };
 
-#define CURSOR_DIAG_NESW_W 9
-#define CURSOR_DIAG_NESW_H 9
-static const char *const cursor_diag_nesw[9] = {
-    "...AAAAAA",
-    "....ABBBA",
-    ".....ABBA",
-    "A...ABABA",
-    "AA.ABA.AA",
-    "ABABA...A",
-    "ABBA.....",
-    "ABBBA....",
-    "AAAAAA...",
+#define CURSOR_DIAG_NESW_W 12
+#define CURSOR_DIAG_NESW_H 12
+static const char *const cursor_diag_nesw[12] = {
+    ".....AAAAAA.",
+    ".....ABBBBA.",
+    "......ABBBA.",
+    "......ABBBA.",
+    ".....ABAABA.",
+    "AA..ABA..AA.",
+    "ABAABA......",
+    "ABBBA.......",
+    "ABBBA.......",
+    "ABBBBA......",
+    "AAAAAA......",
+    "............",
 };
 
 #endif

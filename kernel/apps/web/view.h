@@ -280,7 +280,7 @@ static void draw_web_window(void) {
         int ry = web_site_row_y(i);
         int active = (web_current_site == i);
         u32 fg = ui_item(wx + 2, ry, ww - 4, WEB_SITE_ROW_H, active);
-        font_draw_string(wx + 4, ry + 1, site_labels[i], fg);
+        font_draw_k(wx + 4, ry + 1, site_labels[i], fg);
     }
 
     /* divider between the site rows and the response content */
@@ -330,16 +330,19 @@ static void draw_web_window(void) {
             default:                     status_text = ""; break;
         }
     }
-    if (status_text) font_draw_string(wx + 3, web_content_y(), status_text, TH_ACCENT);
+    if (status_text) font_draw_k(wx + 3, web_content_y(), status_text, TH_ACCENT);
     if (status_text && web_page_ready && web_title[0]) {
         /* the page's <title>, after the status, clipped to the window's width */
-        u32 sl = 0; while (status_text[sl]) sl++;
-        int room = (ww - 6) / FONT_CELL - (int)sl - 2;
-        if (room > 3) {
+        int off = font_width_k(status_text) + 2 * FONT_CELL, room = ww - 6 - off;      /* pixels left for the title */
+        if (room > 3 * FONT_CELL) {
             char t[100]; u32 tl = 0;
-            while (web_title[tl] && (int)tl < room && tl + 1 < sizeof(t)) { t[tl] = web_title[tl]; tl++; }
+            while (web_title[tl] && tl + 2 < sizeof(t)) {                      /* as many characters as fit, measured kerned */
+                t[tl] = web_title[tl]; t[tl + 1] = 0;
+                if (font_width_k(t) > room) { t[tl] = 0; break; }
+                tl++;
+            }
             t[tl] = 0;
-            font_draw_string(wx + 3 + (int)(sl + 2) * FONT_CELL, web_content_y(), t, TH_TEXT);
+            font_draw_k(wx + 3 + off, web_content_y(), t, TH_TEXT);
         }
     }
 

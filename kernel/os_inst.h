@@ -68,6 +68,10 @@ typedef struct {
 } inst_job_t;
 static inst_job_t inst;
 
+/* 1 while the live disc's INSTALL window (apps/installer.h) is the one stepping the job; the terminal's poll then leaves it alone. Cleared
+ * when that window goes away (apps/progwin.h pw_free_run), so a job whose window was closed half-way is finished by the terminal's poll. */
+static int inst_gui_owns = 0;
+
 /* A test hook: when non-zero the next job uses this id instead of a fresh one. */
 static u32 inst_id_override = 0;
 
@@ -111,6 +115,10 @@ static inline int inst_expected(u32 lba, u8 *out) {
         for (int i = 0; i < 512; i++) out[i] = 0;
     }
     if (lba == 0) {
+        *(u32 *)(out + ST_BOOT_FIELDS_OFF - 8) = 0;                       /* the LIVE magic and size (boot.asm): an installed disk is not a live disc */
+        *(u32 *)(out + ST_BOOT_FIELDS_OFF - 4) = 0;
+        if (blk_boot_dev == BLK_RAM_DEV)                                  /* from a live disc: drop the partition entry tools/mkiso.py put there so the BIOS */
+            for (int i = 446; i < 510; i++) out[i] = 0;                   /* can emulate a hard disk -- the installed disk owns its whole span, as the stock image does */
         *(u32 *)(out + ST_BOOT_FIELDS_OFF)     = inst.t.base;             /* install_base */
         *(u32 *)(out + ST_BOOT_FIELDS_OFF + 4) = inst.id;                 /* install_id */
     }

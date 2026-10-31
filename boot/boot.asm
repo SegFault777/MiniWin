@@ -217,6 +217,14 @@ err_ah:      db 0
 ; Install fields -- patched into this sector by os-inst, never by the build. Fixed offset (see INSTALL_FIELDS_OFF);
 ; a build-time check in build.sh refuses to continue if the code above ever grows past it.
 ; ============================================================
+; The LIVE fields (1.1-alpha-13) sit just before the install fields: when this sector is the first one of the boot image of a live ISO,
+; tools/mkiso.py writes "LIVE" and the image's size in sectors here (in the ISO's copy only: everywhere else both stay 0). The kernel
+; (kernel/live.h) then knows to copy the whole image from the disc into RAM and run from that. They are outside the bytes the kernel
+; compares to recognise its own boot disk (storage.h ST_BOOT_CODE_BYTES / ST_BOOT_FIELDS_OFF), and os-inst zeroes them in an installed copy.
+LIVE_FIELD_OFF equ INSTALL_FIELDS_OFF - 8
+times LIVE_FIELD_OFF-($-$$) db 0
+live_magic:   dd 0
+live_sectors: dd 0
 times INSTALL_FIELDS_OFF-($-$$) db 0
 install_base: dd 0
 install_id:   dd 0
